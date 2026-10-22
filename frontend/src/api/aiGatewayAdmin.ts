@@ -34,6 +34,14 @@ export interface AiGatewayUserStat {
   tokens: number
 }
 
+export interface AiGatewayModelStat {
+  model: string
+  calls: number
+  tokens: number
+  failed: number
+  avgLatencyMs: number
+}
+
 export interface AiGatewaySummary {
   totalCalls: number
   successCalls: number
@@ -41,10 +49,12 @@ export interface AiGatewaySummary {
   blockedCalls: number
   totalTokens: number
   avgLatencyMs: number
+  p95LatencyMs: number
   successRate: number
   truncated: boolean
   trend: AiGatewayTrendPoint[]
   modules: AiGatewayModuleStat[]
+  models: AiGatewayModelStat[]
   topUsers: AiGatewayUserStat[]
 }
 
@@ -89,6 +99,16 @@ export interface AiGatewayUserOption {
   uname: string
 }
 
+export interface AiMyUsage {
+  usedToday: number
+  effectiveQuota: number
+  /** 不限制时为 -1 */
+  remainingTokens: number
+  usagePercent: number
+  usage: AiGatewaySummary
+  recentLogs: AiCallLog[]
+}
+
 export interface AiGatewayLogQuery {
   pageNum?: number
   pageSize?: number
@@ -107,6 +127,10 @@ export const aiGatewayAdminApi = {
     axios.post('/ai/api/aiGatewayAdmin/summary', { query: params }),
   getLogs: (params: AiGatewayLogQuery) =>
     axios.post('/ai/api/aiGatewayAdmin/logs', { query: params }),
+  getMyUsage: (params: AiGatewayLogQuery = {}) =>
+    axios.post('/ai/api/aiGatewayAdmin/myUsage', { query: params }),
+  exportLogs: (params: AiGatewayLogQuery = {}) =>
+    axios.post('/ai/api/aiGatewayAdmin/exportLogs', { query: params }),
   getQuotas: () => axios.post('/ai/api/aiGatewayAdmin/quotas'),
   saveQuota: (params: { userId: string; dailyTokenQuota: number; remark: string }) =>
     axios.post('/ai/api/aiGatewayAdmin/saveQuota', { data: params }),

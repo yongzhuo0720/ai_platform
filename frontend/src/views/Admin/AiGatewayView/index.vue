@@ -79,6 +79,11 @@
             <strong class="gw-card-value">{{ formatDuration(state.summary?.avgLatencyMs) }}</strong>
             <span class="gw-card-sub">端到端网关转发耗时</span>
           </div>
+          <div class="gw-card">
+            <span class="gw-card-label">P95 耗时</span>
+            <strong class="gw-card-value">{{ formatDuration(state.summary?.p95LatencyMs) }}</strong>
+            <span class="gw-card-sub">95% 的调用不慢于此值</span>
+          </div>
         </div>
 
         <div class="gw-grid">
@@ -148,6 +153,29 @@
             </div>
           </section>
         </div>
+
+        <section class="gw-panel">
+          <header>
+            <h3>模型细分</h3>
+            <span>按模型聚合的调用量与耗时</span>
+          </header>
+          <div class="model-list">
+            <div v-for="item in state.summary?.models ?? []" :key="item.model" class="module-item">
+              <div class="module-row">
+                <span class="table-cell-mono">{{ item.model }}</span>
+                <span>
+                  {{ item.calls }} 次 · {{ formatTokens(item.tokens) }} tokens
+                  · 平均 {{ formatDuration(item.avgLatencyMs) }}
+                  <em v-if="item.failed"> · 失败/拦截 {{ item.failed }}</em>
+                </span>
+              </div>
+              <div class="module-bar">
+                <i :style="{ width: modelWidth(item.calls) }"></i>
+              </div>
+            </div>
+            <div v-if="!state.summary?.models?.length" class="gw-empty">暂无数据</div>
+          </div>
+        </section>
       </el-tab-pane>
 
       <el-tab-pane label="调用日志" name="logs">
@@ -168,6 +196,7 @@
             <el-option label="问答聊天" value="chat" />
             <el-option label="知识库对话" value="knowledgeChat" />
             <el-option label="知识库文件" value="file" />
+            <el-option label="模型直连" value="models" />
           </el-select>
           <el-select v-model="state.logQuery.status" placeholder="全部状态" clearable style="width: 130px">
             <el-option label="成功" value="success" />
@@ -178,6 +207,10 @@
           <button type="button" class="btn btn-primary" @click="loadLogs(true)">
             <Search />
             查询
+          </button>
+          <button type="button" class="btn" :disabled="exportLoading" @click="exportLogs">
+            <Download />
+            {{ exportLoading ? '导出中…' : '导出 CSV' }}
           </button>
         </div>
 
@@ -290,7 +323,7 @@
                   v-if="scope.row.effectiveQuota > 0"
                   :percentage="usagePercent(scope.row)"
                   :stroke-width="8"
-                  :status="usagePercent(scope.row) >= 100 ? 'exception' : undefined"
+                  :status="usagePercent(scope.row) >= 100 ? 'exception' : usagePercent(scope.row) >= 80 ? 'warning' : undefined"
                 />
                 <span v-else class="gw-muted">不限制</span>
               </template>
@@ -375,6 +408,8 @@ const {
   loadSummary,
   loadLogs,
   loadQuotas,
+  exportLoading,
+  exportLogs,
   onTabChange,
   handleSizeChange,
   handleCurrentChange,
@@ -390,6 +425,7 @@ const {
   trendHeight,
   failedHeight,
   moduleWidth,
+  modelWidth,
   userWidth,
   usagePercent,
   quotaText,

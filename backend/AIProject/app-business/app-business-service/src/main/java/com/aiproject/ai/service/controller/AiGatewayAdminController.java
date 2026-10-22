@@ -6,6 +6,7 @@ import com.aiproject.ai.service.gateway.dto.AiGatewayConfigStatus;
 import com.aiproject.ai.service.gateway.dto.AiGatewayLogQuery;
 import com.aiproject.ai.service.gateway.dto.AiGatewaySummary;
 import com.aiproject.ai.service.gateway.dto.AiGatewayUserOption;
+import com.aiproject.ai.service.gateway.dto.AiMyUsage;
 import com.aiproject.ai.service.gateway.dto.AiQuotaOverview;
 import com.aiproject.ai.service.holde.AiGatewayAdminHolder;
 import com.heneng.hnsp.common.croe.model.Result;
@@ -54,6 +55,20 @@ public class AiGatewayAdminController {
     public Result<PageResult<AiCallLogBean>> logs(@LoginUserId String uid,
                                                   @RequestBody(required = false) AiGatewayLogQuery query) {
         return adminHolder.logs(uid, query);
+    }
+
+    @ApiOperation(value = "我的用量", httpMethod = "POST", notes = "普通用户：今日配额 + 区间内个人统计 + 最近调用")
+    @PostMapping("/myUsage")
+    public Result<AiMyUsage> myUsage(@LoginUserId String uid,
+                                     @RequestBody(required = false) AiGatewayLogQuery query) {
+        return adminHolder.myUsage(uid, query);
+    }
+
+    @ApiOperation(value = "审计日志导出", httpMethod = "POST", notes = "CSV 文本（最多 1 万条），前端打包下载")
+    @PostMapping("/exportLogs")
+    public Result<String> exportLogs(@LoginUserId String uid,
+                                     @RequestBody(required = false) AiGatewayLogQuery query) {
+        return adminHolder.exportLogs(uid, query);
     }
 
     @ApiOperation(value = "配额列表", httpMethod = "POST", notes = "用户配额覆盖 + 今日用量")
