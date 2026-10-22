@@ -8,13 +8,16 @@ import com.aiproject.ai.service.gateway.AgentGatewayConfigResolver;
 import com.aiproject.ai.service.gateway.AiGatewayConfigResolver;
 import com.aiproject.ai.service.gateway.AiGatewayGuard;
 import com.aiproject.ai.service.gateway.AiGatewayProperties;
+import com.aiproject.ai.service.gateway.ModelGatewayResolver;
 import com.aiproject.ai.service.gateway.dto.AiGatewayConfigStatus;
 import com.aiproject.ai.service.gateway.dto.AiGatewayLogQuery;
+import com.aiproject.ai.service.gateway.dto.AiGatewayModelStat;
 import com.aiproject.ai.service.gateway.dto.AiGatewayModuleStat;
 import com.aiproject.ai.service.gateway.dto.AiGatewaySummary;
 import com.aiproject.ai.service.gateway.dto.AiGatewayTrendPoint;
 import com.aiproject.ai.service.gateway.dto.AiGatewayUserOption;
 import com.aiproject.ai.service.gateway.dto.AiGatewayUserStat;
+import com.aiproject.ai.service.gateway.dto.AiMyUsage;
 import com.aiproject.ai.service.gateway.dto.AiQuotaOverview;
 import com.aiproject.ai.service.gateway.dto.AiQuotaView;
 import com.aiproject.ai.service.mapper.AiCallLogBeanMapper;
@@ -50,6 +53,9 @@ public class AiGatewayAdminHolder {
     private static final int MAX_SCAN_ROWS = 100000;
     private static final int SCAN_PAGE_SIZE = 2000;
     private static final int MAX_RANGE_DAYS = 31;
+    private static final int EXPORT_MAX_ROWS = 10000;
+    private static final int RECENT_LOG_LIMIT = 20;
+    private static final String UNKNOWN_MODEL = "未知模型";
 
     private static final DateTimeFormatter DATE = DateTimeFormatter.ofPattern("yyyy-MM-dd");
 
@@ -70,6 +76,9 @@ public class AiGatewayAdminHolder {
 
     @Autowired
     AgentGatewayConfigResolver agentConfigResolver;
+
+    @Autowired
+    ModelGatewayResolver modelGatewayResolver;
 
     @Autowired
     MyUserBaseDbHolder myUserBaseDbHolder;
@@ -99,6 +108,10 @@ public class AiGatewayAdminHolder {
                 AgentGatewayConfigResolver.MODULE_AGENT,
                 AgentGatewayConfigResolver.MODULE_NAME,
                 agentConfigResolver.isDefaultConfigured()));
+        status.getModules().add(new AiGatewayConfigStatus.ModuleStatus(
+                ModelGatewayResolver.MODULE_MODELS,
+                ModelGatewayResolver.MODULE_NAME,
+                modelGatewayResolver.hasDirectModels()));
         return Result.succeed(status, "查询成功");
     }
 
@@ -112,12 +125,25 @@ public class AiGatewayAdminHolder {
         }
 
         AiGatewaySummary summary = new AiGatewaySummary();
+        Map<String, long[]> userStats = scanLogs(null, range, summary);
+        summary.setTopUsers(topUsers(userStats));
+        return Result.succeed(summary, "查询成功");
+    }
+
+    /**
+     * 分页扫描调用日志并聚合到 summary（趋势/模块/模型细分/延迟）。
+     *
+     * @param userIdOrNull 为 null 时统计全部用户，否则只统计该用户
+     * @return 按用户聚合的 {调用次数, tokens}，仅供全量统计的排行榜使用
+     */
+    private Map<String, long[]> scanLogs(String userIdOrNull, DateRange range, AiGatewaySummary summary) {
         Map<String, AiGatewayTrendPoint> trend = initTrend(range.start, range.end);
         Map<String, AiGatewayModuleStat> modules = initModules();
+        Map<String, AiGatewayModelStat> models = new LinkedHashMap<String, AiGatewayModelStat>();
+        Map<String, long[]> modelLatency = new HashMap<String, long[]>();
         Map<String, long[]> userStats = new HashMap<String, long[]>();
+        List<Long> latencies = new ArrayList<Long>();
 
-        long latencySum = 0;
-        long latencyCount = 0;
         int pageNum = 1;
         int scanned = 0;
 
@@ -125,8 +151,10 @@ public class AiGatewayAdminHolder {
             PageRequest pageRequest = new PageRequest(pageNum, SCAN_PAGE_SIZE);
             pageRequest.setOrder("iid");
             pageRequest.setDesc("asc");
+            AiCallLogBean where = new AiCallLogBean();
+            where.setUserId(userIdOrNull);
             Result<PageResult<AiCallLogBean>> result = callLogBeanMapper.selectPage(
-                    pageRequest, new AiCallLogBean(), timeCondition(range));
+                    pageRequest, where, timeCondition(range));
             if (result == null || result.getDatas() == null) {
                 break;
             }
@@ -152,8 +180,7 @@ public class AiGatewayAdminHolder {
                     summary.setSuccessCalls(summary.getSuccessCalls() + 1);
                 }
                 if (row.getLatencyMs() != null) {
-                    latencySum += row.getLatencyMs();
-                    latencyCount++;
+                    latencies.add(row.getLatencyMs());
                 }
 
                 String day = dayOf(row);
@@ -179,7 +206,29 @@ public class AiGatewayAdminHolder {
                     moduleStat.setFailed(moduleStat.getFailed() + 1);
                 }
 
-                if (row.getUserId() != null) {
+                String modelName = blankToNull(row.getModelName());
+                if (modelName == null) {
+                    modelName = UNKNOWN_MODEL;
+                }
+                AiGatewayModelStat modelStat = models.get(modelName);
+                if (modelStat == null) {
+                    modelStat = new AiGatewayModelStat();
+                    modelStat.setModel(modelName);
+                    models.put(modelName, modelStat);
+                    modelLatency.put(modelName, new long[2]);
+                }
+                modelStat.setCalls(modelStat.getCalls() + 1);
+                modelStat.setTokens(modelStat.getTokens() + tokens);
+                if (failed || blocked) {
+                    modelStat.setFailed(modelStat.getFailed() + 1);
+                }
+                if (row.getLatencyMs() != null) {
+                    long[] latency = modelLatency.get(modelName);
+                    latency[0] += row.getLatencyMs();
+                    latency[1]++;
+                }
+
+                if (userIdOrNull == null && row.getUserId() != null) {
                     long[] stat = userStats.get(row.getUserId());
                     if (stat == null) {
                         stat = new long[2];
@@ -204,16 +253,47 @@ public class AiGatewayAdminHolder {
             pageNum++;
         }
 
-        if (latencyCount > 0) {
-            summary.setAvgLatencyMs(latencySum / latencyCount);
+        if (!latencies.isEmpty()) {
+            long latencySum = 0;
+            for (Long value : latencies) {
+                latencySum += value;
+            }
+            summary.setAvgLatencyMs(latencySum / latencies.size());
+            summary.setP95LatencyMs(percentile(latencies, 0.95));
         }
         if (summary.getTotalCalls() > 0) {
             summary.setSuccessRate(round2(summary.getSuccessCalls() * 100.0 / summary.getTotalCalls()));
         }
         summary.getTrend().addAll(trend.values());
         summary.getModules().addAll(modules.values());
-        summary.setTopUsers(topUsers(userStats));
-        return Result.succeed(summary, "查询成功");
+        summary.getModels().addAll(models.values());
+        Collections.sort(summary.getModels(), new Comparator<AiGatewayModelStat>() {
+            @Override
+            public int compare(AiGatewayModelStat a, AiGatewayModelStat b) {
+                return Long.compare(b.getCalls(), a.getCalls());
+            }
+        });
+        for (AiGatewayModelStat modelStat : summary.getModels()) {
+            long[] latency = modelLatency.get(modelStat.getModel());
+            if (latency != null && latency[1] > 0) {
+                modelStat.setAvgLatencyMs(latency[0] / latency[1]);
+            }
+        }
+        return userStats;
+    }
+
+    /** 最近调用记录（按 iid 倒序），用于「我的用量」页 */
+    private List<AiCallLogBean> recentLogs(String uid, int limit) {
+        PageRequest pageRequest = new PageRequest(1, limit);
+        pageRequest.setOrder("iid");
+        pageRequest.setDesc("desc");
+        AiCallLogBean where = new AiCallLogBean();
+        where.setUserId(uid);
+        Result<PageResult<AiCallLogBean>> result = callLogBeanMapper.selectPage(pageRequest, where);
+        if (result == null || result.getDatas() == null || result.getDatas().getContent() == null) {
+            return new ArrayList<AiCallLogBean>();
+        }
+        return result.getDatas().getContent();
     }
 
     public Result<PageResult<AiCallLogBean>> logs(String adminUid, AiGatewayLogQuery query) {
@@ -246,6 +326,108 @@ public class AiGatewayAdminHolder {
             return Result.failed(null, "查询失败");
         }
         return result;
+    }
+
+    /**
+     * 普通用户的个人用量（不需管理员）：今日配额水位 + 区间内个人调用统计 + 最近调用记录。
+     */
+    public Result<AiMyUsage> myUsage(String uid, AiGatewayLogQuery query) {
+        if (uid == null || uid.trim().isEmpty()) {
+            return Result.failed(null, "未登录或登录已过期");
+        }
+        DateRange range = resolveRange(query);
+        if (range == null) {
+            return Result.failed(null, "日期格式不正确，应为 yyyy-MM-dd，且区间不超过 31 天");
+        }
+
+        AiMyUsage my = new AiMyUsage();
+        long quota = quotaHolder.effectiveQuota(uid);
+        long used = guard.usedTokens(uid);
+        my.setUsedToday(used);
+        my.setEffectiveQuota(quota);
+        if (quota > 0) {
+            my.setRemainingTokens(Math.max(0, quota - used));
+            my.setUsagePercent(Math.min(100.0, round2(used * 100.0 / quota)));
+        } else {
+            // 配额为 0 表示不限制，剩余额度用 -1 表达
+            my.setRemainingTokens(-1);
+        }
+        scanLogs(uid, range, my.getUsage());
+        my.getRecentLogs().addAll(recentLogs(uid, RECENT_LOG_LIMIT));
+        return Result.succeed(my, "查询成功");
+    }
+
+    /**
+     * 审计日志 CSV 导出（仅管理员）。
+     * 与 logs() 相同的过滤条件，最多导出 10000 条；内容以 Result&lt;String&gt; 返回，由前端打包下载。
+     */
+    public Result<String> exportLogs(String adminUid, AiGatewayLogQuery query) {
+        if (!isAdmin(adminUid)) {
+            return Result.failed(null, "仅管理员可访问 AI 用量看板");
+        }
+        DateRange range = resolveRange(query);
+        if (range == null) {
+            return Result.failed(null, "日期格式不正确，应为 yyyy-MM-dd，且区间不超过 31 天");
+        }
+
+        AiCallLogBean where = new AiCallLogBean();
+        if (query != null) {
+            where.setUserId(blankToNull(query.getUserId()));
+            where.setModule(blankToNull(query.getModule()));
+            where.setStatus(blankToNull(query.getStatus()));
+        }
+
+        StringBuilder csv = new StringBuilder();
+        csv.append('\uFEFF');
+        csv.append("调用时间,用户,模块,端点,HTTP方法,状态,HTTP状态码,模型,输入tokens,输出tokens,总tokens,耗时(ms),失败原因,客户端IP");
+        csv.append("\r\n");
+
+        int pageNum = 1;
+        int exported = 0;
+        while (pageNum <= 50) {
+            PageRequest pageRequest = new PageRequest(pageNum, SCAN_PAGE_SIZE);
+            pageRequest.setOrder("iid");
+            pageRequest.setDesc("desc");
+            Result<PageResult<AiCallLogBean>> result = callLogBeanMapper.selectPage(
+                    pageRequest, where, timeCondition(range));
+            if (result == null || result.getDatas() == null) {
+                break;
+            }
+            List<AiCallLogBean> rows = result.getDatas().getContent();
+            if (rows == null || rows.isEmpty()) {
+                break;
+            }
+            for (AiCallLogBean row : rows) {
+                csv.append(csvCell(formatDateTime(row.getCreatetime()))).append(',');
+                csv.append(csvCell(row.getUserId())).append(',');
+                csv.append(csvCell(moduleLabel(row.getModule()))).append(',');
+                csv.append(csvCell(row.getEndpoint())).append(',');
+                csv.append(csvCell(row.getMethod())).append(',');
+                csv.append(csvCell(statusLabel(row.getStatus()))).append(',');
+                csv.append(csvCell(row.getHttpStatus() == null ? null : String.valueOf(row.getHttpStatus()))).append(',');
+                csv.append(csvCell(row.getModelName())).append(',');
+                csv.append(csvCell(row.getPromptTokens() == null ? null : String.valueOf(row.getPromptTokens()))).append(',');
+                csv.append(csvCell(row.getCompletionTokens() == null ? null : String.valueOf(row.getCompletionTokens()))).append(',');
+                csv.append(csvCell(row.getTotalTokens() == null ? null : String.valueOf(row.getTotalTokens()))).append(',');
+                csv.append(csvCell(row.getLatencyMs() == null ? null : String.valueOf(row.getLatencyMs()))).append(',');
+                csv.append(csvCell(row.getErrorMessage())).append(',');
+                csv.append(csvCell(row.getClientIp()));
+                csv.append("\r\n");
+                exported++;
+                if (exported >= EXPORT_MAX_ROWS) {
+                    return Result.succeed(csv.toString(), "已按上限导出 " + EXPORT_MAX_ROWS + " 条");
+                }
+            }
+            Integer total = result.getDatas().getTotalSize();
+            if (total != null && pageNum * SCAN_PAGE_SIZE >= total) {
+                break;
+            }
+            if (total == null && rows.size() < SCAN_PAGE_SIZE) {
+                break;
+            }
+            pageNum++;
+        }
+        return Result.succeed(csv.toString(), "导出成功，共 " + exported + " 条");
     }
 
     public Result<AiQuotaOverview> quotas(String adminUid) {
@@ -365,7 +547,8 @@ public class AiGatewayAdminHolder {
                 AiGatewayConfigResolver.MODULE_CHAT,
                 AiGatewayConfigResolver.MODULE_KNOWLEDGE_CHAT,
                 AiGatewayConfigResolver.MODULE_FILE,
-                AgentGatewayConfigResolver.MODULE_AGENT}) {
+                AgentGatewayConfigResolver.MODULE_AGENT,
+                ModelGatewayResolver.MODULE_MODELS}) {
             AiGatewayModuleStat stat = new AiGatewayModuleStat();
             stat.setModule(module);
             modules.put(module, stat);
@@ -423,6 +606,62 @@ public class AiGatewayAdminHolder {
 
     private static double round2(double value) {
         return Math.round(value * 100.0) / 100.0;
+    }
+
+    private static long percentile(List<Long> values, double ratio) {
+        if (values.isEmpty()) {
+            return 0;
+        }
+        List<Long> sorted = new ArrayList<Long>(values);
+        Collections.sort(sorted);
+        int index = (int) Math.ceil(sorted.size() * ratio) - 1;
+        if (index < 0) {
+            index = 0;
+        }
+        return sorted.get(index);
+    }
+
+    private static String moduleLabel(String module) {
+        if (module == null || module.isEmpty()) {
+            return "";
+        }
+        if ("chat".equals(module)) return "问答聊天";
+        if ("knowledgeChat".equals(module)) return "知识库对话";
+        if ("file".equals(module)) return "知识库文件";
+        if ("agent".equals(module)) return "智能体助手";
+        if ("models".equals(module)) return "模型直连";
+        return module;
+    }
+
+    private static String statusLabel(String status) {
+        if (status == null || status.isEmpty()) {
+            return "";
+        }
+        if ("success".equals(status)) return "成功";
+        if ("failed".equals(status)) return "失败";
+        if ("blocked".equals(status)) return "已拦截";
+        if ("aborted".equals(status)) return "已中断";
+        return status;
+    }
+
+    /** CSV 单元格转义：含逗号/引号/换行时加引号包裹，引号翻倍 */
+    private static String csvCell(String value) {
+        if (value == null) {
+            return "";
+        }
+        String text = value.replace("\"", "\"\"");
+        if (text.contains(",") || text.contains("\"") || text.contains("\n") || text.contains("\r")) {
+            return "\"" + text + "\"";
+        }
+        return text;
+    }
+
+    private static String formatDateTime(java.util.Date date) {
+        if (date == null) {
+            return "";
+        }
+        return java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss")
+                .format(date.toInstant().atZone(java.time.ZoneId.systemDefault()));
     }
 
     private static class DateRange {

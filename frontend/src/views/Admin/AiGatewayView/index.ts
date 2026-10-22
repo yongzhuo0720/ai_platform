@@ -1,4 +1,4 @@
-import { computed, onMounted, reactive } from 'vue'
+import { computed, onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
   aiGatewayAdminApi,
@@ -10,12 +10,14 @@ import {
   type AiQuotaView,
 } from '@/api/aiGatewayAdmin'
 import { debug } from '@/utils/debug'
+import { isConfirmCancelled } from '@/utils/confirm'
 
 const MODULE_LABELS: Record<string, string> = {
   chat: '问答聊天',
   knowledgeChat: '知识库对话',
   file: '知识库文件',
   agent: '智能体助手',
+  models: '模型直连',
 }
 
 const STATUS_LABELS: Record<string, string> = {
@@ -77,6 +79,9 @@ export function useIndex() {
   )
   const moduleMax = computed(() =>
     Math.max(1, ...(state.summary?.modules ?? []).map((item) => item.calls))
+  )
+  const modelMax = computed(() =>
+    Math.max(1, ...(state.summary?.models ?? []).map((item) => item.calls))
   )
   const userMax = computed(() =>
     Math.max(1, ...(state.summary?.topUsers ?? []).map((item) => item.calls))
@@ -162,6 +167,42 @@ export function useIndex() {
       ElMessage.error('获取配额列表失败，请稍后重试')
     } finally {
       state.quotasLoading = false
+    }
+  }
+
+  const exportLoading = ref(false)
+
+  /** 导出当前过滤条件的审计日志 CSV（后端已带 BOM，Excel 可直接打开） */
+  async function exportLogs() {
+    exportLoading.value = true
+    try {
+      const { data: res } = await aiGatewayAdminApi.exportLogs({
+        userId: state.logQuery.userId.trim() || undefined,
+        module: state.logQuery.module || undefined,
+        status: state.logQuery.status || undefined,
+        ...dateParams(),
+      })
+      if (res.resp_code !== 0) {
+        ElMessage.error(res.resp_msg || '导出失败')
+        return
+      }
+      const blob = new Blob([res.datas ?? ''], { type: 'text/csv;charset=utf-8' })
+      const url = URL.createObjectURL(blob)
+      const link = document.createElement('a')
+      link.href = url
+      link.download = `ai-audit-logs-${state.range[0]}_${state.range[1]}.csv`
+      document.body.appendChild(link)
+      link.click()
+      document.body.removeChild(link)
+      URL.revokeObjectURL(url)
+      ElMessage.success(res.resp_msg || '导出成功')
+    } catch (err) {
+      if (!isConfirmCancelled(err)) {
+        debug.error('导出 AI 调用日志失败', err)
+        ElMessage.error('导出失败，请稍后重试')
+      }
+    } finally {
+      exportLoading.value = false
     }
   }
 
@@ -328,6 +369,11 @@ export function useIndex() {
     return `${Math.max(2, (calls / userMax.value) * 100)}%`
   }
 
+  function modelWidth(calls: number): string {
+    if (calls <= 0) return '0%'
+    return `${Math.max(2, (calls / modelMax.value) * 100)}%`
+  }
+
   function usagePercent(row: AiQuotaView): number {
     if (row.effectiveQuota <= 0) return 0
     return Math.min(100, Math.round((row.usedToday / row.effectiveQuota) * 100))
@@ -350,6 +396,8 @@ export function useIndex() {
     loadSummary,
     loadLogs,
     loadQuotas,
+    exportLoading,
+    exportLogs,
     onTabChange,
     handleSizeChange,
     handleCurrentChange,
@@ -365,6 +413,7 @@ export function useIndex() {
     trendHeight,
     failedHeight,
     moduleWidth,
+    modelWidth,
     userWidth,
     usagePercent,
     quotaText,
