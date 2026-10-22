@@ -904,8 +904,9 @@ export function useChat(): UseChatReturn {
       syncAssistantPromptInput(activeAssistantId.value);
       syncModelBoundInput(activeModelId.value);
     } catch (error) {
+      // 参数加载失败（如 Dify 未配置时的 503）按降级处理：无推荐问题/表单仍可正常使用，
+      // 真正发消息时才会有明确的错误提示，页面加载阶段不弹 toast。
       console.warn("获取应用参数失败:", error);
-      ElMessage.error("加载应用参数失败，请刷新重试");
     } finally {
       parametersLoading.value = false;
     }
