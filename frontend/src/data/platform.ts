@@ -33,6 +33,11 @@ export const navigationSections: any[] = [
         path: '/knowledge-bases',
         routeName: 'knowledge-bases',
       },
+      {
+        title: '知识检索',
+        path: '/kb-search',
+        routeName: 'kb-search',
+      },
     ],
   },
   {
@@ -56,6 +61,18 @@ export const navigationSections: any[] = [
         title: '场景应用',
         path: '/applications',
         routeName: 'applications',
+      },
+    ],
+  },
+  {
+    id: 'usage',
+    title: '用量中心',
+    icon: 'DataLine',
+    items: [
+      {
+        title: '我的用量',
+        path: '/my-usage',
+        routeName: 'my-usage',
       },
     ],
   },

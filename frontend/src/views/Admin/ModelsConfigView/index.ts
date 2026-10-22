@@ -80,6 +80,11 @@ export function useIndex() {
         id: '',
         name: '',
         provider: '',
+        protocol: '',
+        baseUrl: '',
+        upstreamModel: '',
+        embedModel: '',
+        apiKey: '',
       },
     }
   }
@@ -114,6 +119,19 @@ export function useIndex() {
   const onSave = () => {
     ruleFormRef.value?.validate(async (valid) => {
       if (valid) {
+        // 直连配置的完整性校验：查询接口不下发密钥（掩码为空），
+        // 编辑时密钥留空 = 沿用已配置的密钥，由后端合并
+        const form = state.params.form
+        if (form.protocol === 'openai') {
+          if (!form.baseUrl?.trim() || !form.upstreamModel?.trim()) {
+            ElMessage.warning('启用直连时必须填写服务地址与上游模型名')
+            return
+          }
+          if (state.params.type === 'add' && !form.apiKey?.trim()) {
+            ElMessage.warning('启用直连时必须填写服务密钥')
+            return
+          }
+        }
         const loading = ElLoading.service({
           lock: true,
           text: '正在保存，请稍后',

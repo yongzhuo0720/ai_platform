@@ -49,6 +49,12 @@
             <span>{{ scope.row.provider || '-' }}</span>
           </template>
         </el-table-column>
+        <el-table-column label="直连" align="center" width="110">
+          <template #default="scope">
+            <el-tag v-if="scope.row.protocol === 'openai'" type="success" size="small">OpenAI 兼容</el-tag>
+            <span v-else>-</span>
+          </template>
+        </el-table-column>
         <el-table-column label="操作" align="center" width="160" fixed="right">
           <template #default="scope">
             <button type="button" class="action-btn" @click="showEdit(scope.row)">
@@ -111,6 +117,43 @@
             clearable
           />
         </el-form-item>
+        <el-form-item label="直连协议" prop="protocol">
+          <el-select v-model="state.params.form.protocol" placeholder="不启用直连" clearable style="width: 100%">
+            <el-option label="OpenAI 兼容直连（可在对话页直接调用）" value="openai" />
+          </el-select>
+        </el-form-item>
+        <template v-if="state.params.form.protocol === 'openai'">
+          <el-form-item label="服务地址" prop="baseUrl">
+            <el-input
+              v-model="state.params.form.baseUrl"
+              placeholder="如 https://api.deepseek.com（不含 /chat/completions）"
+              clearable
+            />
+          </el-form-item>
+          <el-form-item label="上游模型" prop="upstreamModel">
+            <el-input
+              v-model="state.params.form.upstreamModel"
+              placeholder="如 deepseek-chat（请求体的 model 字段以此为准）"
+              clearable
+            />
+          </el-form-item>
+          <el-form-item label="向量模型" prop="embedModel">
+            <el-input
+              v-model="state.params.form.embedModel"
+              placeholder="选填，如 text-embedding-v3；配置后本地知识检索（RAG）将使用该模型向量化"
+              clearable
+            />
+          </el-form-item>
+          <el-form-item label="服务密钥" prop="apiKey">
+            <el-input
+              v-model="state.params.form.apiKey"
+              type="password"
+              show-password
+              autocomplete="new-password"
+              placeholder="未配置时必填；已配置时留空表示不修改"
+            />
+          </el-form-item>
+        </template>
       </el-form>
       <template #footer>
         <el-button @click="state.params.dialogVisible = false">取消</el-button>

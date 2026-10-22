@@ -71,6 +71,18 @@ const router = createRouter({
           component: () => import("@/views/KnowledgeBaseView/index.vue"),
           meta: { title: "知识库", group: "知识库", activeNavRouteName: "knowledge-bases" },
         },
+        {
+          path: "kb-search",
+          name: "kb-search",
+          component: () => import("@/views/KbSearchView/index.vue"),
+          meta: { title: "知识检索", group: "知识库" },
+        },
+        {
+          path: "my-usage",
+          name: "my-usage",
+          component: () => import("@/views/MyUsageView/index.vue"),
+          meta: { title: "我的用量", group: "用量中心" },
+        },
       ],
     },
     {
