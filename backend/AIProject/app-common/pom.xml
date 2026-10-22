@@ -1,0 +1,73 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+    <parent>
+        <artifactId>AIProject</artifactId>
+        <groupId>com.aiproject</groupId>
+        <version>1.0-SNAPSHOT</version>
+    </parent>
+    <artifactId>app-common</artifactId>
+    <description>公共模块</description>
+    <packaging>jar</packaging>
+    <dependencies>
+    <!--       通用依赖 -->
+    <dependency>
+        <groupId>com.heneng.hnsp</groupId>
+        <artifactId>hnsp-public-common-swagger</artifactId>
+        <version>${hnsp.version}</version>
+    </dependency>
+    <dependency>
+        <groupId>com.heneng.hnsp</groupId>
+        <artifactId>hnsp-public-common-redis</artifactId>
+        <version>${hnsp.version}</version>
+    </dependency>
+    <!--        插件 -->
+    <dependency>
+        <groupId>com.heneng.hnsp</groupId>
+        <artifactId>hnsp-public-plugin-token-sa</artifactId>
+        <version>${hnsp.version}</version>
+    </dependency>
+    <dependency>
+        <groupId>com.heneng.hnsp</groupId>
+        <artifactId>hnsp-public-common-web</artifactId>
+        <version>${hnsp.version}</version>
+    </dependency>
+    <dependency>
+        <groupId>com.heneng.hnsp</groupId>
+        <artifactId>hnsp-public-common-db</artifactId>
+        <version>${hnsp.version}</version>
+    </dependency>
+    <dependency>
+        <groupId>com.heneng.hnsp</groupId>
+        <artifactId>hnsp-public-common-dao</artifactId>
+        <version>${hnsp.version}</version>
+    </dependency>
+
+     <!--     接口日志持久化-->
+    <dependency>
+        <groupId>com.heneng.hnsp</groupId>
+        <artifactId>hnsp-public-plugin-controller-log-simple</artifactId>
+        <version>${hnsp.version}</version>
+    </dependency>
+
+        <dependency>
+            <groupId>com.heneng.hnsp</groupId>
+            <artifactId>hnsp-public-common-httpcomponents</artifactId>
+            <version>${hnsp.version}</version>
+        </dependency>
+        <dependency>
+            <artifactId>hnsp-public-common-apprun</artifactId>
+            <groupId>com.heneng.hnsp</groupId>
+            <version>${hnsp.version}</version>
+        </dependency>
+        <!-- https://mvnrepository.com/artifact/org.apache.commons/commons-lang3 -->
+        <dependency>
+            <groupId>org.apache.commons</groupId>
+            <artifactId>commons-lang3</artifactId>
+            <version>3.9</version>
+        </dependency>
+
+    </dependencies>
+</project>

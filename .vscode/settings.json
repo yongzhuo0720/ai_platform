@@ -1,0 +1,11 @@
+{
+     "git.path": "D:\\Git1\\bin\\git.exe",
+     "java.import.maven.offline.enabled": false,
+     "java.configuration.maven.userSettings": "D:\\JAVA\\maven\\apache-maven-3.9.15\\conf\\settings.xml",
+     "java.configuration.maven.globalSettings": "D:\\JAVA\\maven\\apache-maven-3.9.15\\conf\\settings.xml",
+     "maven.executable.path": "D:\\JAVA\\maven\\apache-maven-3.9.15\\bin\\mvn.cmd",
+     "maven.executable.options": "",
+     "java.compile.nullAnalysis.mode": "automatic",
+     "java.jdt.ls.vmargs": "-XX:+UseParallelGC -XX:GCTimeRatio=4 -XX:AdaptiveSizePolicyWeight=90 -Dsun.zip.disableMemoryMapping=true -Xmx4G -Xms100m -Xlog:disable",
+     "java.configuration.updateBuildConfiguration": "interactive"
+}

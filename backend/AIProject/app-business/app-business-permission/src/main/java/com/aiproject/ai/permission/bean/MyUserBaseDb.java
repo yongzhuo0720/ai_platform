@@ -1,0 +1,126 @@
+//
+// Source code recreated from a .class file by IntelliJ IDEA
+// (powered by FernFlower decompiler)
+//
+
+package com.aiproject.ai.permission.bean;
+
+import blxt.qjava.autovalue.enumbean.JoinEnum;
+import blxt.qjava.autovalue.inter.SelectLike;
+import blxt.qjava.autovalue.inter.SelectLink;
+import blxt.qjava.autovalue.inter.SqlBean;
+import blxt.qjava.autovalue.inter.SqlColumn;
+import com.fasterxml.jackson.annotation.JsonIgnore;
+import com.heneng.hnsp.business.user.bean.UserBaseDb;
+import com.heneng.hnsp.common.db.model.DbEntityBase;
+import io.swagger.annotations.ApiModel;
+import io.swagger.annotations.ApiModelProperty;
+import lombok.Data;
+@SqlBean(
+        value = "userbase",
+        keyId = "uid",
+        ignores = {"iid", "sid"}
+)
+@ApiModel(
+        value = "用户对象",
+        description = "用户基础信息"
+)
+@Data
+public class MyUserBaseDb extends DbEntityBase {
+
+    @SqlColumn()
+    @ApiModelProperty("用户uid")
+    String uid;
+
+    @SelectLike()
+    @SqlColumn()
+    @ApiModelProperty("用户账号,登录账号")
+    String uaccess;
+
+    //@JsonIgnore
+    @SqlColumn(selectEnable = false)
+    @ApiModelProperty("用户密码")
+    String upwd;
+
+    @SelectLike()
+    @SqlColumn()
+    @ApiModelProperty("用户名")
+    String uname;
+
+    @SqlColumn()
+    @ApiModelProperty("是否已登录")
+    Boolean login;
+
+    @SqlColumn()
+    @ApiModelProperty(value = "角色id", example = "00")
+    Long rid;
+
+    @SqlColumn()
+    @ApiModelProperty("组织id")
+    String gid;
+
+    @SelectLink(
+            joinTableB = "rolebean",
+            joinKeyA = "rid",
+            joinKeyB = "iid",
+            joinColumB = "name",
+            join = JoinEnum.PG_LEFT_OUTER_JOIN
+    )
+    @ApiModelProperty(value = "角色名称")
+    public String rname;
+
+
+    @SelectLink(
+            joinTableB = "unit",
+            joinKeyA = "gid",
+            joinKeyB = "unitsno",
+            joinColumB = "unitname",
+            join = JoinEnum.PG_LEFT_OUTER_JOIN
+    )
+    @SqlColumn
+    @ApiModelProperty("部门名称")
+    String gname;
+
+    @SelectLike()
+    @SqlColumn()
+    @ApiModelProperty("地点")
+    String place;
+
+    @SelectLike()
+    @SqlColumn()
+    @ApiModelProperty("描述")
+    String description;
+
+    @SqlColumn()
+    @ApiModelProperty("岗位职称")
+    String station;
+
+    @SqlColumn()
+    @ApiModelProperty("微信账号")
+    String wechatid;
+
+    @SqlColumn()
+    @ApiModelProperty("头像")
+    String ico;
+
+    @SelectLike()
+    @SqlColumn()
+    @ApiModelProperty("手机号")
+    String phone;
+
+    @SqlColumn()
+    @ApiModelProperty("邮箱")
+    String email;
+
+//    @SqlColumn
+//    @SelectLink(joinTableB="userbase",
+//            joinTableBrname = "userbase_2_",
+//            joinKeyA = "lastuser", joinKeyB = "uid",
+//            joinColumB = "uname",
+//            join = JoinEnum.PG_LEFT_OUTER_JOIN)
+//    @ApiModelProperty("作者名字, 创建项目时,需要带入")
+//    String lastusername = "";
+
+
+
+}

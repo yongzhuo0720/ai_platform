@@ -1,0 +1,157 @@
+
+/* 头部统计样式 */
+.hero-stats {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.hero-stat {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 12px 20px;
+  transition: all 0.3s ease;
+}
+
+.hero-stat:hover {
+  transform: translateY(-2px);
+}
+
+.hero-stat span {
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.85);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.hero-stat strong {
+  font-size: 24px;
+  font-weight: 700;
+  font-family: "PingFang SC", "Microsoft YaHei", sans-serif;
+  background: linear-gradient(135deg, #4da6ff 0%, #64d2ff 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+  text-shadow: 0 0 20px rgba(77, 166, 255, 0.3);
+}
+
+html[data-theme="light"] {
+  .hero-stat span {
+    color: var(--text-secondary);
+  }
+
+  .hero-stat strong {
+    font-family: "PingFang SC", "Microsoft YaHei", sans-serif;
+    background: linear-gradient(135deg, #0d3064 0%, #0066ff 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+    text-shadow: none;
+  }
+}
+
+
+/* 卡片底部按钮 */
+.capability-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding-top: 12px;
+  border-top: 1px solid rgba(100, 150, 255, 0.12);
+}
+
+.applications-toolbar {
+  justify-content: flex-end;
+}
+
+.applications-search,
+.applications-tag-filter,
+.applications-sort {
+  flex: none;
+  width: 180px;
+}
+
+/* 管理权限弹窗样式 */
+.mng-dialog-content {
+  padding: 10px 0;
+}
+
+.mng-section {
+  margin-bottom: 24px;
+}
+
+.mng-section:last-child {
+  margin-bottom: 0;
+}
+
+.mng-section-title {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 12px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--border-color);
+}
+
+.mng-section-title .title-text {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.mng-tree-container {
+  max-height: 280px;
+  overflow-y: auto;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  padding: 15px;
+  background: var(--bg-secondary);
+}
+
+.mng-role-container {
+  max-height: 200px;
+  overflow-y: auto;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  padding: 15px;
+  background: var(--bg-secondary);
+}
+
+.mng-role-container .el-checkbox-group {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.mng-role-container .el-checkbox {
+  margin-right: 0;
+  margin-bottom: 8px;
+}
+
+/* 浅色模式下 el-tree / el-checkbox 文字颜色适配 */
+html[data-theme="light"] {
+  .mng-tree-container {
+    .el-tree {
+      color: var(--text-primary);
+      background: transparent;
+    }
+
+    .el-tree-node__content {
+      &:hover {
+        background: rgba(13, 48, 100, 0.06);
+      }
+    }
+
+    .el-checkbox__label {
+      color: var(--text-primary);
+    }
+  }
+
+  .mng-role-container {
+    .el-checkbox__label {
+      color: var(--text-primary);
+    }
+  }
+}

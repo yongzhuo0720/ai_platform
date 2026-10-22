@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+    <parent>
+        <groupId>com.aiproject</groupId>
+        <artifactId>app-business</artifactId>
+        <version>1.0-SNAPSHOT</version>
+    </parent>
+
+    <artifactId>app-business-permission</artifactId>
+    <description>权限模块</description>
+    <packaging>jar</packaging>
+
+<dependencies>
+    <dependency>
+        <groupId>com.heneng.hnsp</groupId>
+        <artifactId>hnsp-public-business-userlogin</artifactId>
+        <version>${hnsp.version}</version>
+    </dependency>
+    <dependency>
+        <groupId>com.heneng.hnsp</groupId>
+        <artifactId>hnsp-public-business-role</artifactId>
+        <version>${hnsp.version}</version>
+    </dependency>
+<!--    <dependency>-->
+<!--        <groupId>com.heneng.hnsp</groupId>-->
+<!--        <artifactId>hnsp-public-business-controller</artifactId>-->
+<!--        <version>${hnsp.version}</version>-->
+<!--    </dependency>-->
+</dependencies>
+</project>

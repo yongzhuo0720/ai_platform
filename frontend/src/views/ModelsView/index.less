@@ -1,0 +1,90 @@
+.model-list {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 16px;
+}
+
+/* 模型标题字体加大 */
+.model-list .list-card-title {
+  font-size: 22px;
+}
+
+/* 让头部区域内容垂直居中 */
+.page-heading {
+  align-items: center !important;
+}
+
+
+
+/* 卡片底部按钮区域 */
+.list-card-actions {
+  display: flex;
+  gap: 8px;
+  padding-top: 12px;
+}
+
+.models-toolbar {
+  justify-content: flex-end;
+}
+
+.models-search,
+.models-tag-filter,
+.models-sort {
+  flex: none;
+  width: 180px;
+}
+
+
+
+/* 头部统计样式 */
+.hero-stats {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.hero-stat {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 12px 20px;
+  transition: all 0.3s ease;
+}
+
+.hero-stat:hover {
+  transform: translateY(-2px);
+}
+
+.hero-stat span {
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.85);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.hero-stat strong {
+  font-size: 24px;
+  font-weight: 700;
+  font-family: "PingFang SC", "Microsoft YaHei", sans-serif;
+  background: linear-gradient(135deg, #4da6ff 0%, #64d2ff 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+  text-shadow: 0 0 20px rgba(77, 166, 255, 0.3);
+}
+
+html[data-theme="light"] {
+  .hero-stat span {
+    color: var(--text-secondary);
+  }
+
+  .hero-stat strong {
+    font-family: "PingFang SC", "Microsoft YaHei", sans-serif;
+    background: linear-gradient(135deg, #0d3064 0%, #0066ff 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+    text-shadow: none;
+  }
+}

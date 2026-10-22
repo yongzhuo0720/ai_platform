@@ -1,0 +1,433 @@
+/* Element Plus 组件深色主题覆盖 - 通过 CSS 变量 */
+
+/* ============================================
+   全局 Element Plus 变量覆盖
+   ============================================ */
+:root {
+  /* Input 输入框变量 */
+  --el-input-bg-color: rgba(16, 30, 80, 0.5);
+  --el-input-text-color: #ffffff;
+  --el-input-border-color: rgba(100, 150, 255, 0.3);
+  --el-input-hover-border-color: rgba(100, 150, 255, 0.5);
+  --el-input-focus-border-color: #4da6ff;
+  --el-input-placeholder-color: rgba(255, 255, 255, 0.4);
+  --el-input-icon-color: rgba(255, 255, 255, 0.6);
+  
+  /* Select 选择器变量 */
+  --el-select-border-color-hover: rgba(100, 150, 255, 0.5);
+  --el-select-input-color: #ffffff;
+  
+  /* 填充模式变量 */
+  --el-fill-color-blank: rgba(16, 30, 80, 0.5);
+  --el-fill-color-light: rgba(100, 150, 255, 0.1);
+  --el-fill-color: rgba(100, 150, 255, 0.15);
+  --el-fill-color-dark: rgba(100, 150, 255, 0.2);
+  --el-fill-color-darker: rgba(100, 150, 255, 0.25);
+  
+  /* 边框颜色 */
+  --el-border-color: rgba(100, 150, 255, 0.3);
+  --el-border-color-light: rgba(100, 150, 255, 0.25);
+  --el-border-color-lighter: rgba(100, 150, 255, 0.2);
+  --el-border-color-extra-light: rgba(100, 150, 255, 0.15);
+  --el-border-color-hover: rgba(100, 150, 255, 0.5);
+  --el-border-color-focus: #4da6ff;
+  
+  /* 文字颜色 */
+  --el-text-color-primary: rgba(255, 255, 255, 0.95);
+  --el-text-color-regular: rgba(255, 255, 255, 0.85);
+  --el-text-color-secondary: rgba(255, 255, 255, 0.65);
+  --el-text-color-placeholder: rgba(255, 255, 255, 0.4);
+  --el-text-color-disabled: rgba(255, 255, 255, 0.3);
+  
+  /* 背景颜色 */
+  --el-bg-color: rgba(16, 30, 80, 0.5);
+  --el-bg-color-page: transparent;
+  --el-bg-color-overlay: rgba(16, 30, 80, 0.95);
+  
+  /* 组件高度 */
+  --el-component-size: 40px;
+  --el-component-size-small: 32px;
+  --el-component-size-large: 48px;
+}
+
+/* ============================================
+   Select 下拉框弹出层
+   ============================================ */
+.el-select__popper,
+.el-popper.is-light {
+  background: rgba(16, 30, 80, 0.95) !important;
+  border: 1px solid rgba(100, 150, 255, 0.3) !important;
+  box-shadow: 0 8px 32px rgba(0, 20, 80, 0.5) !important;
+}
+
+.el-select-dropdown {
+  background: transparent !important;
+}
+
+/* 下拉选项 */
+.el-select-dropdown__item {
+  color: rgba(255, 255, 255, 0.85) !important;
+  background: transparent !important;
+}
+
+.el-select-dropdown__item:hover,
+.el-select-dropdown__item.hover {
+  background: rgba(100, 150, 255, 0.2) !important;
+  color: #ffffff !important;
+}
+
+.el-select-dropdown__item.selected {
+  background: rgba(77, 166, 255, 0.35) !important;
+  color: #4da6ff !important;
+  font-weight: 600;
+}
+
+/* 选中项的高亮样式 - 增加优先级 */
+.el-select-dropdown__item.is-selected {
+  background: rgba(77, 166, 255, 0.35) !important;
+  color: #4da6ff !important;
+  font-weight: 600;
+}
+
+/* 选中且悬停的状态 */
+.el-select-dropdown__item.selected.hover,
+.el-select-dropdown__item.is-selected.hover {
+  background: rgba(77, 166, 255, 0.45) !important;
+  color: #ffffff !important;
+}
+
+/* 下拉箭头 */
+.el-popper__arrow::before {
+  background: rgba(16, 30, 80, 0.95) !important;
+  border: 1px solid rgba(100, 150, 255, 0.3) !important;
+}
+
+/* 下拉框为空时的文字 */
+.el-select-dropdown__empty {
+  color: rgba(255, 255, 255, 0.5) !important;
+}
+
+/* ============================================
+   Input 输入框样式增强
+   ============================================ */
+.el-input__wrapper {
+  background-color: rgba(16, 30, 80, 0.5) !important;
+  box-shadow: 0 0 0 1px rgba(100, 150, 255, 0.3) inset !important;
+}
+
+.el-input__wrapper:hover {
+  box-shadow: 0 0 0 1px rgba(100, 150, 255, 0.5) inset !important;
+}
+
+.el-input__wrapper.is-focus {
+  box-shadow: 0 0 0 1px #4da6ff inset !important;
+}
+
+.el-input__inner {
+  color: #ffffff !important;
+}
+
+.el-input__inner::placeholder {
+  color: rgba(255, 255, 255, 0.4) !important;
+}
+
+/* ============================================
+   Select 选择器样式增强
+   ============================================ */
+.el-select .el-input__wrapper {
+  background-color: rgba(16, 30, 80, 0.5) !important;
+  box-shadow: 0 0 0 1px rgba(100, 150, 255, 0.3) inset !important;
+}
+
+.el-select .el-input__wrapper:hover {
+  box-shadow: 0 0 0 1px rgba(100, 150, 255, 0.5) inset !important;
+}
+
+.el-select .el-input__wrapper.is-focus {
+  box-shadow: 0 0 0 1px #4da6ff inset !important;
+}
+
+.el-select .el-input__inner {
+  color: #ffffff !important;
+}
+
+.el-select .el-input__inner::placeholder {
+  color: rgba(255, 255, 255, 0.4) !important;
+}
+
+/* ============================================
+   Textarea 文本域
+   ============================================ */
+.el-textarea__inner {
+
+  border-color: rgba(100, 150, 255, 0.3) !important;
+  color: #ffffff !important;
+}
+
+.el-textarea__inner:hover {
+  border-color: rgba(100, 150, 255, 0.5) !important;
+}
+
+.el-textarea__inner:focus {
+  border-color: #4da6ff !important;
+}
+
+.el-textarea__inner::placeholder {
+  color: rgba(255, 255, 255, 0.4) !important;
+}
+
+/* ============================================
+   高度对齐 - 搜索框和下拉框统一 40px
+   ============================================ */
+
+/* Element Plus 输入框和选择器统一高度 */
+.el-input,
+.el-select,
+.el-select .el-input {
+  height: 40px !important;
+}
+
+.el-input__wrapper,.el-select__wrapper,
+.el-select .el-input__wrapper {
+  height: 40px !important;
+  min-height: 40px !important;
+}
+
+.el-input__inner,
+.el-select .el-input__inner {
+  height: 40px !important;
+  line-height: 40px !important;
+}
+
+/* 下拉框图标垂直居中 */
+.el-input__suffix,
+.el-input__prefix {
+  height: 40px !important;
+  display: flex !important;
+  align-items: center !important;
+}
+
+/* ============================================
+   Dialog 对话框 - 不透明背景与背景区分
+   ============================================ */
+
+/* 对话框遮罩层 - 更深的遮罩 */
+.el-overlay {
+  background-color: rgba(0, 5, 30, 0.7) !important;
+}
+
+/* 对话框主体 - 不透明深色背景 */
+.el-dialog {
+  background: rgb(15, 25, 70) !important;
+  border: 1px solid rgba(100, 150, 255, 0.3) !important;
+  box-shadow: 0 24px 56px rgba(0, 10, 40, 0.6) !important;
+}
+
+/* 对话框标题 */
+.el-dialog__header {
+  border-bottom: 1px solid rgba(100, 150, 255, 0.2) !important;
+  padding: 20px 24px !important;
+}
+
+.el-dialog__title {
+  color: #ffffff !important;
+  font-weight: 600 !important;
+}
+
+/* 关闭按钮 */
+.el-dialog__headerbtn .el-dialog__close {
+  color: rgba(255, 255, 255, 0.6) !important;
+}
+
+.el-dialog__headerbtn:hover .el-dialog__close {
+  color: #ffffff !important;
+}
+
+/* 对话框内容区域 */
+.el-dialog__body {
+  color: rgba(255, 255, 255, 0.85) !important;
+  padding: 24px !important;
+}
+
+/* 对话框底部 */
+.el-dialog__footer {
+  border-top: 1px solid rgba(100, 150, 255, 0.2) !important;
+  padding: 16px 24px !important;
+}
+
+/* ============================================
+   浅色主题覆盖
+   ============================================ */
+html[data-theme="light"] {
+  /* Input 输入框变量 */
+  --el-input-bg-color: rgba(255, 255, 255, 0.72);
+  --el-input-text-color: #0D3064;
+  --el-input-border-color: rgba(13, 48, 100, 0.18);
+  --el-input-hover-border-color: rgba(0, 102, 255, 0.45);
+  --el-input-focus-border-color: #0066ff;
+  --el-input-placeholder-color: rgba(13, 48, 100, 0.4);
+  --el-input-icon-color: rgba(13, 48, 100, 0.55);
+
+  /* Select 选择器变量 */
+  --el-select-border-color-hover: rgba(0, 102, 255, 0.45);
+  --el-select-input-color: #0D3064;
+
+  /* 填充模式变量 */
+  --el-fill-color-blank: rgba(255, 255, 255, 0.72);
+  --el-fill-color-light: rgba(0, 102, 255, 0.08);
+  --el-fill-color: rgba(0, 102, 255, 0.12);
+  --el-fill-color-dark: rgba(0, 102, 255, 0.16);
+  --el-fill-color-darker: rgba(0, 102, 255, 0.2);
+
+  /* 边框颜色 */
+  --el-border-color: rgba(13, 48, 100, 0.18);
+  --el-border-color-light: rgba(13, 48, 100, 0.14);
+  --el-border-color-lighter: rgba(13, 48, 100, 0.1);
+  --el-border-color-extra-light: rgba(13, 48, 100, 0.08);
+  --el-border-color-hover: rgba(0, 102, 255, 0.45);
+  --el-border-color-focus: #0066ff;
+
+  /* 文字颜色 */
+  --el-text-color-primary: #0D3064;
+  --el-text-color-regular: rgba(13, 48, 100, 0.85);
+  --el-text-color-secondary: rgba(13, 48, 100, 0.65);
+  --el-text-color-placeholder: rgba(13, 48, 100, 0.4);
+  --el-text-color-disabled: rgba(13, 48, 100, 0.3);
+
+  /* 背景颜色 */
+  --el-bg-color: rgba(255, 255, 255, 0.72);
+  --el-bg-color-page: transparent;
+  --el-bg-color-overlay: rgba(255, 255, 255, 0.96);
+}
+
+html[data-theme="light"] .el-select__popper,
+html[data-theme="light"] .el-popper.is-light {
+  background: rgba(255, 255, 255, 0.96) !important;
+  border: 1px solid rgba(13, 48, 100, 0.14) !important;
+  box-shadow: 0 8px 32px rgba(13, 48, 100, 0.14) !important;
+}
+
+html[data-theme="light"] .el-select-dropdown__item {
+  color: rgba(13, 48, 100, 0.85) !important;
+}
+
+html[data-theme="light"] .el-select-dropdown__item:hover,
+html[data-theme="light"] .el-select-dropdown__item.hover {
+  background: rgba(0, 102, 255, 0.1) !important;
+  color: #0D3064 !important;
+}
+
+html[data-theme="light"] .el-select-dropdown__item.selected,
+html[data-theme="light"] .el-select-dropdown__item.is-selected {
+  background: rgba(0, 102, 255, 0.18) !important;
+  color: #0066ff !important;
+}
+
+html[data-theme="light"] .el-select-dropdown__item.selected.hover,
+html[data-theme="light"] .el-select-dropdown__item.is-selected.hover {
+  background: rgba(0, 102, 255, 0.25) !important;
+  color: #0D3064 !important;
+}
+
+html[data-theme="light"] .el-popper__arrow::before {
+  background: rgba(255, 255, 255, 0.96) !important;
+  border: 1px solid rgba(13, 48, 100, 0.14) !important;
+}
+
+html[data-theme="light"] .el-select-dropdown__empty {
+  color: rgba(13, 48, 100, 0.5) !important;
+}
+
+html[data-theme="light"] .el-input__wrapper {
+  background-color: rgba(255, 255, 255, 0.72) !important;
+  box-shadow: 0 0 0 1px rgba(13, 48, 100, 0.18) inset !important;
+}
+
+html[data-theme="light"] .el-input__wrapper:hover {
+  box-shadow: 0 0 0 1px rgba(0, 102, 255, 0.45) inset !important;
+}
+
+html[data-theme="light"] .el-input__wrapper.is-focus {
+  box-shadow: 0 0 0 1px #0066ff inset !important;
+}
+
+html[data-theme="light"] .el-input__inner {
+  color: #0D3064 !important;
+}
+
+html[data-theme="light"] .el-input__inner::placeholder {
+  color: rgba(13, 48, 100, 0.4) !important;
+}
+
+html[data-theme="light"] .el-select .el-input__wrapper {
+  background-color: rgba(255, 255, 255, 0.72) !important;
+  box-shadow: 0 0 0 1px rgba(13, 48, 100, 0.18) inset !important;
+}
+
+html[data-theme="light"] .el-select .el-input__wrapper:hover {
+  box-shadow: 0 0 0 1px rgba(0, 102, 255, 0.45) inset !important;
+}
+
+html[data-theme="light"] .el-select .el-input__wrapper.is-focus {
+  box-shadow: 0 0 0 1px #0066ff inset !important;
+}
+
+html[data-theme="light"] .el-select .el-input__inner {
+  color: #0D3064 !important;
+}
+
+html[data-theme="light"] .el-select .el-input__inner::placeholder {
+  color: rgba(13, 48, 100, 0.4) !important;
+}
+
+html[data-theme="light"] .el-textarea__inner {
+  background-color: rgba(255, 255, 255, 0.72) !important;
+  border-color: rgba(13, 48, 100, 0.18) !important;
+  color: #0D3064 !important;
+}
+
+html[data-theme="light"] .el-textarea__inner:hover {
+  border-color: rgba(0, 102, 255, 0.45) !important;
+}
+
+html[data-theme="light"] .el-textarea__inner:focus {
+  border-color: #0066ff !important;
+}
+
+html[data-theme="light"] .el-textarea__inner::placeholder {
+  color: rgba(13, 48, 100, 0.4) !important;
+}
+
+html[data-theme="light"] .el-overlay {
+  background-color: rgba(13, 48, 100, 0.35) !important;
+}
+
+html[data-theme="light"] .el-dialog {
+  background: #ffffff !important;
+  border: 1px solid rgba(13, 48, 100, 0.12) !important;
+  box-shadow: 0 24px 56px rgba(13, 48, 100, 0.18) !important;
+}
+
+html[data-theme="light"] .el-dialog__header {
+  border-bottom: 1px solid rgba(13, 48, 100, 0.1) !important;
+}
+
+html[data-theme="light"] .el-dialog__title {
+  color: #0D3064 !important;
+}
+
+html[data-theme="light"] .el-dialog__headerbtn .el-dialog__close {
+  color: rgba(13, 48, 100, 0.55) !important;
+}
+
+html[data-theme="light"] .el-dialog__headerbtn:hover .el-dialog__close {
+  color: #0D3064 !important;
+}
+
+html[data-theme="light"] .el-dialog__body {
+  color: rgba(13, 48, 100, 0.85) !important;
+}
+
+html[data-theme="light"] .el-dialog__footer {
+  border-top: 1px solid rgba(13, 48, 100, 0.1) !important;
+}

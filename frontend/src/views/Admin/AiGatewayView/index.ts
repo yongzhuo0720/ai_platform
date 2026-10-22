@@ -1,0 +1,373 @@
+import { computed, onMounted, reactive } from 'vue'
+import { ElMessage, ElMessageBox } from 'element-plus'
+import {
+  aiGatewayAdminApi,
+  type AiCallLog,
+  type AiGatewayConfigStatus,
+  type AiGatewaySummary,
+  type AiGatewayUserOption,
+  type AiQuotaOverview,
+  type AiQuotaView,
+} from '@/api/aiGatewayAdmin'
+import { debug } from '@/utils/debug'
+
+const MODULE_LABELS: Record<string, string> = {
+  chat: '问答聊天',
+  knowledgeChat: '知识库对话',
+  file: '知识库文件',
+  agent: '智能体助手',
+}
+
+const STATUS_LABELS: Record<string, string> = {
+  success: '成功',
+  failed: '失败',
+  blocked: '已拦截',
+  aborted: '已中断',
+}
+
+function formatDate(date: Date): string {
+  const year = date.getFullYear()
+  const month = String(date.getMonth() + 1).padStart(2, '0')
+  const day = String(date.getDate()).padStart(2, '0')
+  return `${year}-${month}-${day}`
+}
+
+function defaultRange(): string[] {
+  const end = new Date()
+  const start = new Date()
+  start.setDate(start.getDate() - 6)
+  return [formatDate(start), formatDate(end)]
+}
+
+export function useIndex() {
+  const state = reactive({
+    activeTab: 'overview',
+    config: null as AiGatewayConfigStatus | null,
+    range: defaultRange(),
+    summary: null as AiGatewaySummary | null,
+    summaryLoading: false,
+    logs: [] as AiCallLog[],
+    logsLoading: false,
+    logQuery: {
+      userId: '',
+      module: '',
+      status: '',
+    },
+    pagination: {
+      pageNum: 1,
+      pageSize: 20,
+      total: 0,
+    },
+    quotas: null as AiQuotaOverview | null,
+    quotasLoading: false,
+    users: [] as AiGatewayUserOption[],
+    usersLoaded: false,
+    quotaDialogVisible: false,
+    quotaEditing: false,
+    quotaSaving: false,
+    quotaForm: {
+      userId: '',
+      dailyTokenQuota: 100000,
+      remark: '',
+    },
+  })
+
+  const trendMax = computed(() =>
+    Math.max(1, ...(state.summary?.trend ?? []).map((point) => point.calls))
+  )
+  const moduleMax = computed(() =>
+    Math.max(1, ...(state.summary?.modules ?? []).map((item) => item.calls))
+  )
+  const userMax = computed(() =>
+    Math.max(1, ...(state.summary?.topUsers ?? []).map((item) => item.calls))
+  )
+
+  onMounted(() => {
+    loadConfig()
+    loadSummary()
+  })
+
+  async function loadConfig() {
+    try {
+      const { data: res } = await aiGatewayAdminApi.getConfig()
+      if (res.resp_code === 0) {
+        state.config = res.datas
+      }
+    } catch (err) {
+      debug.error('获取 AI 网关配置失败', err)
+    }
+  }
+
+  function dateParams() {
+    if (state.range.length !== 2) return {}
+    return { startDate: state.range[0], endDate: state.range[1] }
+  }
+
+  async function loadSummary() {
+    state.summaryLoading = true
+    try {
+      const { data: res } = await aiGatewayAdminApi.getSummary(dateParams())
+      if (res.resp_code === 0) {
+        state.summary = res.datas
+      } else {
+        ElMessage.error(res.resp_msg || '获取用量汇总失败')
+      }
+    } catch (err) {
+      debug.error('获取 AI 用量汇总失败', err)
+      ElMessage.error('获取用量汇总失败，请稍后重试')
+    } finally {
+      state.summaryLoading = false
+    }
+  }
+
+  async function loadLogs(reset = false) {
+    if (reset) {
+      state.pagination.pageNum = 1
+    }
+    state.logsLoading = true
+    try {
+      const { data: res } = await aiGatewayAdminApi.getLogs({
+        pageNum: state.pagination.pageNum,
+        pageSize: state.pagination.pageSize,
+        userId: state.logQuery.userId.trim() || undefined,
+        module: state.logQuery.module || undefined,
+        status: state.logQuery.status || undefined,
+        ...dateParams(),
+      })
+      if (res.resp_code === 0) {
+        state.logs = res.datas?.content ?? []
+        state.pagination.total = res.datas?.totalSize ?? 0
+      } else {
+        ElMessage.error(res.resp_msg || '获取调用日志失败')
+      }
+    } catch (err) {
+      debug.error('获取 AI 调用日志失败', err)
+      ElMessage.error('获取调用日志失败，请稍后重试')
+    } finally {
+      state.logsLoading = false
+    }
+  }
+
+  async function loadQuotas() {
+    state.quotasLoading = true
+    try {
+      const { data: res } = await aiGatewayAdminApi.getQuotas()
+      if (res.resp_code === 0) {
+        state.quotas = res.datas
+      } else {
+        ElMessage.error(res.resp_msg || '获取配额列表失败')
+      }
+    } catch (err) {
+      debug.error('获取 AI 配额列表失败', err)
+      ElMessage.error('获取配额列表失败，请稍后重试')
+    } finally {
+      state.quotasLoading = false
+    }
+  }
+
+  async function loadUsers() {
+    if (state.usersLoaded) return
+    try {
+      const { data: res } = await aiGatewayAdminApi.getUsers()
+      if (res.resp_code === 0) {
+        state.users = res.datas ?? []
+        state.usersLoaded = true
+      }
+    } catch (err) {
+      debug.error('获取用户列表失败', err)
+    }
+  }
+
+  function onTabChange(name: string | number) {
+    if (name === 'logs' && state.logs.length === 0) {
+      loadLogs(true)
+    }
+    if (name === 'quotas' && !state.quotas) {
+      loadQuotas()
+    }
+  }
+
+  function handleSizeChange(size: number) {
+    state.pagination.pageSize = size
+    loadLogs()
+  }
+
+  function handleCurrentChange(page: number) {
+    state.pagination.pageNum = page
+    loadLogs()
+  }
+
+  function openQuotaDialog(row?: AiQuotaView) {
+    state.quotaEditing = Boolean(row)
+    state.quotaForm.userId = row?.userId ?? ''
+    state.quotaForm.dailyTokenQuota =
+      row?.dailyTokenQuota ?? state.quotas?.defaultDailyTokenQuota ?? 200000
+    state.quotaForm.remark = row?.remark ?? ''
+    state.quotaDialogVisible = true
+    loadUsers()
+  }
+
+  async function saveQuota() {
+    const userId = state.quotaForm.userId.trim()
+    if (!userId) {
+      ElMessage.warning('请选择用户')
+      return
+    }
+    state.quotaSaving = true
+    try {
+      const { data: res } = await aiGatewayAdminApi.saveQuota({
+        userId,
+        dailyTokenQuota: Math.max(0, Number(state.quotaForm.dailyTokenQuota) || 0),
+        remark: state.quotaForm.remark.trim(),
+      })
+      if (res.resp_code === 0) {
+        ElMessage.success('配额已保存')
+        state.quotaDialogVisible = false
+        loadQuotas()
+      } else {
+        ElMessage.error(res.resp_msg || '保存配额失败')
+      }
+    } catch (err) {
+      debug.error('保存 AI 配额失败', err)
+      ElMessage.error('保存配额失败，请稍后重试')
+    } finally {
+      state.quotaSaving = false
+    }
+  }
+
+  async function deleteQuota(row: AiQuotaView) {
+    try {
+      await ElMessageBox.confirm(
+        `确定删除「${row.userName}」的配额覆盖吗？删除后恢复默认配额。`,
+        '删除确认',
+        { type: 'warning' }
+      )
+    } catch {
+      return
+    }
+    try {
+      const { data: res } = await aiGatewayAdminApi.deleteQuota({ userId: row.userId })
+      if (res.resp_code === 0) {
+        ElMessage.success('已恢复默认配额')
+        loadQuotas()
+      } else {
+        ElMessage.error(res.resp_msg || '删除失败')
+      }
+    } catch (err) {
+      debug.error('删除 AI 配额失败', err)
+      ElMessage.error('删除失败，请稍后重试')
+    }
+  }
+
+  function moduleLabel(module: string): string {
+    return MODULE_LABELS[module] ?? module
+  }
+
+  function statusLabel(status: string): string {
+    return STATUS_LABELS[status] ?? status
+  }
+
+  function statusTagType(status: string): 'success' | 'danger' | 'warning' | 'info' {
+    if (status === 'success') return 'success'
+    if (status === 'failed') return 'danger'
+    if (status === 'blocked') return 'warning'
+    return 'info'
+  }
+
+  function formatTokens(value: number | null | undefined): string {
+    const num = Number(value ?? 0)
+    if (num >= 1000000) {
+      return `${(num / 1000000).toFixed(num >= 10000000 ? 0 : 1)}M`
+    }
+    if (num >= 1000) {
+      return `${(num / 1000).toFixed(num >= 10000 ? 0 : 1)}K`
+    }
+    return String(num)
+  }
+
+  function formatDuration(ms: number | null | undefined): string {
+    if (ms === null || ms === undefined) return '-'
+    if (ms >= 1000) return `${(ms / 1000).toFixed(2)}s`
+    return `${ms}ms`
+  }
+
+  function formatTime(value: number | string | null | undefined): string {
+    if (value === null || value === undefined || value === '') return '-'
+    if (typeof value === 'number') {
+      return formatDateValue(new Date(value))
+    }
+    const text = String(value)
+    const normalized = text.replace(/\//g, '-').replace(' ', 'T')
+    const parsed = new Date(normalized)
+    if (Number.isNaN(parsed.getTime())) return text
+    return formatDateValue(parsed)
+  }
+
+  function formatDateValue(date: Date): string {
+    const pad = (num: number) => String(num).padStart(2, '0')
+    return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`
+  }
+
+  function trendHeight(calls: number): string {
+    if (calls <= 0) return '0%'
+    return `${Math.max(4, (calls / trendMax.value) * 100)}%`
+  }
+
+  function failedHeight(calls: number, failed: number): string {
+    if (calls <= 0 || failed <= 0) return '0%'
+    return `${Math.min(100, (failed / calls) * 100)}%`
+  }
+
+  function moduleWidth(calls: number): string {
+    if (calls <= 0) return '0%'
+    return `${Math.max(2, (calls / moduleMax.value) * 100)}%`
+  }
+
+  function userWidth(calls: number): string {
+    if (calls <= 0) return '0%'
+    return `${Math.max(2, (calls / userMax.value) * 100)}%`
+  }
+
+  function usagePercent(row: AiQuotaView): number {
+    if (row.effectiveQuota <= 0) return 0
+    return Math.min(100, Math.round((row.usedToday / row.effectiveQuota) * 100))
+  }
+
+  function quotaText(quota: number | null | undefined): string {
+    if (quota === null || quota === undefined) return '默认'
+    return quota <= 0 ? '不限制' : `${formatTokens(quota)} tokens/日`
+  }
+
+  function userLabel(option: AiGatewayUserOption): string {
+    const name = option.uname || option.uaccess || option.uid
+    return option.uaccess ? `${name}（${option.uaccess}）` : name
+  }
+
+  return {
+    state,
+    trendMax,
+    loadConfig,
+    loadSummary,
+    loadLogs,
+    loadQuotas,
+    onTabChange,
+    handleSizeChange,
+    handleCurrentChange,
+    openQuotaDialog,
+    saveQuota,
+    deleteQuota,
+    moduleLabel,
+    statusLabel,
+    statusTagType,
+    formatTokens,
+    formatDuration,
+    formatTime,
+    trendHeight,
+    failedHeight,
+    moduleWidth,
+    userWidth,
+    usagePercent,
+    quotaText,
+    userLabel,
+  }
+}
