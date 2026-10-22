@@ -1,0 +1,637 @@
+.login-screen {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  position: relative;
+  overflow: hidden;
+  background: var(--brand-blue-900);
+}
+
+/* ===== 背景层 ===== */
+.login-bg-layer {
+  position: absolute;
+  inset: 0;
+  background: url('@/assets/images/login-bg.jpg') center/cover no-repeat;
+  transform: scale(1.05);
+  transition: transform 0.8s ease, filter 0.6s ease;
+}
+
+.login-gradient-overlay {
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(circle at 25% 25%, rgba(26, 74, 140, 0.28) 0%, transparent 42%),
+    radial-gradient(circle at 75% 75%, rgba(11, 42, 91, 0.32) 0%, transparent 46%),
+    linear-gradient(135deg, rgba(10, 30, 69, 0.45) 0%, rgba(26, 74, 140, 0.32) 100%);
+  transition: background 0.6s ease;
+}
+
+.login-screen.is-admin-mode .login-bg-layer {
+  filter: brightness(0.72) saturate(0.75);
+  transform: scale(1);
+}
+
+.login-screen.is-admin-mode .login-gradient-overlay {
+  background:
+    radial-gradient(circle at 75% 25%, rgba(11, 42, 91, 0.38) 0%, transparent 42%),
+    radial-gradient(circle at 25% 75%, rgba(26, 74, 140, 0.28) 0%, transparent 46%),
+    linear-gradient(135deg, rgba(8, 22, 50, 0.55) 0%, rgba(26, 74, 140, 0.38) 100%);
+}
+
+/* ===== 漂浮玻璃光球 ===== */
+.login-orb {
+  position: absolute;
+  border-radius: 50%;
+  filter: blur(60px);
+  opacity: 0.45;
+  pointer-events: none;
+  animation: orb-float 10s ease-in-out infinite alternate;
+}
+
+.orb-1 {
+  width: 340px;
+  height: 340px;
+  top: -80px;
+  left: -60px;
+  background: rgba(74, 143, 214, 0.55);
+  animation-delay: -2s;
+}
+
+.orb-2 {
+  width: 260px;
+  height: 260px;
+  bottom: -40px;
+  right: -30px;
+  background: rgba(26, 74, 140, 0.6);
+  animation-delay: -5s;
+}
+
+.orb-3 {
+  width: 180px;
+  height: 180px;
+  top: 40%;
+  left: 55%;
+  background: rgba(123, 176, 224, 0.4);
+  animation-delay: -7s;
+}
+
+.orb-4 {
+  width: 120px;
+  height: 120px;
+  top: 20%;
+  right: 20%;
+  background: rgba(255, 255, 255, 0.18);
+  animation-delay: -3s;
+}
+
+@keyframes orb-float {
+  0% {
+    transform: translate(0, 0) scale(1);
+  }
+  100% {
+    transform: translate(24px, 18px) scale(1.08);
+  }
+}
+
+/* ===== 登录卡片 ===== */
+.login-card {
+    width: 100%;
+    max-width: 760px;
+    min-height: 480px;
+    border-radius: var(--radius-2xl);
+    background: rgba(255, 255, 255, 0.52);
+    backdrop-filter: blur(24px) saturate(150%);
+    -webkit-backdrop-filter: blur(24px) saturate(150%);
+    border: 1px solid rgba(255, 255, 255, 0.42);
+    box-shadow: 0 24px 80px rgba(10, 30, 69, 0.2), inset 0 1px 0 rgba(255, 255, 255, 0.55);
+    position: relative;
+    z-index: 1;
+    overflow: hidden;
+    transition: box-shadow 0.6s ease;
+}
+
+.login-screen.is-admin-mode .login-card {
+  box-shadow:
+    0 24px 80px rgba(10, 30, 69, 0.26),
+    inset 0 1px 0 rgba(255, 255, 255, 0.7);
+}
+
+/* ===== 卡片内部装饰色块 ===== */
+.login-card-decos {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 0;
+  overflow: hidden;
+}
+
+.card-deco {
+  position: absolute;
+  border-radius: 50%;
+  filter: blur(50px);
+  opacity: 0.55;
+  animation: deco-pulse 8s ease-in-out infinite alternate;
+}
+
+.deco-a {
+  width: 220px;
+  height: 220px;
+  top: -60px;
+  left: -50px;
+  background: rgba(74, 143, 214, 0.55);
+  animation-delay: -1s;
+}
+
+.deco-b {
+  width: 180px;
+  height: 180px;
+  bottom: -50px;
+  right: -40px;
+  background: rgba(26, 74, 140, 0.45);
+  animation-delay: -4s;
+}
+
+.deco-c {
+  width: 120px;
+  height: 120px;
+  top: 45%;
+  left: 45%;
+  background: rgba(123, 176, 224, 0.35);
+  animation-delay: -6s;
+}
+
+.deco-d {
+  width: 90px;
+  height: 90px;
+  top: 15%;
+  right: 18%;
+  border-radius: 30% 70% 70% 30% / 30% 30% 70% 70%;
+  background: rgba(214, 40, 40, 0.18);
+  animation-delay: -2.5s;
+}
+
+@keyframes deco-pulse {
+  0% {
+    transform: translate(0, 0) scale(1) rotate(0deg);
+    opacity: 0.5;
+  }
+  100% {
+    transform: translate(16px, 12px) scale(1.1) rotate(8deg);
+    opacity: 0.65;
+  }
+}
+
+.login-panels {
+  display: flex;
+  width: 100%;
+  height: 100%;
+  min-height: 480px;
+  position: relative;
+  z-index: 1;
+}
+
+.login-panel {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 40px 36px;
+  transition: opacity 0.4s ease;
+}
+
+
+
+.panel-content {
+  width: 100%;
+  max-width: 320px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+}
+
+.panel-logo {
+  width: 60px;
+  height: 60px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-lg);
+  background: var(--gradient-primary);
+  color: #ffffff;
+  box-shadow: 0 10px 28px rgba(26, 74, 140, 0.35);
+  margin-bottom: 18px;
+}
+
+.panel-logo.admin {
+  background: linear-gradient(135deg, var(--brand-blue-900) 0%, var(--brand-blue-700) 100%);
+}
+
+.panel-logo .logo-image {
+  width: 60px;
+  height: 60px;
+}
+
+.panel-title {
+  font-size: 28px;
+  font-weight: 700;
+  color: #1a1a2e;
+  letter-spacing: 0.01em;
+  margin-bottom: 6px;
+  font-family: "PingFang SC", "Microsoft YaHei", sans-serif;
+}
+
+.panel-desc {
+  font-size: 13px;
+  color: #4a5568;
+  line-height: 1.6;
+  margin-bottom: 24px;
+}
+
+/* ===== 表单 ===== */
+.login-form {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.login-field {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  text-align: left;
+}
+
+.login-field label {
+  font-size: 12px;
+  font-weight: 500;
+  color: #4a5568;
+  padding-left: 2px;
+}
+
+/* 左侧输入框（玻璃态背景上） */
+.login-panel.panel-user .login-field .input-field {
+  width: 100%;
+  padding: 14px 18px;
+  border-radius: var(--radius-md);
+  background: #ffffff;
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  font-size: 14px;
+  color: #1a1a2e;
+  transition: all var(--transition-fast);
+}
+
+.login-panel.panel-user .login-field .input-field:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+  background: #ffffff;
+  color: #1a1a2e;
+}
+
+.login-panel.panel-user .login-field .input-field::placeholder {
+  color: #9ca3af;
+}
+
+.login-panel.panel-user .login-field .input-field:-webkit-autofill,
+.login-panel.panel-user .login-field .input-field:-webkit-autofill:hover,
+.login-panel.panel-user .login-field .input-field:-webkit-autofill:focus,
+.login-panel.panel-user .login-field .input-field:-webkit-autofill:active {
+  -webkit-box-shadow: 0 0 0 1000px #ffffff inset !important;
+  -webkit-text-fill-color: #1a1a2e !important;
+  background-color: #ffffff !important;
+  transition: background-color 5000s ease-in-out 0s;
+}
+
+/* 右侧输入框（玻璃态背景上） */
+.login-panel.panel-admin .login-field .input-field {
+  width: 100%;
+  padding: 14px 18px;
+  border-radius: var(--radius-md);
+  background: #ffffff;
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  font-size: 14px;
+  color: #1a1a2e;
+  transition: all var(--transition-fast);
+}
+
+.login-panel.panel-admin .login-field .input-field:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+  background: #ffffff;
+  color: #1a1a2e;
+}
+
+.login-panel.panel-admin .login-field .input-field::placeholder {
+  color: #9ca3af;
+}
+
+.login-panel.panel-admin .login-field .input-field:-webkit-autofill,
+.login-panel.panel-admin .login-field .input-field:-webkit-autofill:hover,
+.login-panel.panel-admin .login-field .input-field:-webkit-autofill:focus,
+.login-panel.panel-admin .login-field .input-field:-webkit-autofill:active {
+  -webkit-box-shadow: 0 0 0 1000px #ffffff inset !important;
+  -webkit-text-fill-color: #1a1a2e !important;
+  background-color: #ffffff !important;
+  transition: background-color 5000s ease-in-out 0s;
+}
+
+.login-btn {
+  width: 100%;
+  padding: 14px;
+  margin-top: 6px;
+  border-radius: var(--radius-md);
+  background: linear-gradient(135deg, #1a4a8c 0%, #0b2a5b 100%);
+  color: #ffffff;
+  font-size: 15px;
+  font-weight: 600;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  box-shadow: 0 8px 20px rgba(26, 74, 140, 0.35);
+  transition: all var(--transition-fast);
+  border: none;
+}
+
+.login-btn.admin {
+  background: linear-gradient(135deg, #1a4a8c 0%, #0b2a5b 100%);
+  color: #ffffff;
+  box-shadow: 0 8px 20px rgba(26, 74, 140, 0.35);
+}
+
+.login-btn:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 12px 26px rgba(26, 74, 140, 0.45);
+}
+
+.login-btn.admin:hover {
+  box-shadow: 0 12px 26px rgba(26, 74, 140, 0.45);
+}
+
+.login-btn:disabled {
+  opacity: 0.7;
+  cursor: not-allowed;
+  transform: none;
+}
+
+.login-btn-icon {
+  width: 16px;
+  height: 16px;
+}
+
+/* ===== 液体滤镜 ===== */
+.liquid-svg-filter {
+  position: absolute;
+  width: 0;
+  height: 0;
+  pointer-events: none;
+}
+
+/* ===== 滑动遮罩 ===== */
+.login-slider {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 50%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 40px 36px;
+  z-index: 2;
+  transition: left 0.75s cubic-bezier(0.68, -0.25, 0.32, 1.25);
+}
+
+.login-slider.is-right {
+  left: 50%;
+}
+
+/* 液体层：应用 gooey filter，内容层在其上方 */
+.login-slider-liquid {
+  position: absolute;
+  inset: 0;
+  filter: url(#liquid-goo);
+  pointer-events: none;
+  overflow: visible;
+}
+
+.login-slider-shell {
+  position: absolute;
+  inset: 0;
+  background:
+    linear-gradient(135deg, rgba(255, 255, 255, 0.2) 0%, rgba(255, 255, 255, 0.02) 100%),
+    linear-gradient(135deg, #1a4a8c 0%, #0b2a5b 100%);
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  border-radius: 0 36px 36px 0 / 0 55% 55% 0;
+  box-shadow: 8px 0 32px rgba(10, 30, 69, 0.18);
+  transition:
+    left 0.75s cubic-bezier(0.68, -0.25, 0.32, 1.25),
+    border-radius 0.65s cubic-bezier(0.45, 0, 0.55, 1),
+    background 0.5s ease,
+    box-shadow 0.5s ease;
+}
+
+.login-slider.is-right .login-slider-shell {
+  border-radius: 36px 0 0 36px / 55% 0 0 55%;
+  box-shadow: -8px 0 32px rgba(10, 30, 69, 0.18);
+  background:
+    linear-gradient(135deg, rgba(255, 255, 255, 0.15) 0%, rgba(255, 255, 255, 0.02) 100%),
+    linear-gradient(135deg, #0a1e45 0%, #1a4a8c 100%);
+}
+
+/* 滑动时外壳像浓稠液体一样被拉伸、甩尾 */
+.login-slider.to-right .login-slider-shell {
+  animation: liquid-slide-right 0.75s cubic-bezier(0.68, -0.25, 0.32, 1.25) forwards;
+}
+
+.login-slider.to-left .login-slider-shell {
+  animation: liquid-slide-left 0.75s cubic-bezier(0.68, -0.25, 0.32, 1.25) forwards;
+}
+
+@keyframes liquid-slide-right {
+  0% {
+    transform: scaleX(1) scaleY(1) skewX(0deg);
+    border-radius: 0 36px 36px 0 / 0 55% 55% 0;
+  }
+  20% {
+    transform: scaleX(1.25) scaleY(0.95) skewX(-10deg);
+    border-radius: 0 60% 40% 0 / 0 70% 55% 0;
+  }
+  45% {
+    transform: scaleX(1.35) scaleY(0.88) skewX(-14deg);
+    border-radius: 15% 70% 55% 15% / 40% 80% 65% 40%;
+  }
+  70% {
+    transform: scaleX(1.12) scaleY(0.96) skewX(-4deg);
+    border-radius: 30px 0 0 30px / 50% 0 0 50%;
+  }
+  100% {
+    transform: scaleX(1) scaleY(1) skewX(0deg);
+    border-radius: 36px 0 0 36px / 55% 0 0 55%;
+  }
+}
+
+@keyframes liquid-slide-left {
+  0% {
+    transform: scaleX(1) scaleY(1) skewX(0deg);
+    border-radius: 36px 0 0 36px / 55% 0 0 55%;
+  }
+  20% {
+    transform: scaleX(1.25) scaleY(0.95) skewX(10deg);
+    border-radius: 60% 0 0 40% / 70% 0 0 55%;
+  }
+  45% {
+    transform: scaleX(1.35) scaleY(0.88) skewX(14deg);
+    border-radius: 70% 15% 15% 55% / 80% 40% 40% 65%;
+  }
+  70% {
+    transform: scaleX(1.12) scaleY(0.96) skewX(4deg);
+    border-radius: 0 30px 30px 0 / 0 50% 50% 0;
+  }
+  100% {
+    transform: scaleX(1) scaleY(1) skewX(0deg);
+    border-radius: 0 36px 36px 0 / 0 55% 55% 0;
+  }
+}
+
+/* ===== 滑动内容 ===== */
+.slider-content {
+  position: relative;
+  z-index: 3;
+  width: 100%;
+  max-width: 300px;
+  text-align: center;
+}
+
+.slider-cta {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  color: #ffffff;
+}
+
+.slider-icon {
+  width: 64px;
+  height: 64px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.15);
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  backdrop-filter: blur(8px);
+  margin-bottom: 20px;
+}
+
+.slider-icon svg {
+  width: 28px;
+  height: 28px;
+}
+
+.slider-cta h3 {
+  font-size: 22px;
+  font-weight: 700;
+  margin-bottom: 8px;
+  letter-spacing: -0.01em;
+  text-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+}
+
+.slider-cta p {
+  font-size: 13px;
+  line-height: 1.7;
+  opacity: 0.92;
+  margin-bottom: 24px;
+}
+
+.slider-btn {
+  padding: 12px 28px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.15);
+  border: 1px solid rgba(255, 255, 255, 0.45);
+  color: #ffffff;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all var(--transition-fast);
+  backdrop-filter: blur(8px);
+}
+
+.slider-btn:hover {
+  background: rgba(255, 255, 255, 0.28);
+  border-color: rgba(255, 255, 255, 0.7);
+  transform: translateY(-2px);
+  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.15);
+}
+
+/* ===== 响应式 ===== */
+@media (max-width: 768px) {
+  .login-card {
+    max-width: 420px;
+    min-height: auto;
+  }
+
+  .login-panels {
+    min-height: auto;
+    flex-direction: column;
+  }
+
+  .login-panel {
+    padding: 36px 28px;
+  }
+
+  .panel-admin {
+    display: none;
+  }
+
+  .login-slider {
+    position: relative;
+    width: 100%;
+    left: 0 !important;
+    border: none;
+    padding: 32px 28px;
+  }
+
+  .login-slider-liquid {
+    display: none;
+  }
+
+  .login-screen.is-admin-mode .panel-admin {
+    display: flex;
+  }
+
+  .login-screen.is-admin-mode .panel-user {
+    display: none;
+  }
+}
+
+@media (max-width: 480px) {
+  .login-screen {
+    padding: 16px;
+  }
+
+  .login-panel,
+  .login-slider {
+    padding: 28px 22px;
+  }
+
+  .panel-logo,
+  .slider-icon {
+    width: 56px;
+    height: 56px;
+  }
+
+  .panel-logo svg,
+  .slider-icon svg {
+    width: 26px;
+    height: 26px;
+  }
+
+  .panel-title,
+  .slider-cta h3 {
+    font-size: 22px;
+  }
+}

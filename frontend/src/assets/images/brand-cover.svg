@@ -1,0 +1,32 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 360" role="img" aria-label="知识库封面">
+  <defs>
+    <linearGradient id="cover-bg" x1="0" y1="0" x2="640" y2="360" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#1E3A8A" />
+      <stop offset="0.55" stop-color="#2563EB" />
+      <stop offset="1" stop-color="#7C3AED" />
+    </linearGradient>
+    <pattern id="cover-grid" width="32" height="32" patternUnits="userSpaceOnUse">
+      <path d="M32 0H0v32" fill="none" stroke="#FFFFFF" stroke-opacity="0.07" />
+    </pattern>
+  </defs>
+  <rect width="640" height="360" fill="url(#cover-bg)" />
+  <rect width="640" height="360" fill="url(#cover-grid)" />
+  <g fill="none" stroke="#FFFFFF" stroke-opacity="0.38" stroke-width="1.6">
+    <path d="M96 268 196 162 320 214 438 108 552 168" />
+    <path d="M196 162 232 68M320 214v96M438 108 474 42M552 168l40-64" />
+  </g>
+  <g fill="#FFFFFF">
+    <circle cx="96" cy="268" r="4.5" opacity="0.55" />
+    <circle cx="196" cy="162" r="6" opacity="0.8" />
+    <circle cx="320" cy="214" r="10" opacity="0.95" />
+    <circle cx="438" cy="108" r="6" opacity="0.8" />
+    <circle cx="552" cy="168" r="4.5" opacity="0.55" />
+    <circle cx="232" cy="68" r="3.5" opacity="0.5" />
+    <circle cx="474" cy="42" r="3.5" opacity="0.5" />
+    <circle cx="320" cy="310" r="3.5" opacity="0.5" />
+  </g>
+  <g fill="none" stroke="#FFFFFF" stroke-opacity="0.16" stroke-width="1.4">
+    <circle cx="320" cy="214" r="34" />
+    <circle cx="320" cy="214" r="58" />
+  </g>
+</svg>

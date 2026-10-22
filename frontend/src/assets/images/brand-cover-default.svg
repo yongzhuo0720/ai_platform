@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 360" role="img" aria-label="知识库封面">
+  <defs>
+    <linearGradient id="cover-bg" x1="0" y1="0" x2="640" y2="360" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#312E81" />
+      <stop offset="0.5" stop-color="#4F46E5" />
+      <stop offset="1" stop-color="#0EA5E9" />
+    </linearGradient>
+    <pattern id="cover-grid" width="40" height="40" patternUnits="userSpaceOnUse">
+      <path d="M40 0H0v40" fill="none" stroke="#FFFFFF" stroke-opacity="0.06" />
+    </pattern>
+  </defs>
+  <rect width="640" height="360" fill="url(#cover-bg)" />
+  <rect width="640" height="360" fill="url(#cover-grid)" />
+  <g transform="translate(320 180)" fill="none" stroke="#FFFFFF" stroke-opacity="0.2" stroke-width="1.6">
+    <circle r="86" />
+    <circle r="58" />
+    <circle r="30" />
+  </g>
+  <circle cx="320" cy="180" r="14" fill="#FFFFFF" opacity="0.95" />
+  <circle cx="320" cy="94" r="7" fill="#FFFFFF" opacity="0.8" />
+  <circle cx="226" cy="236" r="7" fill="#FFFFFF" opacity="0.8" />
+  <circle cx="414" cy="236" r="7" fill="#FFFFFF" opacity="0.8" />
+</svg>

@@ -1,0 +1,124 @@
+.content {
+  width: 100%;
+  color: var(--text-primary);
+
+  .page-block {
+    margin-top: 20px;
+    display: flex;
+  }
+}
+
+.user-search-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  padding: 20px 24px;
+  margin-bottom: 20px;
+  border-radius: 8px;
+  background: var(--glass-bg);
+  backdrop-filter: var(--glass-blur);
+  -webkit-backdrop-filter: var(--glass-blur);
+  border: 1px solid var(--glass-border);
+  box-shadow: var(--glass-shadow);
+}
+
+.search-form {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 16px;
+  flex: 1;
+
+  :deep(.el-form-item) {
+    margin-bottom: 0;
+  }
+
+  :deep(.el-form-item__label) {
+    color: var(--text-secondary);
+    font-weight: 500;
+  }
+
+  :deep(.el-form-item__content) {
+    gap: 12px;
+  }
+}
+
+.user-table-card {
+  border-radius: 5px;
+  background: transparent;
+  border: 1px solid var(--glass-border);
+  box-shadow: var(--glass-shadow);
+  overflow: hidden;
+}
+
+/* Element Plus 表格深色玻璃拟态 */
+:deep(.el-table) {
+  background: transparent;
+  --el-table-border-color: #ffffff33;
+  --el-table-row-hover-bg-color: rgba(16, 30, 80, 0.55);
+  --el-table-header-bg-color: transparent;
+}
+
+:deep(.el-table__header-wrapper th) {
+  background: linear-gradient(180deg, rgb(16, 96, 170) 0%, rgb(5, 53, 104) 100%) !important;
+  border-right: 1px solid #ffffff33 !important;
+  color: #ffffff !important;
+  font-weight: 600;
+  height: 44px;
+}
+
+:deep(.el-table__body-wrapper td) {
+  background: transparent !important;
+  color: rgba(255, 255, 255, 0.9) !important;
+  border-bottom-color: #ffffff33 !important;
+}
+
+:deep(.el-table--striped .el-table__body tr.el-table__row--striped td) {
+  background: transparent !important;
+}
+
+:deep(.el-table__body tr:hover td) {
+  background: rgba(16, 30, 80, 0.6) !important;
+}
+
+:deep(.el-table__empty-text) {
+  color: rgba(255, 255, 255, 0.6);
+}
+
+/* 表格内滚动条 */
+:deep(.el-table__body-wrapper::-webkit-scrollbar) {
+  width: 6px;
+  height: 6px;
+}
+
+:deep(.el-table__body-wrapper::-webkit-scrollbar-track) {
+  background: rgba(16, 30, 80, 0.3);
+  border-radius: 3px;
+}
+
+:deep(.el-table__body-wrapper::-webkit-scrollbar-thumb) {
+  background: rgba(100, 150, 255, 0.35);
+  border-radius: 3px;
+}
+
+:deep(.el-table__body-wrapper::-webkit-scrollbar-thumb:hover) {
+  background: rgba(100, 150, 255, 0.55);
+}
+
+/* 增加行高，让表格更接近截图 */
+:deep(.el-table__cell) {
+  padding: 10px 0 !important;
+}
+
+/* 操作按钮间距 */
+.user-table-card .action-btn + .action-btn {
+  margin-left: 8px;
+}
+.btn{
+ padding: 3px 16px;
+}
+.action-btn{
+ padding: 3px 10px;
+}
+

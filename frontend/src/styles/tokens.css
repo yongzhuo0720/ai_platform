@@ -1,0 +1,269 @@
+@import url("https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap");
+
+/* 优设标题黑 - 本地字体文件，避免依赖 CDN */
+@font-face {
+  font-family: "YouSheBiaoTiHei";
+  src: url("/assets/fonts/YouSheBiaoTiHei-Regular.woff2") format("woff2");
+  font-weight: normal;
+  font-style: normal;
+  font-display: swap;
+}
+
+:root {
+  color-scheme: light;
+  font-family:
+    "Inter",
+    -apple-system,
+    BlinkMacSystemFont,
+    "SF Pro Text",
+    "SF Pro Display",
+    "PingFang SC",
+    "Helvetica Neue",
+    sans-serif;
+  line-height: 1.5;
+  font-weight: 400;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+
+  /* 深色科技风玻璃拟态 - 适配蓝色背景 */
+  --glass-bg: rgba(16, 30, 80, 0.45);
+  --glass-bg1: rgba(16, 30, 80, 0.8);
+  --glass-border: rgba(100, 150, 255, 0.25);
+  --glass-shadow: 0 8px 32px rgba(0, 20, 80, 0.4);
+  --glass-shadow-hover: 0 12px 40px rgba(0, 40, 120, 0.5);
+  --glass-blur: blur(20px) saturate(180%);
+
+  --bg-gradient-start: #f5f5f7;
+  --bg-gradient-end: #e8e8ed;
+
+  /* 深色背景下的文字颜色 */
+  --text-primary: rgb(255, 255, 255);
+  --text-secondary: rgba(255, 255, 255, 0.95);
+  --text-tertiary: rgba(255, 255, 255, 0.55);
+
+  --accent: #4da6ff;
+  --accent-hover: #6bb6ff;
+  --accent-soft: rgba(77, 166, 255, 0.2);
+
+  --success: #34c759;
+  --success-soft: rgba(52, 199, 89, 0.18);
+
+  --primary: #4da6ff;
+  --warning: #ff9f0a;
+  --error: #ff3b30;
+
+  /* 品牌主题色 */
+  --brand-blue: #1a4a8c;
+  --brand-blue-700: #2855b8;
+  --brand-blue-900: #0d3064;
+  --brand-gold: #d4af37;
+  --brand-gold-soft: rgba(212, 175, 55, 0.18);
+  --brand-gold-deep: #b8951e;
+  --brand-gold-text: #8b6914;
+  --brand-gold-text-soft: #a08040;
+  --brand-gold-bg: #5c4d1a;
+  --brand-gold-highlight: #fff8e1;
+  --brand-red: #d62828;
+
+  /* 页面/容器背景层级（深色模式） */
+  --bg-page: rgba(10, 20, 60, 0.35);
+  --bg-primary: rgba(16, 30, 80, 0.6);
+  --bg-secondary: rgba(20, 40, 100, 0.45);
+  --bg-tertiary: rgba(30, 60, 140, 0.32);
+
+  /* 边框层级（深色模式） */
+  --border-color: rgba(100, 150, 255, 0.22);
+  --border-color-soft: rgba(100, 150, 255, 0.12);
+  --border-color-strong: rgba(100, 150, 255, 0.4);
+
+  /* 阴影层级（深色模式） */
+  --shadow-sm: 0 2px 8px rgba(0, 20, 80, 0.25);
+  --shadow-md: 0 6px 18px rgba(0, 20, 80, 0.32);
+  --shadow-lg: 0 12px 32px rgba(0, 20, 80, 0.4);
+
+  /* 强调色（深色模式） */
+  --accent-strong: #6bb6ff;
+
+  /* 表面层级（深色模式 - 与浅色模式同名 token 对齐） */
+  --surface-card: rgba(16, 30, 80, 0.72);
+  --surface-card-strong: rgba(20, 40, 100, 0.85);
+  --surface-soft: rgba(20, 40, 100, 0.45);
+  --surface-hover: rgba(77, 166, 255, 0.18);
+  --surface-overlay: rgba(10, 20, 60, 0.65);
+  --border-strong: rgba(100, 150, 255, 0.4);
+  --border-soft: rgba(100, 150, 255, 0.18);
+  --danger: #ef4444;
+  --danger-hover: #f87171;
+  --danger-soft: rgba(239, 68, 68, 0.12);
+  --danger-soft-strong: rgba(239, 68, 68, 0.18);
+
+  --gradient-primary: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  --gradient-glass: linear-gradient(
+    135deg,
+    rgba(30, 60, 120, 0.5) 0%,
+    rgba(10, 25, 60, 0.3) 100%
+  );
+
+  /* 千问风格 UI token（深色模式默认值） */
+  --qwen-bg: #0f1221;
+  --qwen-surface: rgba(255, 255, 255, 0.06);
+  --qwen-border: rgba(255, 255, 255, 0.10);
+  --qwen-border-strong: rgba(255, 255, 255, 0.18);
+  --qwen-text-primary: rgba(255, 255, 255, 0.92);
+  --qwen-text-secondary: rgba(255, 255, 255, 0.60);
+  --qwen-text-tertiary: rgba(255, 255, 255, 0.40);
+  --qwen-brand-blue: var(--brand-blue);
+  --qwen-brand-blue-hover: #2a5ca0;
+  --qwen-danger-soft: rgba(239, 68, 68, 0.14);
+  --qwen-radius-xl: 28px;
+  --qwen-radius-lg: 18px;
+  --qwen-radius-md: 12px;
+  --qwen-shadow: 0 4px 24px rgba(0, 0, 0, 0.20);
+  --qwen-shadow-sm: 0 2px 12px rgba(0, 0, 0, 0.12);
+  --qwen-shadow-focus: 0 0 0 3px rgba(26, 74, 140, 0.18);
+
+  /* Markdown 渲染 token（深色模式） */
+  --markdown-code-bg: rgba(16, 24, 48, 0.72);
+  --markdown-code-text: rgba(255, 255, 255, 0.88);
+  --markdown-inline-code-bg: rgba(255, 255, 255, 0.08);
+  --markdown-inline-code-text: #ff7b72;
+  --markdown-blockquote-border: rgba(100, 150, 255, 0.35);
+  --markdown-blockquote-bg: rgba(100, 150, 255, 0.05);
+  --markdown-blockquote-text: rgba(255, 255, 255, 0.70);
+  --markdown-table-border: rgba(255, 255, 255, 0.12);
+  --markdown-table-header-bg: rgba(255, 255, 255, 0.08);
+  --markdown-table-stripe-bg: rgba(255, 255, 255, 0.03);
+  --markdown-hr-color: rgba(255, 255, 255, 0.12);
+  --markdown-del-color: rgba(255, 255, 255, 0.45);
+
+  --radius-xs: 6px;
+  --radius-sm: 10px;
+  --radius-md: 14px;
+  --radius-lg: 20px;
+  --radius-xl: 28px;
+  --radius-2xl: 40px;
+
+  --transition-fast: 150ms cubic-bezier(0.4, 0, 0.2, 1);
+  --transition-base: 250ms cubic-bezier(0.4, 0, 0.2, 1);
+  --transition-slow: 400ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+:root[data-theme="light"] {
+  color-scheme: light;
+
+  /* 浅色清爽风格 - 以 #0D3064 为主文字色，强调色 #0066FF / #667EEA */
+  --glass-bg: rgba(255, 255, 255, 0.85);
+  --glass-bg1: rgba(255, 255, 255, 0.96);
+  --glass-border: rgba(13, 48, 100, 0.16);
+  --glass-shadow: 0 8px 32px rgba(13, 48, 100, 0.12);
+  --glass-shadow-hover: 0 12px 40px rgba(13, 48, 100, 0.18);
+  --glass-blur: blur(20px) saturate(160%);
+
+  --bg-gradient-start: #eaf1fb;
+  --bg-gradient-end: #d9e6f7;
+
+  --text-primary: #000000;
+  --text-secondary: #1F4B8A;
+  --text-tertiary: #4A6BA8;
+
+  --accent: #0066FF;
+  --accent-hover: #0052CC;
+  --accent-soft: rgba(0, 102, 255, 0.1);
+  --accent-secondary: #667EEA;
+
+  --success: #16a34a;
+  --success-soft: rgba(22, 163, 74, 0.12);
+  --warning: #ea8b00;
+  --error: #dc2626;
+
+  /* 品牌主题色（浅色模式：保持高饱和度） */
+  --brand-blue: #1a4a8c;
+  --brand-blue-700: #2059a8;
+  --brand-blue-900: #0d3064;
+  --brand-gold: #d4af37;
+  --brand-gold-soft: rgba(212, 175, 55, 0.18);
+  --brand-gold-deep: #b8951e;
+  --brand-gold-text: #8b6914;
+  --brand-gold-text-soft: #a08040;
+  --brand-gold-bg: #5c4d1a;
+  --brand-gold-highlight: #fff8e1;
+  --brand-red: #d62828;
+
+  /* 页面/容器背景层级（浅色模式） */
+  --bg-page: rgba(245, 247, 252, 0.6);
+  --bg-primary: #ffffff;
+  --bg-secondary: rgba(13, 48, 100, 0.04);
+  --bg-tertiary: rgba(13, 48, 100, 0.08);
+
+  /* 边框层级（浅色模式） */
+  --border-color: rgba(13, 48, 100, 0.14);
+  --border-color-soft: rgba(13, 48, 100, 0.08);
+  --border-color-strong: rgba(13, 48, 100, 0.28);
+
+  /* 阴影层级（浅色模式） */
+  --shadow-sm: 0 2px 8px rgba(13, 48, 100, 0.06);
+  --shadow-md: 0 6px 18px rgba(13, 48, 100, 0.1);
+  --shadow-lg: 0 12px 32px rgba(13, 48, 100, 0.16);
+
+  /* 强调色（浅色模式） */
+  --accent-strong: #0052CC;
+
+  --gradient-primary: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  --gradient-glass: linear-gradient(
+    135deg,
+    rgba(255, 255, 255, 0.95) 0%,
+    rgba(220, 235, 255, 0.7) 100%
+  );
+
+  /* 千问风格 UI token（浅色模式） */
+  --qwen-bg: #ffffff;
+  --qwen-surface: #f7f8fa;
+  --qwen-border: #e5e7eb;
+  --qwen-border-strong: #d1d5db;
+  --qwen-text-primary: #111827;
+  --qwen-text-secondary: #4b5563;
+  --qwen-text-tertiary: #9ca3af;
+  --qwen-brand-blue: var(--brand-blue);
+  --qwen-brand-blue-hover: #2059a8;
+  --qwen-danger-soft: rgba(220, 38, 38, 0.10);
+  --qwen-radius-xl: 28px;
+  --qwen-radius-lg: 18px;
+  --qwen-radius-md: 12px;
+  --qwen-shadow: 0 4px 24px rgba(13, 48, 100, 0.06);
+  --qwen-shadow-sm: 0 2px 10px rgba(13, 48, 100, 0.04);
+  --qwen-shadow-focus: 0 0 0 3px rgba(26, 74, 140, 0.12);
+
+  /* Markdown 渲染 token（浅色模式） */
+  --markdown-code-bg: #f6f8fa;
+  --markdown-code-text: #24292f;
+  --markdown-inline-code-bg: rgba(0, 0, 0, 0.06);
+  --markdown-inline-code-text: #d6336c;
+  --markdown-blockquote-border: #d1d9e0;
+  --markdown-blockquote-bg: rgba(0, 0, 0, 0.02);
+  --markdown-blockquote-text: #57606a;
+  --markdown-table-border: rgba(0, 0, 0, 0.1);
+  --markdown-table-header-bg: rgba(0, 0, 0, 0.04);
+  --markdown-table-stripe-bg: rgba(0, 0, 0, 0.02);
+  --markdown-hr-color: rgba(0, 0, 0, 0.08);
+  --markdown-del-color: #94a3b8;
+
+  /* 浅色专用：半透明玻璃拟态，朦胧模糊质感 */
+  --surface-card: rgba(255, 255, 255, 0.48);
+  --surface-card-strong: rgba(255, 255, 255, 0.60);
+  --surface-soft: rgba(255, 255, 255, 0.4);
+  --surface-hover: rgba(0, 102, 255, 0.12);
+  --surface-overlay: rgba(255, 255, 255, 0.85);
+  --border-strong: rgba(13, 48, 100, 0.2);
+  --border-soft: rgba(13, 48, 100, 0.1);
+  --table-header-bg: #5485D4;
+  --scrollbar-thumb: rgba(0, 102, 255, 0.3);
+  --glass-light-blur: blur(18px) saturate(160%);
+
+  /* 危险色（浅色模式：使用项目既有的 #dc2626 红色） */
+  --danger: #dc2626;
+  --danger-hover: #b91c1c;
+  --danger-soft: rgba(220, 38, 38, 0.10);
+  --danger-soft-strong: rgba(220, 38, 38, 0.16);
+}

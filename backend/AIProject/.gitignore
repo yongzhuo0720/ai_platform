@@ -1,0 +1,4 @@
+/.idea
+*.class\n
+*.log\n
+*/target\n

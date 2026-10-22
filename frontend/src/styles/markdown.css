@@ -1,0 +1,260 @@
+/**
+ * Markdown 渲染内容样式
+ * @description 作用于 .markdown-content 包裹的 v-html 渲染内容
+ * 支持标题、段落、列表、代码块、引用、表格、链接、分割线等
+ * 通过 CSS 变量实现深浅色主题自适应
+ */
+
+/* 通用容器 */
+.markdown-content {
+  font-size: 14px;
+  line-height: 1.7;
+  color: inherit;
+  word-break: break-word;
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
+
+.markdown-content > :first-child {
+  margin-top: 0;
+}
+
+.markdown-content > :last-child {
+  margin-bottom: 0;
+}
+
+/* 段落 */
+.markdown-content p {
+  margin: 0 0 12px 0;
+  line-height: 1.7;
+
+  &:last-child {
+    margin-bottom: 0;
+  }
+}
+
+/* 标题 */
+.markdown-content h1,
+.markdown-content h2,
+.markdown-content h3,
+.markdown-content h4,
+.markdown-content h5,
+.markdown-content h6 {
+  font-weight: 600;
+  line-height: 1.4;
+  margin: 16px 0 8px 0;
+  color: inherit;
+}
+
+.markdown-content h1 {
+  font-size: 1.5em;
+  border-bottom: 1px solid var(--qwen-border);
+  padding-bottom: 6px;
+}
+.markdown-content h2 {
+  font-size: 1.3em;
+  border-bottom: 1px solid var(--qwen-border);
+  padding-bottom: 4px;
+}
+.markdown-content h3 { font-size: 1.15em; }
+.markdown-content h4 { font-size: 1.05em; }
+.markdown-content h5 { font-size: 1em; }
+.markdown-content h6 {
+  font-size: 0.95em;
+  color: var(--qwen-text-tertiary);
+}
+
+.markdown-content h1:first-child,
+.markdown-content h2:first-child,
+.markdown-content h3:first-child {
+  margin-top: 0;
+}
+
+/* 强调 */
+.markdown-content strong {
+  font-weight: 600;
+  color: inherit;
+}
+.markdown-content em { font-style: normal; }
+.markdown-content del {
+  color: var(--markdown-del-color);
+  text-decoration: line-through;
+}
+
+/* 链接 */
+.markdown-content a {
+  color: var(--accent, #0071e3);
+  text-decoration: none;
+  border-bottom: 1px solid transparent;
+  transition: border-color 0.15s;
+  overflow-wrap: anywhere;
+
+  &:hover {
+    border-bottom-color: var(--accent, #0071e3);
+  }
+}
+
+/* 列表 */
+.markdown-content ul,
+.markdown-content ol {
+  margin: 10px 0 12px;
+  padding-left: 1.6em;
+}
+
+.markdown-content ul {
+  list-style: disc;
+}
+.markdown-content ol {
+  list-style: decimal;
+}
+
+.markdown-content li {
+  margin: 4px 0;
+  line-height: 1.7;
+}
+
+.markdown-content li > p {
+  margin: 4px 0;
+}
+
+.markdown-content li > ul,
+.markdown-content li > ol {
+  margin: 4px 0;
+}
+
+/* 任务列表 */
+.markdown-content input[type="checkbox"] {
+  margin-right: 6px;
+  vertical-align: middle;
+}
+
+/* 行内代码 */
+.markdown-content code {
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  font-size: 0.9em;
+  padding: 2px 6px;
+  background: var(--markdown-inline-code-bg);
+  border-radius: 4px;
+  color: var(--markdown-inline-code-text);
+  word-break: break-word;
+}
+
+/* 代码块 */
+.markdown-content pre {
+  margin: 10px 0;
+  padding: 14px 16px;
+  background: var(--markdown-code-bg);
+  border: 1px solid var(--qwen-border);
+  border-radius: 8px;
+  max-width: 100%;
+  overflow-x: auto;
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.markdown-content pre code {
+  display: block;
+  min-width: max-content;
+  padding: 0;
+  background: transparent;
+  border-radius: 0;
+  color: var(--markdown-code-text);
+  font-size: inherit;
+  white-space: pre;
+  word-break: normal;
+}
+
+/* highlight.js 主题适配 */
+.markdown-content pre.hljs {
+  background: var(--markdown-code-bg);
+}
+
+/* 引用 */
+.markdown-content blockquote {
+  margin: 10px 0;
+  padding: 8px 12px;
+  border-left: 4px solid var(--markdown-blockquote-border);
+  color: var(--markdown-blockquote-text);
+  background: var(--markdown-blockquote-bg);
+  border-radius: 0 4px 4px 0;
+  overflow: hidden;
+}
+
+.markdown-content blockquote > :first-child {
+  margin-top: 0;
+}
+.markdown-content blockquote > :last-child {
+  margin-bottom: 0;
+}
+
+.markdown-table-wrap {
+  margin: 10px 0;
+  max-width: 100%;
+  overflow-x: auto;
+}
+
+/* 表格（GFM） */
+.markdown-content table {
+  border-collapse: collapse;
+  margin: 0;
+  width: max-content;
+  min-width: 100%;
+  font-size: 13px;
+  display: table;
+}
+
+.markdown-content table th,
+.markdown-content table td {
+  padding: 8px 12px;
+  border: 1px solid var(--markdown-table-border);
+  text-align: left;
+}
+
+.markdown-content table th {
+  background: var(--markdown-table-header-bg);
+  font-weight: 600;
+}
+
+.markdown-content table tr:nth-child(even) td {
+  background: var(--markdown-table-stripe-bg);
+}
+
+/* 分割线 */
+.markdown-content hr {
+  margin: 16px 0;
+  border: none;
+  border-top: 1px solid var(--markdown-hr-color);
+}
+
+/* 图片 */
+.markdown-content img {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  border-radius: 6px;
+  margin: 6px 0;
+}
+
+/* 用户消息气泡：保留换行但不做 Markdown 渲染 */
+.user-content {
+  white-space: pre-wrap;
+  word-break: break-word;
+  line-height: 1.6;
+}
+
+/* 助手消息在加载中的打字光标 */
+.typing-cursor {
+  display: inline-block;
+  width: 2px;
+  height: 14px;
+  background: currentColor;
+  margin-left: 2px;
+  vertical-align: middle;
+  animation: markdown-typing-blink 0.8s infinite;
+  opacity: 0.7;
+}
+
+@keyframes markdown-typing-blink {
+  0%, 50% { opacity: 1; }
+  51%, 100% { opacity: 0; }
+}

@@ -1,0 +1,320 @@
+
+/* 头部统计样式 */
+.hero-stats {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.hero-stat {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 12px 20px;
+  transition: all 0.3s ease;
+}
+
+.hero-stat:hover {
+  transform: translateY(-2px);
+}
+
+.hero-stat span {
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.85);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.hero-stat strong {
+  font-size: 24px;
+  font-weight: 700;
+  font-family: "PingFang SC", "Microsoft YaHei", sans-serif;
+  background: linear-gradient(135deg, #4da6ff 0%, #64d2ff 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+  text-shadow: 0 0 20px rgba(77, 166, 255, 0.3);
+}
+
+html[data-theme="light"] {
+  .hero-stat span {
+    color: var(--text-secondary);
+  }
+
+  .hero-stat strong {
+    font-family: "PingFang SC", "Microsoft YaHei", sans-serif;
+    background: linear-gradient(135deg, #0d3064 0%, #0066ff 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+    text-shadow: none;
+  }
+}
+
+/* ========================================
+   能力广场卡片（仿知识库广场 kb-square-card）
+   ======================================== */
+.cap-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 360px), 1fr));
+  gap: 16px;
+}
+
+@media (max-width: 1200px) {
+  .cap-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 720px) {
+  .cap-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.cap-card {
+  display: flex;
+  flex-direction: row;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 16px;
+  min-width: 0;
+  background: var(--glass-bg1, #ffffff);
+  border: 1px solid var(--glass-border, rgba(13, 48, 100, 0.12));
+  border-radius: 8px;
+  cursor: pointer;
+  transition: all 0.2s;
+
+  &:hover {
+    border-color: var(--accent, #1a4a8c);
+    box-shadow: 0 4px 16px rgba(26, 74, 140, 0.12);
+    transform: translateY(-1px);
+  }
+}
+
+.cap-card-cover {
+  width: 56px;
+  height: 56px;
+  flex-shrink: 0;
+  border-radius: 6px;
+  overflow: hidden;
+  background: #f0f7ff;
+  border: 1px solid #e6f0fa;
+
+  img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+  }
+}
+
+.cap-card-content {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.cap-card-name {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-primary, #0d3064);
+  margin: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  letter-spacing: 0.01em;
+}
+
+.cap-card-desc {
+  font-size: 12px;
+  color: var(--text-tertiary, #4a6ba8);
+  margin: 0;
+  line-height: 1.5;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  min-height: 36px;
+}
+
+.cap-card-meta {
+  font-size: 12px;
+  color: var(--text-tertiary);
+}
+
+/* 卡片内标签：始终单行排列，多的直接截断（与知识库广场一致） */
+.cap-card .ima-card-tags {
+  flex-wrap: nowrap;
+  overflow: hidden;
+}
+
+.cap-card .ima-card-tags > * {
+  flex-shrink: 0;
+  max-width: 100%;
+}
+
+.cap-card-footer {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-start;
+  gap: 8px;
+  padding-top: 10px;
+  border-top: 1px solid rgba(100, 150, 255, 0.12);
+  margin-top: 2px;
+}
+
+.cap-card-footer .action-btn {
+  flex-shrink: 0;
+  white-space: nowrap;
+  border-radius: 6px;
+  padding: 6px 8px;
+}
+
+/* 能力图标上传控件 */
+.cap-icon-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.cap-icon-upload {
+  :deep(.el-upload--picture-card) {
+    width: 128px;
+    height: 96px;
+  }
+
+  :deep(.el-upload-list--picture-card .el-upload-list__item) {
+    width: 96px;
+    height: 96px;
+  }
+}
+
+.cap-upload-trigger {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  color: var(--text-tertiary, #4a6ba8);
+  font-size: 12px;
+  line-height: 1.2;
+
+  svg {
+    width: 18px;
+    height: 18px;
+  }
+}
+
+.cap-upload-helper {
+  margin: 0;
+  font-size: 12px;
+  color: var(--text-tertiary, #4a6ba8);
+  line-height: 1.4;
+}
+
+/* 卡片底部按钮 */
+.capability-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding-top: 12px;
+  border-top: 1px solid rgba(100, 150, 255, 0.12);
+}
+
+.capabilities-toolbar {
+  justify-content: flex-end;
+}
+
+.capabilities-search,
+.capabilities-tag-filter,
+.capabilities-select {
+  flex: none;
+  width: 180px;
+}
+
+/* 管理权限弹窗样式 */
+.mng-dialog-content {
+  padding: 10px 0;
+}
+
+.mng-section {
+  margin-bottom: 24px;
+}
+
+.mng-section:last-child {
+  margin-bottom: 0;
+}
+
+.mng-section-title {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 12px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--border-color);
+}
+
+.mng-section-title .title-text {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.mng-tree-container {
+  max-height: 280px;
+  overflow-y: auto;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  padding: 15px;
+  background: var(--bg-secondary);
+}
+
+.mng-role-container {
+  max-height: 200px;
+  overflow-y: auto;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  padding: 15px;
+  background: var(--bg-secondary);
+}
+
+.mng-role-container .el-checkbox-group {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.mng-role-container .el-checkbox {
+  margin-right: 0;
+  margin-bottom: 8px;
+}
+
+/* 浅色模式下 el-tree / el-checkbox 文字颜色适配 */
+html[data-theme="light"] {
+  .mng-tree-container {
+    .el-tree {
+      color: var(--text-primary);
+      background: transparent;
+    }
+
+    .el-tree-node__content {
+      &:hover {
+        background: rgba(13, 48, 100, 0.06);
+      }
+    }
+
+    .el-checkbox__label {
+      color: var(--text-primary);
+    }
+  }
+
+  .mng-role-container {
+    .el-checkbox__label {
+      color: var(--text-primary);
+    }
+  }
+}

@@ -1,0 +1,96 @@
+########################## application级别通用配置 ##########################
+########################## 统一变量配置 ##########################
+
+## hnsp
+hnsp:
+  apprun:
+    # 配置文件导出
+    configNames: application.properties,application-pro.properties,application.yml,application-test.properties,application-dev.properties
+  # 线程池
+  threadpool:
+    # 核心线程
+    corePoolSize: 10
+    # 最大线程
+    maxPoolSize: 20
+    # 异步线程队列
+    queueCapacity: 100
+    # 线程存活时间
+    keepAliveTime: 60
+    # 线程池拒绝策略
+    rejected: abortpolicy
+    # 线程工厂
+    threadfactory: default
+
+
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: "*"
+  security: false
+
+
+# spring配置
+spring:
+  main:
+    # 允许循环依赖
+    allow-circular-references: true
+  mvc:
+    pathmatch:
+      # 解决swagger版本问题
+      matching-strategy: ANT_PATH_MATCHER
+  servlet:
+    # multipart 文件上传大小限制
+    multipart:
+      # 延迟解析：AI 网关需要把 multipart 请求体原样转发给 Dify，
+      # 若 Spring 提前解析，原始输入流会被消费掉，文件上传会失败。
+      resolve-lazily: true
+      max-file-size: 2000MB
+      max-request-size: 209715200
+
+  # 项目名
+  application:
+    name: aiproject
+  # 数据库
+  datasource:
+    druid:
+      initialSize: 5
+      minIdle: 5
+      # 最大连接池数量
+      maxActive: 20
+      # 从连接池获取连接等待超时的时间
+      maxWait: 10000
+    url: jdbc:postgresql://${hnsp.datasource.ip}/ai?currentSchema=public
+    username: ${hnsp.datasource.username}
+    password: ${hnsp.datasource.password}
+    driver-class-name: org.postgresql.Driver
+
+  # redis
+  redis:
+    host: ${hnsp.redis.host}
+    port: ${hnsp.redis.port}
+    password: ${hnsp.redis.password}
+    database: 11
+
+mybatis-plus:
+  type-handlers-package: com.heneng.hnsp.common.croe.util.mybitis
+  configuration:
+    cache-enabled: false
+    local-cache-scope: statement
+# Sa-Token配置
+sa-token:
+  # token名称 (同时也是cookie名称)
+  token-name: x-access-token
+  # token有效期，单位s 默认30天, -1代表永不过期
+  timeout: 2592000
+  # token临时有效期 (指定时间内无操作就视为token过期) 单位: 秒
+  activity-timeout: -1
+  # 是否允许同一账号并发登录 (为true时允许一起登录, 为false时新登录挤掉旧登录)
+  is-concurrent: true
+  # 在多人登录同一账号时，是否共用一个token (为true时所有登录共用一个token, 为false时每次登录新建一个token)
+  is-share: false
+  # token风格
+  token-style: uuid
+  # 是否输出操作日志
+  is-log: false
