@@ -97,11 +97,29 @@ public  class ModelsConfigBeanHolder  {
         if (check != null) {
             return check;
         }
+        /*
+         * 前端编辑时密钥框留空表示「不修改」：查询接口不下发密钥，
+         * 若直接以空值覆盖会把已配置的 apiKey 清掉，这里按 where.iid 回读补齐。
+         */
+        if ((data.getApiKey() == null || data.getApiKey().trim().isEmpty())
+                && where != null && where.getIid() != null) {
+            ModelsConfigBean existing = queryByIid(where.getIid());
+            if (existing != null && existing.getApiKey() != null) {
+                data.setApiKey(existing.getApiKey());
+            }
+        }
         data.setLastuser(uid);
         if (modelsConfigBeanMapper.update(data, where) <= 0){
             return Result.failed(false,"修改失败");
         }
-        return Result.succeed(true,"修改成功"); 
+        return Result.succeed(true,"修改成功");
+    }
+
+    private ModelsConfigBean queryByIid(Long iid) {
+        ModelsConfigBean where = new ModelsConfigBean();
+        where.setIid(iid);
+        List<ModelsConfigBean> list = modelsConfigBeanMapper.select(null, where);
+        return list == null || list.isEmpty() ? null : list.get(0);
     }
 
         /**
