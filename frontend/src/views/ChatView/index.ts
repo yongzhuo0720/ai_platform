@@ -4,6 +4,7 @@ import { ElMessageBox, ElMessage } from "element-plus";
 import { chatApi } from "@/api/chat";
 import { assistantApi } from "@/api/assistant";
 import { modelsConfigApi } from "@/api/modelsConfig";
+import { streamDirectChat } from "@/api/directModel";
 import { uploadFileToDify } from "@/api/request";
 import type {
   Conversation,
@@ -47,6 +48,10 @@ export interface ChatModel {
   builtin?: boolean;
   createdAt?: number;
   userId?: string;
+  /** modelsconfigbean 主键；直连模型经网关按它路由 */
+  iid?: number;
+  /** 直连协议：openai = OpenAI 兼容直连，空 = 仅作为 Dify 应用变量 */
+  protocol?: string;
 }
 
 export interface ChatSelectOption {
@@ -81,6 +86,8 @@ export interface UseChatReturn {
   lastMessageId: typeof lastMessageId;
   userInput: typeof userInput;
   allowFileUpload: typeof allowFileUpload;
+  /** 当前是否处于直连模型模式（OpenAI 兼容协议，经网关路由） */
+  isDirectMode: ComputedRef<boolean>;
   canSubmit: ComputedRef<boolean>;
   activeModel: ComputedRef<ChatModel>;
   activeAssistant: ComputedRef<ChatModel>;
@@ -113,6 +120,10 @@ export interface UseChatReturn {
   handleFileSelected: (file: File) => Promise<void>;
   /** 复制消息内容到剪贴板 */
   copyMessage: (content: string) => Promise<void>;
+  /** 停止当前正在进行的流式生成 */
+  stopGenerating: () => void;
+  /** 把指定助手回答导出为 Markdown 文件 */
+  exportMessageMarkdown: (messageId: string) => void;
   /** 当前消息是否允许重新生成 */
   canRegenerateMessage: (messageId: string) => boolean;
   /** 重新生成当前最新一条助手消息 */
@@ -223,6 +234,44 @@ const activeAssistantId = ref(
 const activeModelId = ref(
   readStorage<string>(getActiveModelStorageKey(), defaultModels.value[0]?.id ?? "")
 );
+
+// ============== 直连模型（OpenAI 兼容协议，经 AI 网关路由） ==============
+/**
+ * 与 Dify 的有状态会话不同，OpenAI 协议无状态：多轮上下文由前端携带，
+ * 因此直连会话保存在本地（刷新不丢，换设备不同步）。
+ */
+interface DirectChatTurn {
+  role: "user" | "assistant";
+  content: string;
+}
+interface DirectConversation {
+  id: string;
+  name: string;
+  modelIid: string;
+  modelName: string;
+  messages: DirectChatTurn[];
+  updatedAt: number;
+}
+const DIRECT_CONVERSATIONS_KEY = "ai-direct-conversations";
+const DIRECT_MODEL_KEY_PREFIX = "direct-";
+const directConversations = ref<DirectConversation[]>(
+  readStorage<DirectConversation[]>(DIRECT_CONVERSATIONS_KEY, [])
+);
+const activeDirectConversationId = ref("");
+const persistDirectConversations = () => writeStorage(DIRECT_CONVERSATIONS_KEY, directConversations.value);
+const directModels = computed<ChatModel[]>(() =>
+  defaultModels.value.filter((m) => m.protocol === "openai" && m.iid != null)
+);
+const directModelKey = (model: ChatModel) => `${DIRECT_MODEL_KEY_PREFIX}${model.iid}`;
+const isDirectModelValue = (value: string) =>
+  value.startsWith(DIRECT_MODEL_KEY_PREFIX) &&
+  directModels.value.some((m) => directModelKey(m) === value);
+const isDirectMode = computed(() => isDirectModelValue(activeModelId.value));
+const activeDirectModel = computed<ChatModel | null>(() =>
+  directModels.value.find((m) => directModelKey(m) === activeModelId.value) ?? null
+);
+/** 直连模型标识变化（进入/离开/切换直连模型）时开新对话：上下文不能跨模型混用 */
+const activeDirectKey = computed(() => (isDirectMode.value ? activeModelId.value : ""));
 const currentUserId = ref(getCurrentUserId());
 const isAdmin = useIsAdmin();
 const canEditAssistant = (assistant: ChatModel) => {
@@ -647,14 +696,23 @@ const chatSelectOptionsMap = computed<Record<string, ChatSelectOption[]>>(() => 
 });
 
 const modelOptions = computed<ChatSelectOption[]>(() =>
-  dedupeSelectOptions(
-    defaultModels.value.map((model) => ({
+  dedupeSelectOptions([
+    // 直连模型：选中后对话走网关 OpenAI 协议，不再依赖 Dify
+    ...directModels.value.map((model) => ({
       title: model.name,
-      subtitle: model.provider || "系统模型",
-      label: model.provider ? `${model.name} · ${model.provider}` : model.name,
-      value: model.id,
-    }))
-  )
+      subtitle: `直连模型 · ${model.provider || "OpenAI 兼容"}`,
+      label: `${model.name} · 直连`,
+      value: directModelKey(model),
+    })),
+    ...defaultModels.value
+      .filter((m) => !(m.protocol === "openai" && m.iid != null))
+      .map((model) => ({
+        title: model.name,
+        subtitle: model.provider || "系统模型",
+        label: model.provider ? `${model.name} · ${model.provider}` : model.name,
+        value: model.id,
+      })),
+  ])
 );
 
 const composerInputFields = computed<NormalizedUserInputField[]>(() =>
@@ -710,6 +768,10 @@ const getFileInputTargets = (existingInputs: Record<string, unknown>): string[] 
 };
 
 const allowFileUpload = computed(() => {
+  // 直连模型走 OpenAI 协议，暂未实现文件/图片消息内容
+  if (isDirectMode.value) {
+    return false;
+  }
   const fileUpload = appParameters.value?.file_upload;
   if (!fileUpload) {
     return true;
@@ -810,6 +872,10 @@ export function useChat(): UseChatReturn {
 
   /** 问候语中使用的名称：去除尾部"助手"后统一拼接，避免出现 "XXX助手助手" */
   const assistantGreetingName = computed(() => {
+    // 直连模式下问候当前模型
+    if (isDirectMode.value && activeDirectModel.value) {
+      return activeDirectModel.value.name;
+    }
     const raw = activeAssistant.value?.name || "AI";
     const trimmed = raw.replace(/助手$/, "");
     return `${trimmed}助手`;
@@ -824,7 +890,22 @@ export function useChat(): UseChatReturn {
    * 由于 Dify 不存储未定义的 inputs 字段，改用 localStorage 追踪
    * 旧会话（无记录）默认归属问答交互引擎
    */
-  const filteredConversations = computed(() => {
+  const filteredConversations = computed<Conversation[]>(() => {
+    // 直连模式：会话保存在本地，按当前直连模型过滤
+    if (isDirectMode.value) {
+      const modelIid = activeDirectModel.value?.iid != null ? String(activeDirectModel.value.iid) : "";
+      return directConversations.value
+        .filter((c) => c.modelIid === modelIid)
+        .map((c) => ({
+          id: c.id,
+          name: c.name,
+          inputs: {},
+          status: "",
+          introduction: "",
+          created_at: Math.floor(c.updatedAt / 1000),
+          updated_at: Math.floor(c.updatedAt / 1000),
+        }));
+    }
     return conversations.value.filter((c: any) => {
       if (isKbConversation(c.id)) return false;
       return true;
@@ -850,11 +931,15 @@ export function useChat(): UseChatReturn {
         pageRequest: { pageSize: 100, pageNum: 1 },
       });
       if (res.resp_code === 0 && res.datas?.length > 0) {
-        defaultModels.value = res.datas.map((item: { id: string; name: string; provider: string }) => ({
-          id: item.id,
-          name: item.name,
-          provider: item.provider,
-        }));
+        defaultModels.value = res.datas.map(
+          (item: { id: string; name: string; provider: string; iid?: number; protocol?: string }) => ({
+            id: item.id,
+            name: item.name,
+            provider: item.provider,
+            iid: item.iid,
+            protocol: item.protocol,
+          })
+        );
       }
       builtinAssistants.value = toBuiltinAssistants(defaultAssistants);
     } catch (error) {
@@ -1248,6 +1333,11 @@ export function useChat(): UseChatReturn {
       ? files.map((f) => f.name).join('、')
       : '[文件]');
 
+    if (isDirectMode.value) {
+      sendDirectMessage(queryContent);
+      return;
+    }
+
     await sendMessageInternal({
       queryContent,
       displayContent,
@@ -1262,10 +1352,36 @@ export function useChat(): UseChatReturn {
   };
 
   const handleSelectConversation = (conversationId: string) => {
+    if (isDirectMode.value) {
+      loadDirectConversation(conversationId);
+      return;
+    }
     loadConversationMessages(conversationId);
   };
 
   const handleDeleteHistory = async (itemId: string) => {
+    if (isDirectMode.value) {
+      try {
+        await ElMessageBox.confirm("确定要删除此对话吗？", "删除对话", {
+          confirmButtonText: "确定",
+          cancelButtonText: "取消",
+          type: "warning",
+        });
+        directConversations.value = directConversations.value.filter((c) => c.id !== itemId);
+        persistDirectConversations();
+        if (activeDirectConversationId.value === itemId) {
+          activeDirectConversationId.value = "";
+          messages.value = [];
+        }
+        ElMessage.success("删除成功");
+      } catch (error) {
+        if (error !== "cancel") {
+          console.error("删除直连会话失败:", error);
+          ElMessage.error("删除会话失败");
+        }
+      }
+      return;
+    }
     try {
       await ElMessageBox.confirm(
         "确定要删除此对话吗？",
@@ -1291,6 +1407,184 @@ export function useChat(): UseChatReturn {
     }
   };
 
+  // ============== 直连模型（OpenAI 兼容协议）对话流 ==============
+
+  const getOrCreateDirectConversation = (firstQuery: string): DirectConversation => {
+    const existing = directConversations.value.find(
+      (c) => c.id === activeDirectConversationId.value
+    );
+    if (existing) {
+      return existing;
+    }
+    const model = activeDirectModel.value;
+    const conversation: DirectConversation = {
+      id: `direct-${Date.now()}`,
+      name: firstQuery.slice(0, 30) || "新对话",
+      modelIid: model?.iid != null ? String(model.iid) : "",
+      modelName: model?.name || "",
+      messages: [],
+      updatedAt: Date.now(),
+    };
+    directConversations.value = [conversation, ...directConversations.value];
+    activeDirectConversationId.value = conversation.id;
+    persistDirectConversations();
+    return conversation;
+  };
+
+  const persistPartialDirectReply = (
+    conversation: DirectConversation,
+    content: string
+  ) => {
+    if (!content.trim()) {
+      return;
+    }
+    conversation.messages.push({ role: "assistant", content });
+    conversation.updatedAt = Date.now();
+    persistDirectConversations();
+  };
+
+  /** 发起直连流式请求并把分片写进消息列表与本地会话 */
+  const runDirectStream = (
+    conversation: DirectConversation,
+    assistantMessageId: string,
+    userMessageId: string,
+    queryContent: string
+  ) => {
+    const model = activeDirectModel.value;
+    if (!model || model.iid == null) {
+      ElMessage.error("直连模型不可用，请检查模型直连配置或重新选择模型");
+      return;
+    }
+
+    cancelCurrentRequest();
+    const requestToken = currentRequestToken;
+    thinking.value = "";
+    postAnswerSuggestions.value = [];
+    lastMessageId.value = "";
+    loading.value = true;
+
+    let assistantContent = "";
+    const existingAssistantMessage = messages.value.find((m) => m.id === assistantMessageId);
+    if (existingAssistantMessage) {
+      existingAssistantMessage.content = "";
+      delete existingAssistantMessage.thinking;
+    } else {
+      messages.value.push({
+        id: assistantMessageId,
+        role: "assistant",
+        content: "",
+        requestQueryContent: queryContent,
+        requestDisplayContent: queryContent,
+        sourceUserMessageId: userMessageId,
+      });
+    }
+
+    /**
+     * OpenAI 协议无状态：把历史轮次一并带给网关才能多轮对话。
+     * 只取最近 40 条，防止上下文超长。
+     */
+    const context = conversation.messages.slice(-40).map((turn) => ({
+      role: turn.role,
+      content: turn.content,
+    }));
+
+    currentStopFn = streamDirectChat(String(model.iid), context, {
+      onChunk: (text) => {
+        if (requestToken !== currentRequestToken) {
+          return;
+        }
+        assistantContent += text;
+        thinking.value = "";
+        const msg = messages.value.find((m) => m.id === assistantMessageId);
+        if (msg) {
+          msg.content = assistantContent;
+        }
+      },
+      onThinking: (thought) => {
+        if (requestToken !== currentRequestToken) {
+          return;
+        }
+        thinking.value = thought;
+        const msg = messages.value.find((m) => m.id === assistantMessageId);
+        if (msg) {
+          msg.thinking = thought;
+        }
+      },
+      onComplete: () => {
+        if (requestToken !== currentRequestToken) {
+          return;
+        }
+        loading.value = false;
+        thinking.value = "";
+        const msg = messages.value.find((m) => m.id === assistantMessageId);
+        if (msg) {
+          delete msg.thinking;
+          if (!msg.content || !msg.content.trim()) {
+            msg.content = "模型未返回有效内容，请重试或尝试切换其他模型。";
+          }
+        }
+        if (assistantContent.trim()) {
+          conversation.messages.push({ role: "assistant", content: assistantContent });
+        }
+        conversation.updatedAt = Date.now();
+        persistDirectConversations();
+        currentStopFn = null;
+      },
+      onError: (error) => {
+        if (requestToken !== currentRequestToken) {
+          return;
+        }
+        console.error("直连模型发送失败:", error);
+        thinking.value = "";
+        const msg = messages.value.find((m) => m.id === assistantMessageId);
+        if (msg) {
+          msg.content = error.message || "直连模型调用失败，请稍后重试";
+          delete msg.thinking;
+        }
+        // 已生成的部分内容保留到本地会话，切换/刷新后不丢
+        persistPartialDirectReply(conversation, assistantContent);
+        loading.value = false;
+        currentStopFn = null;
+      },
+    });
+  };
+
+  const sendDirectMessage = (queryContent: string) => {
+    const model = activeDirectModel.value;
+    if (!model || model.iid == null) {
+      ElMessage.error("直连模型不可用，请检查模型直连配置或重新选择模型");
+      return;
+    }
+    const conversation = getOrCreateDirectConversation(queryContent);
+    const userMessageId = `user-${Date.now()}`;
+    messages.value.push({
+      id: userMessageId,
+      role: "user",
+      content: queryContent,
+      requestQueryContent: queryContent,
+      requestDisplayContent: queryContent,
+    });
+    conversation.messages.push({ role: "user", content: queryContent });
+    runDirectStream(conversation, `assistant-${Date.now()}`, userMessageId, queryContent);
+  };
+
+  const loadDirectConversation = (conversationId: string) => {
+    cancelCurrentRequest();
+    const conversation = directConversations.value.find((c) => c.id === conversationId);
+    if (!conversation) {
+      return;
+    }
+    activeDirectConversationId.value = conversationId;
+    messages.value = conversation.messages.map((turn, index) => ({
+      id: `${conversationId}-${index}`,
+      role: turn.role,
+      content: turn.content,
+      ...(turn.role === "user"
+        ? { requestQueryContent: turn.content, requestDisplayContent: turn.content }
+        : {}),
+    }));
+  };
+
   /**
    * 新建对话。
    * 这里用 function 声明而不是 const 箭头函数：
@@ -1301,6 +1595,7 @@ export function useChat(): UseChatReturn {
   function startNewConversation() {
     cancelCurrentRequest();
     activeConversationId.value = "";
+    activeDirectConversationId.value = "";
     messages.value = [];
     inputValue.value = "";
     thinking.value = "";
@@ -1442,7 +1737,10 @@ export function useChat(): UseChatReturn {
   };
 
   const canRegenerateMessage = (messageId: string): boolean => {
-    if (loading.value || !activeConversationId.value) {
+    if (loading.value) {
+      return false;
+    }
+    if (!isDirectMode.value && !activeConversationId.value) {
       return false;
     }
 
@@ -1483,6 +1781,26 @@ export function useChat(): UseChatReturn {
 
     if (!queryContent.trim() && requestFiles.length === 0) {
       ElMessage.warning("当前消息缺少可重新生成的请求内容");
+      return;
+    }
+
+    if (isDirectMode.value) {
+      const conversation = directConversations.value.find(
+        (c) => c.id === activeDirectConversationId.value
+      );
+      if (!conversation) {
+        ElMessage.error("会话不存在，无法重新生成");
+        return;
+      }
+      // 移除被重新生成的 assistant 轮次（最后一条），保留用户消息重发
+      for (let i = conversation.messages.length - 1; i >= 0; i--) {
+        if (conversation.messages[i].role === "assistant") {
+          conversation.messages.splice(i, 1);
+          break;
+        }
+      }
+      persistDirectConversations();
+      runDirectStream(conversation, messageId, sourceUserMessage.id, queryContent);
       return;
     }
 
@@ -1632,6 +1950,46 @@ export function useChat(): UseChatReturn {
   };
 
   /**
+   * 停止当前正在进行的流式生成（中止请求并保留已生成的部分内容）。
+   */
+  const stopGenerating = () => {
+    if (!loading.value) return;
+    cancelCurrentRequest();
+    ElMessage.info("已停止生成");
+  };
+
+  /**
+   * 把指定助手回答导出为 Markdown 文件（含来源助手名与导出时间）。
+   */
+  const exportMessageMarkdown = (messageId: string) => {
+    const msg = messages.value.find((item) => item.id === messageId);
+    if (!msg || msg.role !== "assistant" || !msg.content.trim()) {
+      ElMessage.warning("当前回答没有可导出的内容");
+      return;
+    }
+    const pad = (num: number) => String(num).padStart(2, "0");
+    const now = new Date();
+    const stamp = `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}-${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`;
+    const question = msg.requestQueryContent?.trim();
+    const lines: string[] = [];
+    if (question) {
+      lines.push(`> **提问：** ${question.replace(/\r?\n/g, "\n> ")}`, "");
+    }
+    lines.push(msg.content, "", "---", "", `导出自 ${assistantGreetingName.value} · ${now.toLocaleString()}`);
+    const markdown = lines.join("\n");
+    const blob = new Blob([markdown], { type: "text/markdown;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `ai-answer-${stamp}.md`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+    ElMessage.success("已导出 Markdown");
+  };
+
+  /**
    * 移除已上传的文件
    * @param fileId - 要移除的文件ID
    * @description 从 attachedFiles 列表中移除指定ID的文件，用于用户取消上传的文件
@@ -1652,9 +2010,21 @@ export function useChat(): UseChatReturn {
   };
 
   const selectModel = (value: string) => {
+    // 直连模型：模型即路由目标，不需要写入 Dify 应用变量
+    if (isDirectModelValue(value)) {
+      activeModelId.value = value;
+      return;
+    }
     const variable = modelNameVariable.value || "model_name";
     updateInputField({ variable, value });
   };
+
+  // 直连模型切换/进入/离开直连模式时开新对话，避免上下文跨模型混用
+  watch(activeDirectKey, (next, prev) => {
+    if (next !== prev && (next || prev)) {
+      startNewConversation();
+    }
+  });
 
   onMounted(() => {
     loadModels();
@@ -1763,6 +2133,7 @@ export function useChat(): UseChatReturn {
     lastMessageId,
     userInput,
     allowFileUpload,
+    isDirectMode,
     canSubmit,
     activeModel,
     activeAssistant,
@@ -1786,6 +2157,8 @@ export function useChat(): UseChatReturn {
     removeAttachedFile,
     handleFileSelected,
     copyMessage,
+    stopGenerating,
+    exportMessageMarkdown,
     canRegenerateMessage,
     handleRegenerateMessage,
     formatContent,

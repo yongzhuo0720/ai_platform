@@ -55,6 +55,8 @@ const {
   removeAttachedFile,
   handleFileSelected,
   copyMessage,
+  stopGenerating,
+  exportMessageMarkdown,
   canRegenerateMessage,
   handleRegenerateMessage,
   formatContent,
@@ -80,6 +82,7 @@ const {
   confirmDeleteAssistant,
   assistantDeleteConfirm,
   allowFileUpload,
+  isDirectMode,
 } = useChat();
 
 /** 根据文件 MIME 类型返回对应的 emoji 图标 */
@@ -621,7 +624,7 @@ onUnmounted(() => {
       <div ref="chatMessagesRef" class="chat-messages">
         <transition name="chat-stage" mode="out-in" @after-enter="onStageEnter">
           <div v-if="messages.length === 0" key="empty" class="chat-empty">
-            <div v-if="parametersLoading" class="chat-empty-loading">
+            <div v-if="parametersLoading && !isDirectMode" class="chat-empty-loading">
               <el-icon class="is-loading"><Loading /></el-icon>
               <p>加载中...</p>
             </div>
@@ -652,13 +655,14 @@ onUnmounted(() => {
                 placeholder="请输入问题，开始对话..."
                 is-empty
                 @submit="submitMessage"
+                @stop="stopGenerating"
                 @file-selected="handleFileSelected"
                 @remove-file="removeAttachedFile"
                 @update-input-field="updateInputField"
                 @select-model="selectModel"
               />
 
-              <div v-if="suggestedQuestions.length > 0" class="suggested-questions">
+              <div v-if="!isDirectMode && suggestedQuestions.length > 0" class="suggested-questions">
                 <p class="suggested-questions-title">建议问题</p>
                 <div class="suggested-questions-list">
                   <button
@@ -726,6 +730,15 @@ onUnmounted(() => {
                   <button
                     type="button"
                     class="chat-message-action"
+                    aria-label="导出 Markdown"
+                    title="导出 Markdown"
+                    @click="exportMessageMarkdown(message.id)"
+                  >
+                    <el-icon><Download /></el-icon>
+                  </button>
+                  <button
+                    type="button"
+                    class="chat-message-action"
                     aria-label="重新生成"
                     title="重新生成"
                     :disabled="!canRegenerateMessage(message.id)"
@@ -742,7 +755,7 @@ onUnmounted(() => {
 
       <!-- 消息完成后的推荐问题 -->
       <div
-        v-if="postAnswerSuggestions.length > 0 && messages.length > 0 && !loading"
+        v-if="!isDirectMode && postAnswerSuggestions.length > 0 && messages.length > 0 && !loading"
         class="suggested-questions post-answer-suggestions"
       >
         <p class="suggested-questions-title">推荐问题</p>
@@ -774,28 +787,12 @@ onUnmounted(() => {
             :allow-file-upload="allowFileUpload"
             placeholder="请输入问题，继续对话..."
             @submit="submitMessage"
+            @stop="stopGenerating"
             @file-selected="handleFileSelected"
             @remove-file="removeAttachedFile"
             @update-input-field="updateInputField"
             @select-model="selectModel"
           />
-            <!-- <ChatComposer
-            v-model="inputValue"
-            :attached-files="attachedFiles"
-            :input-fields="chatInputFields"
-            :input-values="userInput"
-            :select-options-map="chatSelectOptionsMap"
-            :model-options="modelOptions"
-            :active-model-id="activeModelId"
-            :loading="loading"
-            :allow-file-upload="allowFileUpload"
-            placeholder="请输入问题，继续对话..."
-            @submit="submitMessage"
-            @file-selected="handleFileSelected"
-            @remove-file="removeAttachedFile"
-            @update-input-field="updateInputField"
-            @select-model="selectModel"
-          /> -->
         </div>
       </transition>
     </div>

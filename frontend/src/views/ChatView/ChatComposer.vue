@@ -7,7 +7,7 @@ import {
   onUnmounted,
 } from "vue";
 import { ElInput } from "element-plus";
-import { Promotion, Plus, Delete, ArrowDown, Check } from "@element-plus/icons-vue";
+import { Promotion, Plus, Delete, ArrowDown, Check, VideoPause } from "@element-plus/icons-vue";
 import type { NormalizedUserInputField } from "@/types/chat";
 
 export interface AttachedFile {
@@ -47,6 +47,7 @@ const props = withDefaults(defineProps<Props>(), {
 const emit = defineEmits<{
   (e: "update:modelValue", value: string): void;
   (e: "submit"): void;
+  (e: "stop"): void;
   (e: "file-selected", file: File): void;
   (e: "remove-file", fileId: string): void;
   (e: "update-input-field", payload: { variable: string; value: string }): void;
@@ -421,10 +422,21 @@ onUnmounted(() => {
         </label>
 
         <button
+          v-if="loading"
+          type="button"
+          class="chat-send-btn is-stop"
+          aria-label="停止生成"
+          title="停止生成"
+          @click="emit('stop')"
+        >
+          <VideoPause />
+        </button>
+        <button
+          v-else
           type="button"
           class="chat-send-btn"
           :disabled="!canSubmit"
-          :aria-label="loading ? '发送中' : '发送消息'"
+          :aria-label="'发送消息'"
           @click="handleSubmit"
         >
           <Promotion />
@@ -996,6 +1008,16 @@ onUnmounted(() => {
     background: var(--qwen-border-strong);
     color: #ffffff;
     cursor: not-allowed;
+  }
+
+  &.is-stop {
+    background: #d93a3a;
+
+    &:hover {
+      background: #b52f2f;
+      transform: scale(1.05);
+      box-shadow: 0 4px 10px rgba(217, 58, 58, 0.25);
+    }
   }
 
   svg {
