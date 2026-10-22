@@ -67,6 +67,20 @@ public class AiGatewayUsageParser {
             }
         }
         /*
+         * OpenAI 协议的错误挂在根级 error 对象上（HTTP 仍可能是 200 或 4xx）：
+         * {"error": {"message": "...", "type": "...", "code": "..."}}
+         */
+        if (errorMessage == null) {
+            JsonNode error = root.path("error");
+            if (error.isObject()) {
+                String message = text(error, "message");
+                if (message != null) {
+                    String code = text(error, "code");
+                    errorMessage = code == null ? message : message + " (" + code + ")";
+                }
+            }
+        }
+        /*
          * 智能体把失败放在 response 事件里（HTTP 仍是 200），
          * error 可能是字符串，也可能是 {message: ...} 对象。
          */
@@ -103,7 +117,8 @@ public class AiGatewayUsageParser {
         if (messageId == null && ("message".equals(event) || "message_end".equals(event))) {
             messageId = text(root, "id");
         }
-        if (messageId == null && "message".equals(object)) {
+        if (messageId == null && ("message".equals(object)
+                || "chat.completion".equals(object) || "chat.completion.chunk".equals(object))) {
             messageId = text(root, "id");
         }
         if (messageId == null && data.isObject()) {
@@ -121,6 +136,13 @@ public class AiGatewayUsageParser {
         }
         if (modelName == null) {
             String name = text(root, "model_name");
+            if (name != null) {
+                modelName = name;
+            }
+        }
+        // OpenAI 协议：每个响应块根级都带 model 字段
+        if (modelName == null) {
+            String name = text(root, "model");
             if (name != null) {
                 modelName = name;
             }

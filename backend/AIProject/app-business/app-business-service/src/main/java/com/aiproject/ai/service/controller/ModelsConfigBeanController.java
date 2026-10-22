@@ -118,7 +118,9 @@ public class ModelsConfigBeanController {
 
         CheckUtils.objectCheckNull(uid, "请先登录", CodeEnum.FAILED_USER_LOGIN.getCode(), "");
         CheckUtils.objectCheckNull(data, "数据不能空", CodeEnum.NULL.getCode(), null);
-        return modelsConfigBeanHolder.queryPage(data, pageRequest);
+        Result<PageResult<ModelsConfigBean>> result = modelsConfigBeanHolder.queryPage(data, pageRequest);
+        maskApiKeys(result == null || result.getDatas() == null ? null : result.getDatas().getContent());
+        return result;
     }
 
     /**
@@ -137,7 +139,24 @@ public class ModelsConfigBeanController {
 
         CheckUtils.objectCheckNull(uid, "请先登录", CodeEnum.FAILED_USER_LOGIN.getCode(), "");
         CheckUtils.objectCheckNull(data, "数据不能空", CodeEnum.NULL.getCode(), null);
-        return Result.succeed(modelsConfigBeanHolder.queryList(data, null));
+        List<ModelsConfigBean> datas = modelsConfigBeanHolder.queryList(data, null);
+        maskApiKeys(datas);
+        return Result.succeed(datas);
+    }
+
+    /**
+     * 服务端密钥不下发浏览器：直连模型配置的 apiKey 只在后端使用，
+     * 查询结果一律置空，前端以「是否已配置」展示。
+     */
+    private void maskApiKeys(List<ModelsConfigBean> datas) {
+        if (datas == null) {
+            return;
+        }
+        for (ModelsConfigBean item : datas) {
+            if (item != null && item.getApiKey() != null && !item.getApiKey().isEmpty()) {
+                item.setApiKey("");
+            }
+        }
     }
 
 }

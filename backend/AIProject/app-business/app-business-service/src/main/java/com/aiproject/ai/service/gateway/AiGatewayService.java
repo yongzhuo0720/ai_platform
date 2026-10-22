@@ -64,6 +64,9 @@ public class AiGatewayService {
     AgentGatewayConfigResolver agentConfigResolver;
 
     @Autowired
+    ModelGatewayResolver modelGatewayResolver;
+
+    @Autowired
     AiGatewayGuard guard;
 
     @Autowired
@@ -86,6 +89,10 @@ public class AiGatewayService {
         }
         if (AgentGatewayConfigResolver.MODULE_AGENT.equals(module)) {
             proxyAgent(userId, request, response, start);
+            return;
+        }
+        if (ModelGatewayResolver.MODULE_MODELS.equals(module)) {
+            proxyModel(userId, request, response, start);
             return;
         }
         if (!configResolver.isSupported(module)) {
@@ -190,7 +197,148 @@ public class AiGatewayService {
         }
 
         doProxy(AgentGatewayConfigResolver.MODULE_AGENT, userId,
-                upstreamEndpoint, endpoint, config, request, response, start);
+                upstreamEndpoint, endpoint, config, request, response, start, null);
+    }
+
+    /**
+     * 模型直连网关：/api/aiGateway/models/{模型iid}/chat/completions。
+     * <p>
+     * 与 Dify 透传不同，这里收下 OpenAI 协议的请求体并做两处收敛后转发：
+     * 1. model 字段以服务端配置为准 —— 防止借网关调用该服务上的任意模型；
+     * 2. stream=true 时注入 stream_options.include_usage —— OpenAI 协议默认
+     *    不随流返回 usage，不注入就无法统计 tokens、执行每日配额。
+     */
+    private void proxyModel(String userId, HttpServletRequest request,
+                            HttpServletResponse response, long start) {
+        String method = request.getMethod();
+        String endpoint = extractEndpoint(request, ModelGatewayResolver.MODULE_MODELS);
+        if (endpoint == null || endpoint.isEmpty()) {
+            writeError(response, HttpServletResponse.SC_NOT_FOUND,
+                    "endpoint_not_found", "缺少模型接口路径");
+            return;
+        }
+        if (endpoint.contains("..") || endpoint.toLowerCase().contains("%2e")) {
+            writeError(response, HttpServletResponse.SC_BAD_REQUEST,
+                    "invalid_endpoint", "非法的接口路径");
+            return;
+        }
+
+        int slash = endpoint.indexOf('/');
+        if (slash <= 0 || slash == endpoint.length() - 1) {
+            writeError(response, HttpServletResponse.SC_NOT_FOUND,
+                    "model_not_found", "缺少模型标识");
+            return;
+        }
+        String modelKey = endpoint.substring(0, slash);
+        String upstreamEndpoint = endpoint.substring(slash + 1);
+        long iid = parseModelId(modelKey);
+        if (iid <= 0) {
+            writeError(response, HttpServletResponse.SC_BAD_REQUEST,
+                    "invalid_model", "非法的模型标识");
+            return;
+        }
+        if (!"chat/completions".equals(upstreamEndpoint)) {
+            writeError(response, HttpServletResponse.SC_NOT_FOUND,
+                    "endpoint_not_found", "模型直连仅支持 chat/completions 接口");
+            return;
+        }
+
+        ModelGatewayResolver.ResolvedModel model = modelGatewayResolver.resolve(iid);
+        if (model == null) {
+            String message = "模型不存在或未启用直连（需配置 OpenAI 兼容协议、服务地址、密钥与上游模型名）";
+            writeError(response, HttpServletResponse.SC_SERVICE_UNAVAILABLE,
+                    "model_unavailable", message);
+            record(userId, ModelGatewayResolver.MODULE_MODELS, endpoint, method, "failed",
+                    HttpServletResponse.SC_SERVICE_UNAVAILABLE, null, start, message,
+                    clientIp(request));
+            return;
+        }
+
+        AiGatewayGuard.Decision decision =
+                guard.check(userId, ModelGatewayResolver.MODULE_MODELS);
+        if (!decision.isAllowed()) {
+            writeError(response, 429, decision.getCode(), decision.getMessage());
+            record(userId, ModelGatewayResolver.MODULE_MODELS, endpoint, method, "blocked",
+                    429, null, start, decision.getMessage(), clientIp(request));
+            return;
+        }
+
+        byte[] presetBody = readModelRequestBody(request, response, userId,
+                model, endpoint, method, start);
+        if (presetBody == null) {
+            // 响应与审计已在 readModelRequestBody 内处理
+            return;
+        }
+
+        AiGatewayConfigResolver.ResolvedConfig config =
+                new AiGatewayConfigResolver.ResolvedConfig(model.getBaseUrl(), model.getApiKey());
+        doProxy(ModelGatewayResolver.MODULE_MODELS, userId,
+                upstreamEndpoint, endpoint, config, request, response, start, presetBody);
+    }
+
+    /** 读取并改写 OpenAI 协议请求体；失败时写错误响应并记录审计，返回 null */
+    private byte[] readModelRequestBody(HttpServletRequest request, HttpServletResponse response,
+                                        String userId, ModelGatewayResolver.ResolvedModel model,
+                                        String endpoint, String method, long start) {
+        try {
+            ByteArrayOutputStream buffer = new ByteArrayOutputStream();
+            try (InputStream in = request.getInputStream()) {
+                byte[] chunk = new byte[8192];
+                int read;
+                while ((read = in.read(chunk)) != -1) {
+                    if (buffer.size() + read > MAX_JSON_BUFFER) {
+                        writeError(response, HttpServletResponse.SC_BAD_REQUEST,
+                                "payload_too_large", "请求体过大");
+                        record(userId, ModelGatewayResolver.MODULE_MODELS, endpoint, method, "failed",
+                                HttpServletResponse.SC_BAD_REQUEST, null, start,
+                                "请求体过大", clientIp(request));
+                        return null;
+                    }
+                    buffer.write(chunk, 0, read);
+                }
+            }
+            if (buffer.size() == 0) {
+                writeError(response, HttpServletResponse.SC_BAD_REQUEST,
+                        "invalid_request", "请求体不能为空");
+                record(userId, ModelGatewayResolver.MODULE_MODELS, endpoint, method, "failed",
+                        HttpServletResponse.SC_BAD_REQUEST, null, start,
+                        "请求体为空", clientIp(request));
+                return null;
+            }
+
+            com.fasterxml.jackson.databind.JsonNode root =
+                    MAPPER.readTree(buffer.toByteArray());
+            if (root == null || !root.isObject()) {
+                throw new IllegalArgumentException("root is not an object");
+            }
+            com.fasterxml.jackson.databind.node.ObjectNode body =
+                    (com.fasterxml.jackson.databind.node.ObjectNode) root;
+            body.put("model", model.getUpstreamModel());
+            if (body.path("stream").asBoolean(false)) {
+                body.putObject("stream_options").put("include_usage", true);
+            }
+            return MAPPER.writeValueAsBytes(body);
+        } catch (Exception e) {
+            String message = "请求体必须是 OpenAI 协议 JSON（含 messages 字段）：" + rootMessage(e);
+            writeError(response, HttpServletResponse.SC_BAD_REQUEST,
+                    "invalid_request", message);
+            record(userId, ModelGatewayResolver.MODULE_MODELS, endpoint, method, "failed",
+                    HttpServletResponse.SC_BAD_REQUEST, null, start, message,
+                    clientIp(request));
+            return null;
+        }
+    }
+
+    private static long parseModelId(String value) {
+        if (value == null || value.isEmpty()) {
+            return -1;
+        }
+        try {
+            long id = Long.parseLong(value);
+            return id > 0 ? id : -1;
+        } catch (NumberFormatException e) {
+            return -1;
+        }
     }
 
     private void doProxy(String module, String userId,
@@ -198,6 +346,15 @@ public class AiGatewayService {
                          AiGatewayConfigResolver.ResolvedConfig config,
                          HttpServletRequest request, HttpServletResponse response,
                          long start) {
+        doProxy(module, userId, upstreamEndpoint, auditEndpoint, config,
+                request, response, start, null);
+    }
+
+    private void doProxy(String module, String userId,
+                         String upstreamEndpoint, String auditEndpoint,
+                         AiGatewayConfigResolver.ResolvedConfig config,
+                         HttpServletRequest request, HttpServletResponse response,
+                         long start, byte[] presetBody) {
         String method = request.getMethod();
         String clientIp = clientIp(request);
         HttpURLConnection conn = null;
@@ -229,7 +386,16 @@ public class AiGatewayService {
                 conn.setRequestProperty("Content-Type", contentType);
             }
 
-            relayRequestBody(request, conn, method);
+            if (presetBody != null) {
+                conn.setDoOutput(true);
+                conn.setFixedLengthStreamingMode(presetBody.length);
+                OutputStream bodyOut = conn.getOutputStream();
+                bodyOut.write(presetBody);
+                bodyOut.flush();
+                bodyOut.close();
+            } else {
+                relayRequestBody(request, conn, method);
+            }
 
             int upstreamStatus = conn.getResponseCode();
             String upstreamType = conn.getContentType();

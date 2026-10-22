@@ -1,0 +1,190 @@
+/**
+ * 直连模型流式客户端（OpenAI 兼容协议）。
+ *
+ * 与 Dify 的 chat-messages 协议不同，/chat/completions 是无状态接口：
+ * 多轮上下文由前端把历史 messages 一并带给网关，网关收敛 model 字段后转发上游。
+ * SSE 格式：data: {"choices":[{"delta":{"content"|"reasoning_content":...}}]}，
+ * 流末尾可能有一个带 usage 的块（网关注入 stream_options.include_usage），
+ * 以 data: [DONE] 结束。
+ */
+
+import { getModelsGatewayBase, gatewayAuthHeaders } from '@/stores/difyConfig'
+
+export interface DirectChatMessage {
+  role: 'system' | 'user' | 'assistant'
+  content: string
+}
+
+export interface DirectStreamOptions {
+  onChunk: (text: string) => void
+  onThinking?: (text: string) => void
+  onComplete?: () => void
+  onError?: (error: Error) => void
+}
+
+/** 解析网关错误响应，优先取 JSON 里的 message 字段 */
+const parseGatewayError = async (response: Response): Promise<Error> => {
+  const text = await response.text().catch(() => '')
+  try {
+    const parsed = JSON.parse(text)
+    if (parsed?.message) {
+      return new Error(parsed.message)
+    }
+  } catch {
+    // 非 JSON 响应体，使用原文
+  }
+  return new Error(text || `请求失败 (${response.status})`)
+}
+
+/**
+ * 发送直连模型流式对话。
+ * @param modelIid 模型配置的 iid（网关路由键）
+ * @param messages OpenAI 格式的完整上下文（含本轮用户消息）
+ * @returns 取消函数，调用后中止请求
+ */
+export const streamDirectChat = (
+  modelIid: string,
+  messages: DirectChatMessage[],
+  options: DirectStreamOptions
+): (() => void) => {
+  const controller = new AbortController()
+  const { onChunk, onThinking, onComplete, onError } = options
+
+  let completeCalled = false
+  let errorCalled = false
+  let firstByteTimer: ReturnType<typeof setTimeout> | null = null
+  let idleTimer: ReturnType<typeof setTimeout> | null = null
+
+  const clearTimers = () => {
+    if (firstByteTimer) {
+      clearTimeout(firstByteTimer)
+      firstByteTimer = null
+    }
+    if (idleTimer) {
+      clearTimeout(idleTimer)
+      idleTimer = null
+    }
+  }
+  const resetIdleTimer = () => {
+    if (idleTimer) clearTimeout(idleTimer)
+    idleTimer = setTimeout(() => {
+      controller.abort()
+      fail(new Error('响应流空闲超时：90 秒内无新数据'))
+    }, 90000)
+  }
+  const complete = () => {
+    if (completeCalled || errorCalled) return
+    completeCalled = true
+    clearTimers()
+    onComplete?.()
+  }
+  const fail = (err: Error) => {
+    if (errorCalled || completeCalled) return
+    errorCalled = true
+    clearTimers()
+    onError?.(err)
+  }
+
+  // 30 秒未收到首字节则中止（服务不可达时常悬挂）
+  firstByteTimer = setTimeout(() => {
+    controller.abort()
+    fail(new Error('请求超时：30 秒内未收到首个响应字节'))
+  }, 30000)
+
+  const run = async () => {
+    const response = await fetch(`${getModelsGatewayBase()}/${modelIid}/chat/completions`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...gatewayAuthHeaders(),
+      },
+      body: JSON.stringify({ messages, stream: true }),
+      signal: controller.signal,
+    })
+
+    if (firstByteTimer) {
+      clearTimeout(firstByteTimer)
+      firstByteTimer = null
+    }
+    if (!response.ok) {
+      throw await parseGatewayError(response)
+    }
+
+    const reader = response.body?.getReader()
+    if (!reader) {
+      throw new Error('无法读取响应流')
+    }
+
+    const decoder = new TextDecoder()
+    let buffer = ''
+    let eventType = ''
+
+    while (true) {
+      const { done, value } = await reader.read()
+      if (done) break
+      resetIdleTimer()
+
+      buffer += decoder.decode(value, { stream: true })
+      const lines = buffer.split(/\r\n|\r|\n/)
+      buffer = lines.pop() || ''
+
+      for (const line of lines) {
+        if (line.startsWith('event: ')) {
+          eventType = line.slice(7).trim()
+          continue
+        }
+        if (!line.startsWith('data:')) {
+          continue
+        }
+        const payload = line.slice(5).trim()
+        if (!payload || payload === '[DONE]') {
+          if (payload === '[DONE]') {
+            complete()
+          }
+          continue
+        }
+        let parsed: any
+        try {
+          parsed = JSON.parse(payload)
+        } catch {
+          continue
+        }
+        if (eventType === 'error' || parsed.error) {
+          const err = parsed.error
+          const message =
+            (typeof err === 'string' ? err : err?.message) ||
+            parsed.message ||
+            '模型调用失败，请稍后重试'
+          const code = typeof err === 'object' && err?.code ? ` (${err.code})` : ''
+          throw new Error(`${message}${code}`)
+        }
+        const delta = parsed.choices?.[0]?.delta
+        if (!delta) {
+          continue
+        }
+        const reasoning = delta.reasoning_content ?? delta.reasoning
+        if (reasoning) {
+          onThinking?.(reasoning)
+        }
+        if (delta.content) {
+          onChunk(delta.content)
+        }
+      }
+    }
+    complete()
+  }
+
+  run().catch((err) => {
+    if (err?.name === 'AbortError') {
+      // 主动取消：由调用方通过 token 校验静默处理
+      complete()
+      return
+    }
+    fail(err instanceof Error ? err : new Error(String(err)))
+  })
+
+  return () => {
+    controller.abort()
+    clearTimers()
+  }
+}

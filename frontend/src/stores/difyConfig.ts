@@ -205,3 +205,11 @@ export function getKnowledgeFileConfig(): { apiUrl: string; apiKey: string } {
   }
   return getConfig('knowledgeFile', cache.knowledgeFile)
 }
+
+/**
+ * 模型直连网关基址：/ai/api/aiGateway/models/{模型iid}/chat/completions。
+ * 与 Dify 配置无关（服务端按 modelsconfigbean 的直连配置路由），两种模式下都可用。
+ */
+export function getModelsGatewayBase(): string {
+  return `${GATEWAY_BASE}/models`
+}
