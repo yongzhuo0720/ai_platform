@@ -118,7 +118,8 @@ public class AiGatewayGuard {
 
     private boolean tokenQuotaApplies(String module) {
         return AiGatewayConfigResolver.MODULE_CHAT.equals(module)
-                || AiGatewayConfigResolver.MODULE_KNOWLEDGE_CHAT.equals(module);
+                || AiGatewayConfigResolver.MODULE_KNOWLEDGE_CHAT.equals(module)
+                || ModelGatewayResolver.MODULE_MODELS.equals(module);
     }
 
     @Getter
