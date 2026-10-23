@@ -4,7 +4,6 @@ import com.aiproject.ai.permission.bean.MyUserBaseDb;
 import com.aiproject.ai.permission.holde.MyUserBaseDbHolder;
 import com.aiproject.ai.service.bean.AiCallLogBean;
 import com.aiproject.ai.service.bean.AiUserQuotaBean;
-import com.aiproject.ai.service.gateway.AgentGatewayConfigResolver;
 import com.aiproject.ai.service.gateway.AiGatewayConfigResolver;
 import com.aiproject.ai.service.gateway.AiGatewayGuard;
 import com.aiproject.ai.service.gateway.AiGatewayProperties;
@@ -75,9 +74,6 @@ public class AiGatewayAdminHolder {
     AiGatewayConfigResolver configResolver;
 
     @Autowired
-    AgentGatewayConfigResolver agentConfigResolver;
-
-    @Autowired
     ModelGatewayResolver modelGatewayResolver;
 
     @Autowired
@@ -104,10 +100,6 @@ public class AiGatewayAdminHolder {
                     configResolver.moduleName(module),
                     configResolver.resolve(module) != null));
         }
-        status.getModules().add(new AiGatewayConfigStatus.ModuleStatus(
-                AgentGatewayConfigResolver.MODULE_AGENT,
-                AgentGatewayConfigResolver.MODULE_NAME,
-                agentConfigResolver.isDefaultConfigured()));
         status.getModules().add(new AiGatewayConfigStatus.ModuleStatus(
                 ModelGatewayResolver.MODULE_MODELS,
                 ModelGatewayResolver.MODULE_NAME,
@@ -547,7 +539,6 @@ public class AiGatewayAdminHolder {
                 AiGatewayConfigResolver.MODULE_CHAT,
                 AiGatewayConfigResolver.MODULE_KNOWLEDGE_CHAT,
                 AiGatewayConfigResolver.MODULE_FILE,
-                AgentGatewayConfigResolver.MODULE_AGENT,
                 ModelGatewayResolver.MODULE_MODELS}) {
             AiGatewayModuleStat stat = new AiGatewayModuleStat();
             stat.setModule(module);
@@ -628,7 +619,6 @@ public class AiGatewayAdminHolder {
         if ("chat".equals(module)) return "问答聊天";
         if ("knowledgeChat".equals(module)) return "知识库对话";
         if ("file".equals(module)) return "知识库文件";
-        if ("agent".equals(module)) return "智能体助手";
         if ("models".equals(module)) return "模型直连";
         return module;
     }

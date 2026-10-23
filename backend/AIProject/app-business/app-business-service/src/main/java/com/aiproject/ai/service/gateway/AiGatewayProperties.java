@@ -36,18 +36,6 @@ public class AiGatewayProperties {
 
     private Dify dify = new Dify();
 
-    private Agent agent = new Agent();
-
-    @Data
-    public static class Agent {
-        /** 智能体服务基础地址（只由服务端配置，避免把任意 URL 写进请求） */
-        private String apiUrl;
-        /** 内置助手的 Bearer Token */
-        private String authToken;
-        /** 内置助手的 X-Agent-Id */
-        private String agentId;
-    }
-
     @Data
     public static class Dify {
         private Module chat = new Module();

@@ -166,7 +166,7 @@ onUnmounted(() => {
    *
    * 之前这里只移除事件监听，没有中止请求：从知识库中心切走后
    * 流仍在后台跑，响应还会继续写 chatMessages，既浪费连接也有并发问题。
-   * ChatView(1776-1779) 和 AgentAssistantView(1342-1344) 都做了这一步，
+   * ChatView 也做了这一步，
    * 这里是全项目唯一漏掉的。
    */
   if (chatStopFn) {

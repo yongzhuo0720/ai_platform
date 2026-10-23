@@ -13,7 +13,7 @@ AI 的向量化、检索与编排由 Dify 承担，本平台负责**用户体系
 | 前端 | Vue 3 · TypeScript · Vite 5 · Element Plus · Pinia · vue-router（hash 模式） |
 | 后端 | Spring Boot 2.6.8（Java 8）· MyBatis-Plus · Druid · Sa-Token |
 | 存储 | PostgreSQL（库 `ai`，schema `public`）· Redis |
-| AI 能力 | Dify（对话 / 工作流 / 知识库）· QwenPaw 智能体服务 |
+| AI 能力 | Dify（对话 / 工作流 / 知识库）· OpenAI 兼容直连模型 |
 | 构建部署 | Maven 多模块 · Nginx |
 
 ---
@@ -26,13 +26,11 @@ AI 请求默认统一收口到业务后端，浏览器不再持有 Dify API Key 
 |---|---|---|---|
 | A · AI 网关（默认） | `/ai/api/aiGateway/{chat\|knowledgeChat\|file\|agent}/...` | 浏览器 → Spring Boot → Dify / 智能体服务 | 凭据只存服务端；SSE 逐块透传；按用户限流、每日 Token 配额（仅 Dify）、审计日志 |
 | B · 平台接口 | `/ai/api/...` | 浏览器 → Spring Boot → PostgreSQL | Sa-Token 鉴权，业务读写与操作日志 |
-| C · 直连（兼容） | `/v1/...`、`/qwen/...` | 浏览器 → Dify / 智能体服务 | 设置 `VITE_AI_GATEWAY=0` 后启用；凭据下发浏览器，无治理能力 |
+| C · 直连（兼容） | `/v1/...` | 浏览器 → Dify | 设置 `VITE_AI_GATEWAY=0` 后启用；凭据下发浏览器，无治理能力 |
 
 网关核心在 `AiGatewayService`：转发请求/响应、过滤逐跳响应头、SSE 边读边写（不破坏逐字输出）、解析上游 usage 并落审计；`AiGatewayGuard` 用 Redis 做每分钟限流与每日 Token 配额（配额只对 `chat` / `knowledgeChat` 生效，`0` 表示不限制）；`AiGatewayAdminHolder` 提供用量看板、调用日志与配额管理接口，后台页面为「AI 调用治理」。
 
-智能体通道 `/ai/api/aiGateway/agent/{default|助手iid}/**`：内置兜底助手的 Token 由后端 `AGENT_*` 环境变量提供；自定义助手从 `assistantbean` 读取 Token 与 Agent ID，并按其可见性校验调用者。上游地址始终取服务端配置，忽略助手记录里的 `apiUrl`，避免 SSRF。浏览器伪造的 `Authorization` / `X-Agent-Id` 会被网关覆盖。
-
-**取舍**：换来凭据不出服务端、可计量可治理；代价是多一跳网关延迟与 SSE 代理复杂度，且 Dify / 智能体超时与断流需要在网关侧兜底。
+**取舍**：换来凭据不出服务端、可计量可治理；代价是多一跳网关延迟与 SSE 代理复杂度，且 Dify 超时与断流需要在网关侧兜底。
 
 ### 数据归属：kbId 弱引用
 
@@ -117,19 +115,13 @@ DIFY_KB_FILE_KEY=dataset-你的知识库密钥
 > `app-` 开头的应用密钥用于对话，`dataset-` 开头的知识库密钥用于数据集接口，两者不能混用。
 > 密钥只放在数据库或服务端环境变量中，**不要**提交到仓库。
 
-### 配置智能体助手（可选）
+### 多模型直连（可选）
 
-智能体助手默认也经网关转发。内置兜底助手在服务端配置：
+除 Dify 应用外，还可把任一 OpenAI 兼容服务配置成「直连模型」：后台「模型配置」里填写协议（openai）、
+服务地址、API Key 与上游模型名，前端聊天页选择该模型即经 `/ai/api/aiGateway/models/{iid}/**` 调用。
+请求体中的 `model` 以服务端配置为准，流式响应自动注入 `stream_options.include_usage` 以统计 Token。
 
-```bash
-AGENT_BASE_URL=http://智能体服务地址:端口
-AGENT_AUTH_TOKEN=智能体服务的 Bearer Token
-AGENT_ID=内置助手的 Agent ID
-```
-
-自定义助手在「智能体助手 → 添加/编辑助手」里填写 Token 与 Agent ID，保存在 `assistantbean`。未配置时内置助手返回 `503 gateway_not_configured`；助手不存在或无权使用返回 `404 assistant_unavailable`。
-
-前端默认走网关，`frontend/.env.local` 里的 `VITE_DIFY_*` / `VITE_AGENT_*` 不再生效；只有在排障或兼容旧行为时才设置 `VITE_AI_GATEWAY=0` 切回浏览器直连（此时凭据会下发浏览器，且没有限流/配额/审计）。
+前端默认走网关，`frontend/.env.local` 里的 `VITE_DIFY_*` 不再生效；只有在排障或兼容旧行为时才设置 `VITE_AI_GATEWAY=0` 切回浏览器直连（此时凭据会下发浏览器，且没有限流/配额/审计）。
 
 ---
 
@@ -191,10 +183,9 @@ mvn -s $settings "-Dmaven.repo.local=$repo" test
 
 ## 已知限制
 
-- **AI 能力依赖外部服务**：Dify 与智能体服务不可达时，对话、知识库检索、文档预览、智能体助手等功能不可用（业务模块不受影响）。
-- **网关需先配置上游**：Dify 需在数据库 `difyconfigbean`（后台「Dify 配置管理」）或服务端 `DIFY_*` 环境变量配置；智能体需 `AGENT_*` 环境变量或助手记录里的 Token / Agent ID。未配置时对应模块返回 503；前端 `.env.local` 的 `VITE_DIFY_*` / `VITE_AGENT_*` 在默认网关模式下不生效。
-- **流式治理的边界**：Token 统计依赖上游返回 usage（Dify 聊天在 `message_end`，工作流在 `data.total_tokens`）；上游不返回时只统计调用次数与耗时，配额无法按 Token 精确扣减。智能体通道目前只计量调用次数与耗时，不参与 Token 配额。
-- **助手凭据仍是明文**：`assistantbean` 中的 Token 以明文保存，后续应做加密存储或改为统一托管。
+- **AI 能力依赖外部服务**：Dify 不可达时，对话、知识库检索、文档预览等功能不可用（业务模块不受影响）。
+- **网关需先配置上游**：Dify 需在数据库 `difyconfigbean`（后台「Dify 配置管理」）或服务端 `DIFY_*` 环境变量配置；直连模型需在「模型配置」里配齐地址与密钥。未配置时对应模块返回 503；前端 `.env.local` 的 `VITE_DIFY_*` 在默认网关模式下不生效。
+- **流式治理的边界**：Token 统计依赖上游返回 usage（Dify 聊天在 `message_end`，工作流在 `data.total_tokens`）；上游不返回时只统计调用次数与耗时，配额无法按 Token 精确扣减。
 - **测试覆盖有限**：已补上核心鉴权、权限模型、SSO state 与网关 usage 解析的单元测试（30 个用例），其余模块尚无覆盖。离线跑测试前需先联网一次下载 `surefire-junit-platform`。
 - **SSO** 依赖外部 OpenID 服务（默认关闭），本地请使用账号密码登录。
 
