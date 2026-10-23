@@ -133,8 +133,6 @@ const handleLogout = () => {
     localStorage.removeItem(`chat-hidden-assistants-${uid}`);
     localStorage.removeItem(`chat-active-assistant-${uid}`);
     localStorage.removeItem(`chat-active-model-${uid}`);
-    // 清除智能体助手的本地话题记录
-    localStorage.removeItem(`agent-topics-${uid}`);
   }
   Cookies.remove("uname");
   Cookies.remove("rid");

@@ -27,7 +27,6 @@ public class TableSchemaInitializer implements ApplicationListener<ApplicationRe
     @Override
     public void onApplicationEvent(ApplicationReadyEvent event) {
         ensureCapabilitiesIconColumn();
-        ensureAssistantColumns();
         ensureAiGatewayIndexes();
     }
 
@@ -37,33 +36,6 @@ public class TableSchemaInitializer implements ApplicationListener<ApplicationRe
      */
     private void ensureCapabilitiesIconColumn() {
         execute("ALTER TABLE capabilitiesbean ADD COLUMN IF NOT EXISTS icon text");
-    }
-
-    /**
-     * assistantbean 表：多智能体统一管理所需的配置字段。
-     * 注意：框架 SQL 使用「字段名原样 + 双引号」作为列名（如 "userId"），
-     * 因此列名必须与 Java 字段名完全一致（驼峰），不能使用下划线。
-     */
-    private void ensureAssistantColumns() {
-        // 先清理历史遗留的小写重复列。
-        // 之前的实现用未加引号的 DDL 建列（ALTER TABLE ... ADD COLUMN agentId text），
-        // PostgreSQL 会把未加引号的标识符折叠成小写，于是建出的是 agentid 而不是 agentId，
-        // 与框架需要的 "agentId" 形成同表内的一对大小写重复列。
-        // 自动映射大小写不敏感，一旦两列都有值就会把值映射到错误的列上。
-        // 这 4 列在库中始终为空（写入走框架生成的带引号列名），因此可安全删除。
-        execute("ALTER TABLE assistantbean DROP COLUMN IF EXISTS agentid");
-        execute("ALTER TABLE assistantbean DROP COLUMN IF EXISTS apiurl");
-        execute("ALTER TABLE assistantbean DROP COLUMN IF EXISTS authtoken");
-        execute("ALTER TABLE assistantbean DROP COLUMN IF EXISTS permissiontype");
-
-        execute("ALTER TABLE assistantbean ADD COLUMN IF NOT EXISTS \"type\" text");
-        execute("ALTER TABLE assistantbean ADD COLUMN IF NOT EXISTS \"agentId\" text");
-        execute("ALTER TABLE assistantbean ADD COLUMN IF NOT EXISTS \"apiUrl\" text");
-        execute("ALTER TABLE assistantbean ADD COLUMN IF NOT EXISTS \"authToken\" text");
-        execute("ALTER TABLE assistantbean ADD COLUMN IF NOT EXISTS \"channel\" text");
-        execute("ALTER TABLE assistantbean ADD COLUMN IF NOT EXISTS \"permissionType\" text");
-        execute("ALTER TABLE assistantbean ADD COLUMN IF NOT EXISTS \"roleiids\" text");
-        execute("ALTER TABLE assistantbean ADD COLUMN IF NOT EXISTS \"unitsnos\" text");
     }
 
     /**

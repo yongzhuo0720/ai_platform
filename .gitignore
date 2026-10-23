@@ -49,3 +49,12 @@ backend/AIProject/Logs/
 /frontend/dist.zip
 /frontend/aiweb
 /frontend/aiweb.zip
+
+# 内部评审文档：只在本地留存，永不入库（2026-10-23 曾被误提交推送，已强推清除）
+/docs/code-review/
+/docs/project-audit.md
+/docs/项目改进评估-*.md
+
+# 内网部署手册与个人备战文档（2026-10-23 移出仓库，磁盘保留）
+/docs/部署手册.md
+/docs/学习文档-春招备战.md

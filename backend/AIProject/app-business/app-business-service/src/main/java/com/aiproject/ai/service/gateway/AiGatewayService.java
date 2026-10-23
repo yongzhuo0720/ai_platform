@@ -61,9 +61,6 @@ public class AiGatewayService {
     AiGatewayConfigResolver configResolver;
 
     @Autowired
-    AgentGatewayConfigResolver agentConfigResolver;
-
-    @Autowired
     ModelGatewayResolver modelGatewayResolver;
 
     @Autowired
@@ -85,10 +82,6 @@ public class AiGatewayService {
         if (userId == null || userId.isEmpty()) {
             writeError(response, HttpServletResponse.SC_UNAUTHORIZED,
                     "unauthorized", "请先登录");
-            return;
-        }
-        if (AgentGatewayConfigResolver.MODULE_AGENT.equals(module)) {
-            proxyAgent(userId, request, response, start);
             return;
         }
         if (ModelGatewayResolver.MODULE_MODELS.equals(module)) {
@@ -133,71 +126,6 @@ public class AiGatewayService {
         }
 
         doProxy(module, userId, endpoint, endpoint, config, request, response, start);
-    }
-
-    /**
-     * 智能体网关：/api/aiGateway/agent/{default|助手id}/**。
-     * <p>
-     * 上游地址与默认凭据来自服务端配置；自定义助手使用数据库里的
-     * X-Agent-Id / Token，因此浏览器不需要（也不会拿到）这些凭据。
-     */
-    private void proxyAgent(String userId, HttpServletRequest request,
-                            HttpServletResponse response, long start) {
-        String method = request.getMethod();
-        String endpoint = extractEndpoint(request, AgentGatewayConfigResolver.MODULE_AGENT);
-        if (endpoint == null || endpoint.isEmpty()) {
-            writeError(response, HttpServletResponse.SC_NOT_FOUND,
-                    "endpoint_not_found", "缺少智能体接口路径");
-            return;
-        }
-        if (endpoint.contains("..") || endpoint.toLowerCase().contains("%2e")) {
-            writeError(response, HttpServletResponse.SC_BAD_REQUEST,
-                    "invalid_endpoint", "非法的接口路径");
-            return;
-        }
-
-        int slash = endpoint.indexOf('/');
-        if (slash <= 0 || slash == endpoint.length() - 1) {
-            writeError(response, HttpServletResponse.SC_NOT_FOUND,
-                    "assistant_not_found", "缺少智能体助手标识");
-            return;
-        }
-        String assistantKey = endpoint.substring(0, slash);
-        String upstreamEndpoint = endpoint.substring(slash + 1);
-        if (!agentConfigResolver.isValidKey(assistantKey)) {
-            writeError(response, HttpServletResponse.SC_BAD_REQUEST,
-                    "invalid_assistant", "非法的智能体助手标识");
-            return;
-        }
-
-        AiGatewayConfigResolver.ResolvedConfig config =
-                agentConfigResolver.resolve(userId, assistantKey);
-        if (config == null) {
-            boolean builtin = AgentGatewayConfigResolver.DEFAULT_KEY.equals(assistantKey);
-            int status = builtin
-                    ? HttpServletResponse.SC_SERVICE_UNAVAILABLE
-                    : HttpServletResponse.SC_NOT_FOUND;
-            String code = builtin ? "gateway_not_configured" : "assistant_unavailable";
-            String message = builtin
-                    ? "智能体服务尚未配置，请在后端配置 AGENT_BASE_URL / AGENT_AUTH_TOKEN / AGENT_ID"
-                    : "助手不存在、无权使用，或未配置认证 Token / Agent ID";
-            writeError(response, status, code, message);
-            record(userId, AgentGatewayConfigResolver.MODULE_AGENT, endpoint, method, "failed",
-                    status, null, start, message, clientIp(request));
-            return;
-        }
-
-        AiGatewayGuard.Decision decision =
-                guard.check(userId, AgentGatewayConfigResolver.MODULE_AGENT);
-        if (!decision.isAllowed()) {
-            writeError(response, 429, decision.getCode(), decision.getMessage());
-            record(userId, AgentGatewayConfigResolver.MODULE_AGENT, endpoint, method, "blocked",
-                    429, null, start, decision.getMessage(), clientIp(request));
-            return;
-        }
-
-        doProxy(AgentGatewayConfigResolver.MODULE_AGENT, userId,
-                upstreamEndpoint, endpoint, config, request, response, start, null);
     }
 
     /**
@@ -373,9 +301,6 @@ public class AiGatewayService {
             conn.setInstanceFollowRedirects(false);
             conn.setRequestMethod(method.toUpperCase());
             conn.setRequestProperty("Authorization", "Bearer " + config.getApiKey());
-            if (config.getAgentId() != null && !config.getAgentId().isEmpty()) {
-                conn.setRequestProperty("X-Agent-Id", config.getAgentId());
-            }
             conn.setRequestProperty("Accept", "text/event-stream, application/json");
             // 让上游不要压缩，否则透传的 SSE / JSON 会变成二进制
             conn.setRequestProperty("Accept-Encoding", "identity");

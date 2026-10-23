@@ -7,7 +7,6 @@ const MODULE_LABELS: Record<string, string> = {
   chat: '问答聊天',
   knowledgeChat: '知识库对话',
   file: '知识库文件',
-  agent: '智能体助手',
   models: '模型直连',
 }
 

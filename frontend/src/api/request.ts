@@ -375,7 +375,7 @@ export const streamingRequest = (
   let errorCalled = false;
   // 跨 chunk 保留的事件类型（SSE 规范：event: 行可能早于 data: 行到达不同 TCP chunk）
   let eventType = '';
-  // SSE 超时控制（与 agentAssistant 的 30s 首字节超时对齐）
+  // SSE 超时控制（30s 无首字节则中止，避免代理悬挂）
   let firstByteTimer: ReturnType<typeof setTimeout> | null = null;
   let idleTimer: ReturnType<typeof setTimeout> | null = null;
   const clearStreamTimers = () => {

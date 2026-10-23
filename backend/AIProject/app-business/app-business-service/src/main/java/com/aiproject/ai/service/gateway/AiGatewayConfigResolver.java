@@ -92,17 +92,10 @@ public class AiGatewayConfigResolver {
     public static class ResolvedConfig {
         private final String apiUrl;
         private final String apiKey;
-        /** 智能体服务需要的 X-Agent-Id；Dify 模块为 null */
-        private final String agentId;
 
         public ResolvedConfig(String apiUrl, String apiKey) {
-            this(apiUrl, apiKey, null);
-        }
-
-        public ResolvedConfig(String apiUrl, String apiKey, String agentId) {
             this.apiUrl = apiUrl;
             this.apiKey = apiKey;
-            this.agentId = agentId;
         }
     }
 }

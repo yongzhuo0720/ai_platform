@@ -12,18 +12,6 @@ export const navigationSections: any[] = [
     ],
   },
   {
-    id: 'agent-assistant',
-    title: '智能体助手',
-    icon: 'MagicStick',
-    items: [
-      {
-        title: '智能体助手',
-        path: '/agent-assistant',
-        routeName: 'agent-assistant',
-      },
-    ],
-  },
-  {
     id: 'knowledge',
     title: '知识库中心',
     icon: 'Collection',
