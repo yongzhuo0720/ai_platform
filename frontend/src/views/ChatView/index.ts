@@ -5,6 +5,7 @@ import { chatApi } from "@/api/chat";
 import { assistantApi } from "@/api/assistant";
 import { modelsConfigApi } from "@/api/modelsConfig";
 import { streamDirectChat } from "@/api/directModel";
+import { kbRagApi } from "@/api/kbRag";
 import { uploadFileToDify } from "@/api/request";
 import type {
   Conversation,
@@ -88,6 +89,10 @@ export interface UseChatReturn {
   allowFileUpload: typeof allowFileUpload;
   /** 当前是否处于直连模型模式（OpenAI 兼容协议，经网关路由） */
   isDirectMode: ComputedRef<boolean>;
+  /** 直连模式选中的知识库名（空 = 不引用知识库，服务端 RAG） */
+  directKbName: typeof directKbName;
+  /** 直连模式可选的知识库名列表 */
+  directKbOptions: typeof directKbOptions;
   canSubmit: ComputedRef<boolean>;
   activeModel: ComputedRef<ChatModel>;
   activeAssistant: ComputedRef<ChatModel>;
@@ -259,6 +264,37 @@ const directConversations = ref<DirectConversation[]>(
 );
 const activeDirectConversationId = ref("");
 const persistDirectConversations = () => writeStorage(DIRECT_CONVERSATIONS_KEY, directConversations.value);
+
+// ============== 直连模式的知识库增强（服务端 RAG） ==============
+/** 当前选中的知识库名；空串 = 不引用知识库 */
+const directKbName = ref("");
+/** 可选知识库名列表（按文档的 kbName 去重），仅直连模式展示 */
+const directKbOptions = ref<string[]>([]);
+const loadDirectKbOptions = async () => {
+  try {
+    const res = await kbRagApi.listDocs();
+    if (res?.data?.resp_code !== 0) {
+      directKbOptions.value = [];
+      return;
+    }
+    const docs = (res.data?.datas ?? []) as Array<{ kbName?: string }>;
+    const names: string[] = [];
+    for (const doc of docs) {
+      const name = (doc.kbName || "").trim();
+      if (name && !names.includes(name)) {
+        names.push(name);
+      }
+    }
+    directKbOptions.value = names;
+    // 选中的知识库被删光后自动回落到「不引用」
+    if (directKbName.value && !names.includes(directKbName.value)) {
+      directKbName.value = "";
+    }
+  } catch (error) {
+    console.warn("加载知识库列表失败:", error);
+    directKbOptions.value = [];
+  }
+};
 const directModels = computed<ChatModel[]>(() =>
   defaultModels.value.filter((m) => m.protocol === "openai" && m.iid != null)
 );
@@ -1546,7 +1582,7 @@ export function useChat(): UseChatReturn {
         loading.value = false;
         currentStopFn = null;
       },
-    });
+    }, directKbName.value ? { kbName: directKbName.value } : undefined);
   };
 
   const sendDirectMessage = (queryContent: string) => {
@@ -2030,6 +2066,7 @@ export function useChat(): UseChatReturn {
     loadModels();
     loadAppParameters();
     loadConversations();
+    loadDirectKbOptions();
     if (typeof document !== "undefined") {
       document.addEventListener("click", closeAssistantMenu);
     }
@@ -2134,6 +2171,8 @@ export function useChat(): UseChatReturn {
     userInput,
     allowFileUpload,
     isDirectMode,
+    directKbName,
+    directKbOptions,
     canSubmit,
     activeModel,
     activeAssistant,

@@ -15,6 +15,18 @@ export interface DirectChatMessage {
   content: string
 }
 
+/**
+ * 附加请求参数：知识库增强（服务端 RAG）。
+ * 网关会用最后一条 user 消息在指定知识库里做相似度检索，
+ * 把命中片段注入 system 上下文后转发；kb_* 字段不会透传到上游模型。
+ */
+export interface DirectChatExtras {
+  /** 知识库名（kbchunkbean.kb_name），空表示不启用检索 */
+  kbName?: string
+  /** 检索条数，网关默认 4，上限 20 */
+  kbTopK?: number
+}
+
 export interface DirectStreamOptions {
   onChunk: (text: string) => void
   onThinking?: (text: string) => void
@@ -40,12 +52,14 @@ const parseGatewayError = async (response: Response): Promise<Error> => {
  * 发送直连模型流式对话。
  * @param modelIid 模型配置的 iid（网关路由键）
  * @param messages OpenAI 格式的完整上下文（含本轮用户消息）
+ * @param extras 知识库增强参数（服务端检索注入，可选）
  * @returns 取消函数，调用后中止请求
  */
 export const streamDirectChat = (
   modelIid: string,
   messages: DirectChatMessage[],
-  options: DirectStreamOptions
+  options: DirectStreamOptions,
+  extras?: DirectChatExtras
 ): (() => void) => {
   const controller = new AbortController()
   const { onChunk, onThinking, onComplete, onError } = options
@@ -92,13 +106,20 @@ export const streamDirectChat = (
   }, 30000)
 
   const run = async () => {
+    const body: Record<string, unknown> = { messages, stream: true }
+    if (extras?.kbName) {
+      body.kb_name = extras.kbName
+      if (extras.kbTopK) {
+        body.kb_top_k = extras.kbTopK
+      }
+    }
     const response = await fetch(`${getModelsGatewayBase()}/${modelIid}/chat/completions`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         ...gatewayAuthHeaders(),
       },
-      body: JSON.stringify({ messages, stream: true }),
+      body: JSON.stringify(body),
       signal: controller.signal,
     })
 
@@ -108,6 +129,12 @@ export const streamDirectChat = (
     }
     if (!response.ok) {
       throw await parseGatewayError(response)
+    }
+
+    // X-KB-Hits：本轮实际注入的知识库片段数（0 = 未命中或检索降级）
+    const kbHits = response.headers.get('X-KB-Hits')
+    if (kbHits !== null) {
+      console.debug('[directModel] 知识库注入片段数:', kbHits)
     }
 
     const reader = response.body?.getReader()

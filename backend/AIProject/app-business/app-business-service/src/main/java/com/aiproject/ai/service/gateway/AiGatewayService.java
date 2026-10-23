@@ -1,8 +1,15 @@
 package com.aiproject.ai.service.gateway;
 
 import com.aiproject.ai.service.bean.AiCallLogBean;
+import com.aiproject.ai.service.gateway.dto.KbSearchItem;
+import com.aiproject.ai.service.gateway.dto.KbSearchResult;
 import com.aiproject.ai.service.holde.AiCallLogHolder;
+import com.aiproject.ai.service.holde.KbRagHolder;
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ArrayNode;
+import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.heneng.hnsp.common.croe.model.Result;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
@@ -22,6 +29,7 @@ import java.util.Arrays;
 import java.util.Collection;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
@@ -54,6 +62,15 @@ public class AiGatewayService {
             "trailer", "upgrade", "set-cookie"
     ));
 
+    /** 知识库增强默认检索条数 */
+    private static final int KB_DEFAULT_TOP_K = 4;
+    /** 知识库增强最多注入的片段数 */
+    private static final int KB_MAX_PIECES = 8;
+    /** 注入上下文的字符总量上限，防止撑爆上游模型窗口 */
+    private static final int KB_MAX_CONTEXT_CHARS = 6000;
+    /** 与 KbRagHolder.MAX_QUERY_CHARS 对齐：超长查询截断而非让检索失败 */
+    private static final int KB_QUERY_MAX_CHARS = 2000;
+
     @Autowired
     AiGatewayProperties properties;
 
@@ -68,6 +85,9 @@ public class AiGatewayService {
 
     @Autowired
     AiCallLogHolder callLogHolder;
+
+    @Autowired
+    KbRagHolder kbRagHolder;
 
     public void proxy(String module, String userId,
                       HttpServletRequest request, HttpServletResponse response) {
@@ -234,16 +254,25 @@ public class AiGatewayService {
                 return null;
             }
 
-            com.fasterxml.jackson.databind.JsonNode root =
-                    MAPPER.readTree(buffer.toByteArray());
+            JsonNode root = MAPPER.readTree(buffer.toByteArray());
             if (root == null || !root.isObject()) {
                 throw new IllegalArgumentException("root is not an object");
             }
-            com.fasterxml.jackson.databind.node.ObjectNode body =
-                    (com.fasterxml.jackson.databind.node.ObjectNode) root;
+            ObjectNode body = (ObjectNode) root;
             body.put("model", model.getUpstreamModel());
             if (body.path("stream").asBoolean(false)) {
                 body.putObject("stream_options").put("include_usage", true);
+            }
+
+            // 知识库增强字段只在本层消费，转发上游前剥离
+            String kbName = body.path("kb_name").asText("").trim();
+            JsonNode topKNode = body.path("kb_top_k");
+            Integer kbTopK = topKNode.isInt() ? topKNode.asInt() : null;
+            body.remove("kb_name");
+            body.remove("kb_top_k");
+            if (!kbName.isEmpty()) {
+                int hits = applyKnowledgeContext(body, userId, kbName, kbTopK);
+                response.setHeader("X-KB-Hits", String.valueOf(hits));
             }
             return MAPPER.writeValueAsBytes(body);
         } catch (Exception e) {
@@ -255,6 +284,110 @@ public class AiGatewayService {
                     clientIp(request));
             return null;
         }
+    }
+
+    /**
+     * 知识库增强：取最后一条 user 消息做相似度检索，把命中片段以 system 消息
+     * 注入到该 user 消息之前，模型回答时可引用来源。
+     * <p>
+     * 检索是增强而非依赖：未配置向量模型、检索异常、知识库为空等情况
+     * 都静默降级为普通直连，不影响对话本身。
+     *
+     * @return 实际注入的片段数（写入 X-KB-Hits 响应头）
+     */
+    private int applyKnowledgeContext(ObjectNode body, String userId,
+                                      String kbName, Integer topK) {
+        try {
+            JsonNode messagesNode = body.path("messages");
+            if (!messagesNode.isArray()) {
+                return 0;
+            }
+            ArrayNode messages = (ArrayNode) messagesNode;
+            int userIndex = lastUserMessageIndex(messages);
+            if (userIndex < 0) {
+                return 0;
+            }
+            String query = extractUserText(messages.get(userIndex));
+            if (query == null || query.trim().isEmpty()) {
+                return 0;
+            }
+            if (query.length() > KB_QUERY_MAX_CHARS) {
+                query = query.substring(0, KB_QUERY_MAX_CHARS);
+            }
+
+            Result<KbSearchResult> result = kbRagHolder.search(userId, query, kbName,
+                    topK == null ? KB_DEFAULT_TOP_K : topK);
+            List<KbSearchItem> items = result == null || result.getDatas() == null
+                    ? null : result.getDatas().getItems();
+            if (items == null || items.isEmpty()) {
+                return 0;
+            }
+
+            StringBuilder prompt = new StringBuilder()
+                    .append("以下是知识库「").append(kbName)
+                    .append("」中与用户问题最相关的检索片段。回答时请优先依据片段内容，并在用到的地方标注「来源：文档名」；")
+                    .append("若片段与问题无关，请忽略它们并按你自己的知识回答。\n");
+            int used = 0;
+            int injected = 0;
+            for (KbSearchItem item : items) {
+                if (injected >= KB_MAX_PIECES) {
+                    break;
+                }
+                String content = item.getContent() == null ? "" : item.getContent();
+                String source = item.getDocName() == null || item.getDocName().trim().isEmpty()
+                        ? "文档#" + item.getDocIid() : item.getDocName().trim();
+                String block = "\n【片段" + (injected + 1) + " · 来源：" + source + "】\n" + content + "\n";
+                if (used + block.length() > KB_MAX_CONTEXT_CHARS) {
+                    int remain = KB_MAX_CONTEXT_CHARS - used;
+                    if (remain < 200) {
+                        break;
+                    }
+                    block = block.substring(0, remain) + "…";
+                }
+                prompt.append(block);
+                used += block.length();
+                injected++;
+            }
+            if (injected == 0) {
+                return 0;
+            }
+
+            ObjectNode context = MAPPER.createObjectNode();
+            context.put("role", "system");
+            context.put("content", prompt.toString());
+            messages.insert(userIndex, context);
+            return injected;
+        } catch (Exception e) {
+            log.warn("[AiGateway] 知识库检索失败，降级为无上下文直连: {}", e.getMessage());
+            return 0;
+        }
+    }
+
+    private static int lastUserMessageIndex(ArrayNode messages) {
+        for (int i = messages.size() - 1; i >= 0; i--) {
+            if ("user".equals(messages.get(i).path("role").asText())) {
+                return i;
+            }
+        }
+        return -1;
+    }
+
+    /** user 消息文本：兼容纯字符串与 OpenAI 多模态 content 数组（取 text 部分） */
+    private static String extractUserText(JsonNode message) {
+        JsonNode content = message.path("content");
+        if (content.isTextual()) {
+            return content.asText();
+        }
+        if (content.isArray()) {
+            StringBuilder text = new StringBuilder();
+            for (JsonNode part : content) {
+                if ("text".equals(part.path("type").asText())) {
+                    text.append(part.path("text").asText());
+                }
+            }
+            return text.toString();
+        }
+        return null;
     }
 
     private static long parseModelId(String value) {
