@@ -7,7 +7,7 @@ import {
   onUnmounted,
 } from "vue";
 import { ElInput } from "element-plus";
-import { Promotion, Plus, Delete, ArrowDown, Check, VideoPause } from "@element-plus/icons-vue";
+import { Promotion, Plus, Delete, ArrowDown, Check, VideoPause, Collection } from "@element-plus/icons-vue";
 import type { NormalizedUserInputField } from "@/types/chat";
 
 export interface AttachedFile {
@@ -29,6 +29,10 @@ interface Props {
   placeholder?: string;
   isEmpty?: boolean;
   allowFileUpload?: boolean;
+  /** 可选知识库名列表（直连模式才有值，空数组不渲染选择器） */
+  kbOptions?: string[];
+  /** 当前选中的知识库名，空串 = 不引用知识库 */
+  activeKbName?: string;
 }
 
 const props = withDefaults(defineProps<Props>(), {
@@ -42,6 +46,8 @@ const props = withDefaults(defineProps<Props>(), {
   placeholder: "请输入问题...",
   isEmpty: false,
   allowFileUpload: true,
+  kbOptions: () => [],
+  activeKbName: "",
 });
 
 const emit = defineEmits<{
@@ -52,6 +58,7 @@ const emit = defineEmits<{
   (e: "remove-file", fileId: string): void;
   (e: "update-input-field", payload: { variable: string; value: string }): void;
   (e: "select-model", value: string): void;
+  (e: "select-kb", value: string): void;
 }>();
 
 const textareaRef = ref<InstanceType<typeof ElInput> | null>(null);
@@ -354,6 +361,24 @@ onUnmounted(() => {
         >
           <el-icon><Plus /></el-icon>
         </button>
+
+        <label
+          v-if="kbOptions.length > 0"
+          class="chat-kb-switcher"
+          title="回答前先在所选知识库中检索相关片段（服务端 RAG）"
+        >
+          <el-icon class="chat-kb-switcher-icon"><Collection /></el-icon>
+          <select
+            class="chat-kb-switcher-select"
+            :value="activeKbName"
+            :disabled="loading"
+            aria-label="知识库检索范围"
+            @change="emit('select-kb', ($event.target as HTMLSelectElement).value)"
+          >
+            <option value="">不引用知识库</option>
+            <option v-for="name in kbOptions" :key="name" :value="name">{{ name }}</option>
+          </select>
+        </label>
       </div>
 
       <div class="chat-composer-toolbar-end">
@@ -713,7 +738,59 @@ onUnmounted(() => {
 .chat-composer-toolbar-start {
   display: flex;
   align-items: center;
+  gap: 6px;
   min-width: 0;
+}
+
+.chat-kb-switcher {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 30px;
+  min-width: 0;
+  max-width: 180px;
+  padding: 0 8px 0 10px;
+  border: 1px solid rgba(15, 23, 42, 0.06);
+  border-radius: 999px;
+  background: var(--qwen-bg);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.42);
+  transition: border-color 150ms ease, background 150ms ease;
+  cursor: pointer;
+
+  &:hover,
+  &:focus-within {
+    border-color: rgba(26, 74, 140, 0.14);
+    background: rgba(26, 74, 140, 0.03);
+  }
+}
+
+.chat-kb-switcher-icon {
+  flex-shrink: 0;
+  font-size: 12px;
+  color: var(--qwen-text-secondary);
+}
+
+.chat-kb-switcher-select {
+  min-width: 0;
+  max-width: 132px;
+  height: 100%;
+  border: none;
+  background: transparent;
+  color: var(--qwen-text-primary);
+  font-size: 11px;
+  font-weight: 500;
+  outline: none;
+  cursor: pointer;
+  text-overflow: ellipsis;
+
+  &:disabled {
+    cursor: not-allowed;
+    opacity: 0.65;
+  }
+
+  option {
+    font-size: 12px;
+  }
 }
 
 .chat-composer-toolbar-end {
@@ -901,6 +978,22 @@ onUnmounted(() => {
   border-color: rgba(196, 214, 255, 0.08);
   background: rgba(20, 30, 46, 0.9);
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
+}
+
+:global(html[data-theme="dark"] .chat-composer .chat-kb-switcher) {
+  border-color: rgba(196, 214, 255, 0.08);
+  background: rgba(20, 30, 46, 0.9);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
+
+  &:hover,
+  &:focus-within {
+    border-color: rgba(142, 179, 255, 0.14);
+    background: rgba(96, 135, 214, 0.08);
+  }
+}
+
+:global(html[data-theme="dark"] .chat-composer .chat-kb-switcher-select) {
+  color: rgba(232, 238, 255, 0.94);
 }
 
 :global(html[data-theme="dark"] .chat-composer .chat-model-switcher-shell.is-open) {

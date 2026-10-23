@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted } from "vue";
+import { ref, computed, onMounted, onUnmounted } from "vue";
 import {
   Expand,
   Fold,
@@ -83,7 +83,12 @@ const {
   assistantDeleteConfirm,
   allowFileUpload,
   isDirectMode,
+  directKbName,
+  directKbOptions,
 } = useChat();
+
+/** 直连模式的知识库选择器需要模型已就绪才显示（模型列表里才有直连项） */
+const chatKbOptions = computed(() => (isDirectMode.value ? directKbOptions.value : []));
 
 /** 根据文件 MIME 类型返回对应的 emoji 图标 */
 const getFileTypeEmoji = (mimeType: string): string => {
@@ -652,6 +657,8 @@ onUnmounted(() => {
                 :active-model-id="activeModelId"
                 :loading="loading"
                 :allow-file-upload="allowFileUpload"
+                :kb-options="chatKbOptions"
+                :active-kb-name="directKbName"
                 placeholder="请输入问题，开始对话..."
                 is-empty
                 @submit="submitMessage"
@@ -660,6 +667,7 @@ onUnmounted(() => {
                 @remove-file="removeAttachedFile"
                 @update-input-field="updateInputField"
                 @select-model="selectModel"
+                @select-kb="directKbName = $event"
               />
 
               <div v-if="!isDirectMode && suggestedQuestions.length > 0" class="suggested-questions">
@@ -785,6 +793,8 @@ onUnmounted(() => {
             :active-model-id="activeModelId"
             :loading="loading"
             :allow-file-upload="allowFileUpload"
+            :kb-options="chatKbOptions"
+            :active-kb-name="directKbName"
             placeholder="请输入问题，继续对话..."
             @submit="submitMessage"
             @stop="stopGenerating"
@@ -792,6 +802,7 @@ onUnmounted(() => {
             @remove-file="removeAttachedFile"
             @update-input-field="updateInputField"
             @select-model="selectModel"
+            @select-kb="directKbName = $event"
           />
         </div>
       </transition>
