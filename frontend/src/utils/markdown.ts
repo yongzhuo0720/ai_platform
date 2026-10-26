@@ -11,6 +11,7 @@
  */
 
 import { marked } from 'marked';
+import DOMPurify from 'dompurify';
 // 按需注册而非全量 import 'highlight.js'（全量含 190+ 语言，体积 ~940KB）；
 // core + 常用 23 种语言约 150KB，未注册语言自动走 highlightAuto/原文回退
 import hljs from 'highlight.js/lib/core';
@@ -175,6 +176,21 @@ const configureMarked = (): void => {
 };
 
 /**
+ * HTML 消毒：marked 不做任何消毒，原始 HTML（含 <script>、onerror 等）
+ * 会原样通过。渲染「非可信来源」的内容前必须过这一层。
+ *
+ * <p>为什么要消毒：这个渲染器不只服务 Dify 回复。分享页（ShareView）
+ * 会用它渲染**任意登录用户提交的 payload**，且分享链接免登录即可打开——
+ * 不消毒就是存储型 XSS，受害者是站内 origin 下的任何访客。
+ * 「来源可信」的假设在分享功能上线那天就失效了。</p>
+ */
+export const sanitizeHtml = (html: string): string =>
+  DOMPurify.sanitize(html, {
+    // 代码高亮与表格需要的标签/属性保留，其余默认全剥
+    USE_PROFILES: { html: true, svg: false, svgFilters: false },
+  });
+
+/**
  * 渲染助手消息内容（可信任来源，来自 Dify）
  * @param content 原始 Markdown 文本
  * @returns 渲染后的 HTML 字符串
@@ -186,7 +202,7 @@ export const renderMarkdown = (content: string): string => {
   try {
     const result = marked.parse(normalizedContent);
     const html = typeof result === 'string' ? result : '';
-    return wrapTables(html);
+    return sanitizeHtml(wrapTables(html));
   } catch (err) {
     console.warn('[markdown] 渲染失败，使用安全降级:', err);
     return `<p>${escapeHtml(normalizedContent)}</p>`;
