@@ -175,4 +175,13 @@ public class ModelsBeanController {
         CheckUtils.objectCheckNull(data, "数据不能空", CodeEnum.NULL.getCode(), null);
         return modelsBeanHolder.queryWeeklyDownloads(data);
     }
+
+    @ApiOperation(value = "全站周下载量统计", httpMethod = "POST", notes = "模型仓库页头部统计，不带模型维度")
+    @PostMapping("/queryWeeklyDownloadsTotal")
+    @ControllerLog(value = "模型库全站周下载量查询", user = "uid", target = "")
+    public Result<Integer> queryWeeklyDownloadsTotal(@LoginUserId String uid) {
+
+        CheckUtils.objectCheckNull(uid, "请先登录", CodeEnum.FAILED_USER_LOGIN.getCode(), "");
+        return modelsBeanHolder.queryWeeklyDownloadsTotal();
+    }
 }

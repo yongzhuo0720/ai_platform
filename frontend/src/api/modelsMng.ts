@@ -20,6 +20,9 @@ export const modelsMngApi = {
   queryWeeklyDownloads: async (params: any) => {
     return axios.post(`/ai/api/modelsBean/queryWeeklyDownloads`, params);
   },
+  queryWeeklyDownloadsTotal: async () => {
+    return axios.post(`/ai/api/modelsBean/queryWeeklyDownloadsTotal`);
+  },
   getDownloadUrl: async (params: any) => {
     return axios.post(`/ai/api/modelsBean/getDownloadUrl`, params);
   },
