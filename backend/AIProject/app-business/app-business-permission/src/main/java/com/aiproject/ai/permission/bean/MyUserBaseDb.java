@@ -10,7 +10,7 @@ import blxt.qjava.autovalue.inter.SelectLike;
 import blxt.qjava.autovalue.inter.SelectLink;
 import blxt.qjava.autovalue.inter.SqlBean;
 import blxt.qjava.autovalue.inter.SqlColumn;
-import com.fasterxml.jackson.annotation.JsonIgnore;
+import com.fasterxml.jackson.annotation.JsonProperty;
 import com.heneng.hnsp.business.user.bean.UserBaseDb;
 import com.heneng.hnsp.common.db.model.DbEntityBase;
 import io.swagger.annotations.ApiModel;
@@ -37,7 +37,22 @@ public class MyUserBaseDb extends DbEntityBase {
     @ApiModelProperty("用户账号,登录账号")
     String uaccess;
 
-    //@JsonIgnore
+    /**
+     * 用户密码（哈希后存储）。
+     *
+     * <p>双重防护，缺一不可：</p>
+     * <ul>
+     *   <li>{@code @SqlColumn(selectEnable = false)} —— 框架的 SELECT 永远不读这一列，
+     *       查询结果里它天然是 null；</li>
+     *   <li>{@code WRITE_ONLY} —— 只允许从请求体<b>反序列化进来</b>（创建用户、改密码要收密码），
+     *       但绝不允许序列化到 HTTP 响应里。</li>
+     * </ul>
+     *
+     * <p><b>为什么不用 @JsonIgnore</b>：它连反序列化一起挡掉，会让
+     * {@code /myuser/create} 与 {@code /myuser/update} 收不到密码字段，
+     * 建用户和改密码直接失效。这个是实测踩出来的坑。</p>
+     */
+    @JsonProperty(access = JsonProperty.Access.WRITE_ONLY)
     @SqlColumn(selectEnable = false)
     @ApiModelProperty("用户密码")
     String upwd;

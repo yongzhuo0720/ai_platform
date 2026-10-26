@@ -5,15 +5,19 @@ import com.aiproject.ai.permission.holde.MyUserBaseDbHolder;
 import com.aiproject.ai.service.bean.KnowledgeBaseBean;
 import com.aiproject.ai.service.mapper.KnowledgeBaseBeanMapper;
 import com.heneng.hnsp.common.croe.model.Result;
+import com.heneng.hnsp.common.db.utils.PageRequest;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
+import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
@@ -150,5 +154,57 @@ class KnowledgeBaseBeanHolderTest {
     void partialInvisible_shouldBeHidden_whenRidIsNull() {
         KnowledgeBaseBean rec = record("kb1", "owner1", "partial_invisible", "[]", "[]");
         assertFalse(visibleInSquare("u1", user("u1", null, "dept01"), rec));
+    }
+
+    /**
+     * only_me + 用户不存在：不能抛 NPE。
+     * 修复前 isVisibleToUser 的 only_me 分支直接 ownerUid.equals(userBaseDb.getUid())，
+     * square 场景下 userBaseDb 可能为 null，一进这个分支就 NPE 500。
+     */
+    @Test
+    void onlyMe_shouldBeHidden_whenUserMissing() {
+        KnowledgeBaseBean rec = record("kb1", "u1", "only_me", "[]", "[]");
+        assertFalse(visibleInSquare("ghost", null, rec));
+    }
+
+    /**
+     * queryList 归属收窄：非管理员看不到他人的 only_me 记录。
+     *
+     * 修复前 queryList(uid, data) 把 uid 声明了却完全不用，
+     * 任意登录用户可拉全量知识库权限记录（含他人的 ownerUid / kbId / 黑名单）。
+     *
+     * 注意不断言「只剩自己的」——public 与 partial_invisible 的记录
+     * 其存在本身就对他人公开，前端要靠它们算「广场」「已加入」标签页。
+     */
+    @Test
+    void queryList_shouldHideOthersOnlyMeRecords() {
+        KnowledgeBaseBean own = record("kb-own", "u1", "only_me", "[]", "[]");
+        KnowledgeBaseBean othersPrivate = record("kb-private", "u2", "only_me", "[]", "[]");
+        KnowledgeBaseBean othersPublic = record("kb-public", "u2", "public", "[]", "[]");
+
+        when(myUserBaseDbHolder.queryUserByUid("u1")).thenReturn(user("u1", 5L, "dept01"));
+        when(knowledgeBaseBeanMapper.select(any(PageRequest.class), any(KnowledgeBaseBean.class)))
+                .thenReturn(new ArrayList<KnowledgeBaseBean>(Arrays.asList(own, othersPrivate, othersPublic)));
+
+        Result<List<KnowledgeBaseBean>> result =
+                holder.queryList("u1", new KnowledgeBaseBean());
+        List<KnowledgeBaseBean> list = result.getDatas();
+
+        assertEquals(2, list.size(), "自己的 + 他人 public 的应保留");
+        assertTrue(list.contains(own));
+        assertTrue(list.contains(othersPublic));
+        assertFalse(list.contains(othersPrivate), "他人的 only_me 必须隐藏");
+    }
+
+    /** 超管不受收窄影响，仍可拿全量记录做管理 */
+    @Test
+    void queryList_shouldReturnAllForAdmin() {
+        KnowledgeBaseBean othersPrivate = record("kb-private", "u2", "only_me", "[]", "[]");
+        when(myUserBaseDbHolder.queryUserByUid("admin")).thenReturn(user("admin", 99999L, "dept00"));
+        when(knowledgeBaseBeanMapper.select(any(PageRequest.class), any(KnowledgeBaseBean.class)))
+                .thenReturn(new ArrayList<KnowledgeBaseBean>(Arrays.asList(othersPrivate)));
+
+        Result<List<KnowledgeBaseBean>> result = holder.queryList("admin", new KnowledgeBaseBean());
+        assertEquals(1, result.getDatas().size());
     }
 }

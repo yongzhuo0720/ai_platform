@@ -170,9 +170,23 @@ public class SsoTokenBeanHolder {
     public void saveOrUpdate(String uid, String accessToken, String refreshToken, Long expiresAt) {
         SsoTokenBean existing = queryByUid(uid);
         if (existing != null) {
+            /*
+             * refresh_token 轮换保护。
+             *
+             * OAuth 2.0 的 refresh_token 轮换不是强制的：很多 IdP 在续期响应里
+             * 只回新的 access_token，不重新发 refresh_token。修复前这里无条件
+             * setRefresh_token(refreshToken)，新值为 null 时会把库里原有的
+             * refresh_token 覆盖成 null——下次 access_token 过期就再也续不了，
+             * 用户只能重新走一遍 SSO 授权。
+             *
+             * 现在：新值为空时保留原值。
+             */
+            String effectiveRefresh = (refreshToken == null || refreshToken.trim().isEmpty())
+                    ? existing.getRefresh_token() : refreshToken;
+
             SsoTokenBean data = new SsoTokenBean();
             data.setAccess_token(accessToken);
-            data.setRefresh_token(refreshToken);
+            data.setRefresh_token(effectiveRefresh);
             data.setExpires_at(expiresAt);
 
             SsoTokenBean where = new SsoTokenBean();
