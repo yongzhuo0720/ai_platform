@@ -25,8 +25,11 @@ import java.net.HttpURLConnection;
 import java.net.SocketTimeoutException;
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
+import java.util.Collections;
+import java.util.Comparator;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -89,9 +92,56 @@ public class AiGatewayService {
     @Autowired
     KbRagHolder kbRagHolder;
 
+    @Autowired
+    ModelPriceResolver priceResolver;
+
+    /**
+     * 全链路请求 ID。
+     *
+     * <p>浏览器在发请求前生成一个 UUID 放进 {@code X-Request-Id} 头，
+     * 网关读进来后一路带着走：审计日志落库、透传给上游、失败时写进错误响应。
+     * 排查问题时用这一个 ID 就能把浏览器控制台、网关日志、
+     * 上游调用记录串成一条线。</p>
+     *
+     * <p>用 ThreadLocal 而不是方法参数层层传递：proxy() 的调用链有四五层
+     * （proxy → doProxy → streamSse/relayBody → record），加参数会污染
+     * 所有这些签名。Tomcat 每个请求一个线程，ThreadLocal 天然隔离。</p>
+     *
+     * <p>必须清理：Tomcat 的线程是复用的，不清掉会把上一个请求的 ID
+     * 泄漏给下一个请求，排查时反而误导。</p>
+     */
+    private final ThreadLocal<String> currentRequestId = new ThreadLocal<String>();
+
+    /**
+     * 首块流式响应写出的时刻。与 requestId 同一套 ThreadLocal 模式：
+     * proxy() 置空、streamSse 首写时赋值、record() 读取后随审计落库（TTFT）。
+     * 非流式请求没有「首块」概念，保持 null。
+     */
+    private final ThreadLocal<Long> firstTokenAt = new ThreadLocal<Long>();
+
+    /** 请求头名。小写是 HTTP/2 的规范形式，Tomcat 取值不区分大小写 */
+    private static final String REQUEST_ID_HEADER = "X-Request-Id";
+
     public void proxy(String module, String userId,
                       HttpServletRequest request, HttpServletResponse response) {
         long start = System.currentTimeMillis();
+        String method = request.getMethod();
+        String requestId = resolveRequestId(request);
+        currentRequestId.set(requestId);
+        firstTokenAt.set(null);
+        try {
+            doProxyEntry(module, userId, request, response, start, requestId);
+        } finally {
+            // Tomcat 线程复用，必须清理，否则 ID 会串到下一个请求
+            currentRequestId.remove();
+            firstTokenAt.remove();
+        }
+    }
+
+    /** proxy() 的主体，拆出来只是为了包住 try/finally 清理 ThreadLocal */
+    private void doProxyEntry(String module, String userId,
+                              HttpServletRequest request, HttpServletResponse response,
+                              long start, String requestId) {
         String method = request.getMethod();
 
         if (!properties.isEnabled()) {
@@ -292,6 +342,16 @@ public class AiGatewayService {
      * <p>
      * 检索是增强而非依赖：未配置向量模型、检索异常、知识库为空等情况
      * 都静默降级为普通直连，不影响对话本身。
+     * <p>
+     * <b>注入策略</b>（两条都是生产环境踩出来的）：
+     * <ul>
+     *   <li><b>最相关的片段放最前</b>。LLM 对长上下文中段信息的利用度显著低于
+     *       首尾（lost-in-the-middle），所以按 RRF 融合分降序注入，
+     *       高分片段优先占位。</li>
+     *   <li><b>按字符预算截断</b>而不是固定条数。检索片段是变长的，
+     *       固定 8 条可能只有 2K 字符，也可能塞进 20K——后者会挤占对话历史
+     *       与生成空间，甚至直接超窗口。</li>
+     * </ul>
      *
      * @return 实际注入的片段数（写入 X-KB-Hits 响应头）
      */
@@ -323,13 +383,22 @@ public class AiGatewayService {
                 return 0;
             }
 
+            // 按融合分降序：RRF 分越高越相关，必须排在上下文前部
+            List<KbSearchItem> sorted = new ArrayList<KbSearchItem>(items);
+            Collections.sort(sorted, new Comparator<KbSearchItem>() {
+                @Override
+                public int compare(KbSearchItem a, KbSearchItem b) {
+                    return Double.compare(b.getScore(), a.getScore());
+                }
+            });
+
             StringBuilder prompt = new StringBuilder()
                     .append("以下是知识库「").append(kbName)
-                    .append("」中与用户问题最相关的检索片段。回答时请优先依据片段内容，并在用到的地方标注「来源：文档名」；")
+                    .append("」中与用户问题最相关的检索片段（已按相关度排序）。回答时请优先依据片段内容，并在用到的地方标注「来源：文档名」；")
                     .append("若片段与问题无关，请忽略它们并按你自己的知识回答。\n");
             int used = 0;
             int injected = 0;
-            for (KbSearchItem item : items) {
+            for (KbSearchItem item : sorted) {
                 if (injected >= KB_MAX_PIECES) {
                     break;
                 }
@@ -339,6 +408,7 @@ public class AiGatewayService {
                 String block = "\n【片段" + (injected + 1) + " · 来源：" + source + "】\n" + content + "\n";
                 if (used + block.length() > KB_MAX_CONTEXT_CHARS) {
                     int remain = KB_MAX_CONTEXT_CHARS - used;
+                    // 剩余空间连一个片段头都放不下时就停，不要注入残句
                     if (remain < 200) {
                         break;
                     }
@@ -435,6 +505,12 @@ public class AiGatewayService {
             conn.setRequestMethod(method.toUpperCase());
             conn.setRequestProperty("Authorization", "Bearer " + config.getApiKey());
             conn.setRequestProperty("Accept", "text/event-stream, application/json");
+            // 全链路请求 ID 透传给上游：上游日志里出现同一个 ID，
+            // 就能把「网关看到的」和「上游看到的」对齐，定位是网关问题还是上游问题
+            String rid = currentRequestId.get();
+            if (rid != null) {
+                conn.setRequestProperty(REQUEST_ID_HEADER, rid);
+            }
             // 让上游不要压缩，否则透传的 SSE / JSON 会变成二进制
             conn.setRequestProperty("Accept-Encoding", "identity");
             String contentType = request.getContentType();
@@ -604,6 +680,9 @@ public class AiGatewayService {
         ByteArrayOutputStream line = new ByteArrayOutputStream(256);
         int read;
         while ((read = in.read(buffer)) != -1) {
+            if (firstTokenAt.get() == null) {
+                firstTokenAt.set(System.currentTimeMillis());
+            }
             out.write(buffer, 0, read);
             out.flush();
             for (int i = 0; i < read; i++) {
@@ -685,6 +764,19 @@ public class AiGatewayService {
         return endpoint;
     }
 
+    /** 取出浏览器生成的请求 ID；没带就自己生成一个，保证链路一定有 ID */
+    private String resolveRequestId(HttpServletRequest request) {
+        String fromHeader = request.getHeader(REQUEST_ID_HEADER);
+        if (fromHeader != null) {
+            String trimmed = fromHeader.trim();
+            // 限长防滥用：这个值会进数据库列和日志
+            if (!trimmed.isEmpty() && trimmed.length() <= 64) {
+                return trimmed;
+            }
+        }
+        return UUID.randomUUID().toString();
+    }
+
     private void record(String userId, String module, String endpoint, String method,
                         String status, Integer httpStatus, AiGatewayUsageParser parser,
                         long start, String error, String clientIp) {
@@ -698,6 +790,11 @@ public class AiGatewayService {
         entry.setLatencyMs(System.currentTimeMillis() - start);
         entry.setClientIp(truncate(clientIp, 64));
         entry.setErrorMessage(truncate(error, properties.getMaxErrorLength()));
+        entry.setRequestId(currentRequestId.get());
+        Long firstAt = firstTokenAt.get();
+        if (firstAt != null) {
+            entry.setFirstTokenMs(firstAt - start);
+        }
         if (parser != null) {
             entry.setPromptTokens(parser.getPromptTokens());
             entry.setCompletionTokens(parser.getCompletionTokens());
@@ -706,7 +803,33 @@ public class AiGatewayService {
             entry.setConversationId(truncate(parser.getConversationId(), 200));
             entry.setMessageId(truncate(parser.getMessageId(), 200));
         }
+        entry.setCostCents(computeCostCents(entry.getModelName(),
+                entry.getPromptTokens(), entry.getCompletionTokens()));
         callLogHolder.record(entry);
+    }
+
+    /**
+     * 折算本次调用的成本（单位：分）。
+     *
+     * <p>模型未配置单价时返回 0。这里刻意不返回 null——
+     * 0 在语义上表示「未知成本」，看板会据此提示配置价格；
+     * 而 null 会让聚合逻辑到处判空。</p>
+     */
+    private Long computeCostCents(String modelName, Long promptTokens, Long completionTokens) {
+        if (modelName == null || promptTokens == null || completionTokens == null) {
+            return 0L;
+        }
+        try {
+            ModelPriceResolver.Price price = priceResolver.resolve(modelName);
+            if (price == null || !price.isConfigured()) {
+                return 0L;
+            }
+            return price.costCents(promptTokens, completionTokens);
+        } catch (Exception e) {
+            // 成本核算失败绝不能影响 AI 调用本身
+            log.warn("[AiGateway] 成本折算失败, model={}: {}", modelName, e.getMessage());
+            return 0L;
+        }
     }
 
     private void writeError(HttpServletResponse response, int status, String code, String message) {
@@ -718,10 +841,17 @@ public class AiGatewayService {
             response.setStatus(status);
             response.setCharacterEncoding("UTF-8");
             response.setContentType("application/json;charset=UTF-8");
+            // 错误响应也带上请求 ID：用户报障时把这个 ID 给管理员，
+            // 管理员能直接捞出完整链路，不用靠「大概几点」猜
+            String rid = currentRequestId.get();
+            if (rid != null) {
+                response.setHeader(REQUEST_ID_HEADER, rid);
+            }
             Map<String, Object> body = new LinkedHashMap<String, Object>();
             body.put("code", code);
             body.put("message", message);
             body.put("status", status);
+            body.put("requestId", rid);
             response.getOutputStream().write(
                     MAPPER.writeValueAsBytes(body));
             response.flushBuffer();

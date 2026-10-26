@@ -135,6 +135,7 @@ public class AiGatewayAdminHolder {
         Map<String, long[]> modelLatency = new HashMap<String, long[]>();
         Map<String, long[]> userStats = new HashMap<String, long[]>();
         List<Long> latencies = new ArrayList<Long>();
+        List<Long> firstTokens = new ArrayList<Long>();
 
         int pageNum = 1;
         int scanned = 0;
@@ -161,6 +162,8 @@ public class AiGatewayAdminHolder {
                 summary.setTotalCalls(summary.getTotalCalls() + 1);
                 long tokens = row.getTotalTokens() == null ? 0L : row.getTotalTokens();
                 summary.setTotalTokens(summary.getTotalTokens() + tokens);
+                summary.setTotalCostCents(summary.getTotalCostCents()
+                        + (row.getCostCents() == null ? 0L : row.getCostCents()));
 
                 boolean blocked = "blocked".equals(row.getStatus());
                 boolean failed = "failed".equals(row.getStatus()) || "aborted".equals(row.getStatus());
@@ -173,6 +176,9 @@ public class AiGatewayAdminHolder {
                 }
                 if (row.getLatencyMs() != null) {
                     latencies.add(row.getLatencyMs());
+                }
+                if (row.getFirstTokenMs() != null) {
+                    firstTokens.add(row.getFirstTokenMs());
                 }
 
                 String day = dayOf(row);
@@ -214,6 +220,12 @@ public class AiGatewayAdminHolder {
                 if (failed || blocked) {
                     modelStat.setFailed(modelStat.getFailed() + 1);
                 }
+                long cost = row.getCostCents() == null ? 0L : row.getCostCents();
+                modelStat.setCostCents(modelStat.getCostCents() + cost);
+                // 该模型只要有调用且拿到了非零成本，就说明配了价格
+                if (cost > 0) {
+                    modelStat.setPriced(true);
+                }
                 if (row.getLatencyMs() != null) {
                     long[] latency = modelLatency.get(modelName);
                     latency[0] += row.getLatencyMs();
@@ -253,6 +265,13 @@ public class AiGatewayAdminHolder {
             summary.setAvgLatencyMs(latencySum / latencies.size());
             summary.setP95LatencyMs(percentile(latencies, 0.95));
         }
+        if (!firstTokens.isEmpty()) {
+            long ftSum = 0;
+            for (Long value : firstTokens) {
+                ftSum += value;
+            }
+            summary.setAvgFirstTokenMs(ftSum / firstTokens.size());
+        }
         if (summary.getTotalCalls() > 0) {
             summary.setSuccessRate(round2(summary.getSuccessCalls() * 100.0 / summary.getTotalCalls()));
         }
@@ -269,6 +288,11 @@ public class AiGatewayAdminHolder {
             long[] latency = modelLatency.get(modelStat.getModel());
             if (latency != null && latency[1] > 0) {
                 modelStat.setAvgLatencyMs(latency[0] / latency[1]);
+            }
+            // 有调用、消耗了 token、却算不出成本 → 该模型没配价格。
+            // 汇总里标记出来，避免看板把「未配置」显示成「免费」。
+            if (!modelStat.isPriced() && modelStat.getCalls() > 0 && modelStat.getTokens() > 0) {
+                summary.setHasUnpricedModels(true);
             }
         }
         return userStats;

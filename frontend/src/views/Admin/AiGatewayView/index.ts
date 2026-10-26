@@ -9,6 +9,7 @@ import {
   type AiQuotaOverview,
   type AiQuotaView,
 } from '@/api/aiGatewayAdmin'
+import { weeklyReportApi, type WeeklyReport } from '@/api/weeklyReport'
 import { debug } from '@/utils/debug'
 import { isConfirmCancelled } from '@/utils/confirm'
 
@@ -70,7 +71,11 @@ export function useIndex() {
       userId: '',
       dailyTokenQuota: 100000,
       remark: '',
-    },
+      scope: 'user' as 'user' | 'unit',
+    unitGid: '',
+},
+    reports: [] as WeeklyReport[],
+    reportGenerating: false,
   })
 
   const trendMax = computed(() =>
@@ -89,7 +94,8 @@ export function useIndex() {
   onMounted(() => {
     loadConfig()
     loadSummary()
-  })
+    loadReports()
+})
 
   async function loadConfig() {
     try {
@@ -248,9 +254,12 @@ export function useIndex() {
   }
 
   async function saveQuota() {
-    const userId = state.quotaForm.userId.trim()
-    if (!userId) {
-      ElMessage.warning('请选择用户')
+    // 部门配额：提交时把 gid 拼成 unit: 前缀存入 userId 字段
+    const userId = state.quotaForm.scope === 'unit'
+      ? 'unit:' + state.quotaForm.unitGid.trim()
+      : state.quotaForm.userId.trim()
+    if (!userId || (state.quotaForm.scope === 'unit' && userId === 'unit:')) {
+      ElMessage.warning(state.quotaForm.scope === 'unit' ? '请填写部门编号' : '请选择用户')
       return
     }
     state.quotaSaving = true
@@ -307,6 +316,43 @@ export function useIndex() {
     return STATUS_LABELS[status] ?? status
   }
 
+  function mondayOfThisWeek(): string {
+    const now = new Date()
+    const day = now.getDay() === 0 ? 7 : now.getDay()
+    const monday = new Date(now.getFullYear(), now.getMonth(), now.getDate() - day + 1)
+    const mm = String(monday.getMonth() + 1).padStart(2, '0')
+    const dd = String(monday.getDate()).padStart(2, '0')
+    return `${monday.getFullYear()}-${mm}-${dd}`
+  }
+
+  async function loadReports() {
+    try {
+      const { data: res } = await weeklyReportApi.list()
+      if (res.resp_code === 0) {
+        state.reports = res.datas || []
+      }
+    } catch (e) {
+      console.warn('加载周报失败', e)
+    }
+  }
+
+  async function generateWeeklyReport() {
+    state.reportGenerating = true
+    try {
+      // 手动触发时生成「本周至今」的快照；周一自动任务生成上一完整周
+      const { data: res } = await weeklyReportApi.generate(mondayOfThisWeek())
+      if (res.resp_code === 0) {
+        ElMessage.success('周报已生成')
+        await loadReports()
+      } else {
+        ElMessage.error(res.resp_msg || '生成失败')
+      }
+    } catch (e) {
+      ElMessage.error('生成失败，请重试')
+    } finally {
+      state.reportGenerating = false
+    }
+  }
   function statusTagType(status: string): 'success' | 'danger' | 'warning' | 'info' {
     if (status === 'success') return 'success'
     if (status === 'failed') return 'danger'
@@ -329,6 +375,19 @@ export function useIndex() {
     if (ms === null || ms === undefined) return '-'
     if (ms >= 1000) return `${(ms / 1000).toFixed(2)}s`
     return `${ms}ms`
+  }
+
+  /**
+   * 成本以「毫分」为单位整数存储（1 分 = 1000 毫分）——
+   * 单次对话常不足 1 分，用分会把小调用全部取整成 0。
+   * 展示时折算为元：不足 1 分保留 4 位小数，避免显示成 ¥0.00。
+   */
+  function formatCost(milliCents: number | null | undefined): string {
+    const yuan = Number(milliCents ?? 0) / 100_000
+    if (yuan > 0 && yuan < 0.01) {
+      return `¥${yuan.toFixed(4)}`
+    }
+    return `¥${yuan.toFixed(2)}`
   }
 
   function formatTime(value: number | string | null | undefined): string {
@@ -408,6 +467,9 @@ export function useIndex() {
     statusTagType,
     formatTokens,
     formatDuration,
+    formatCost,
+    loadReports,
+    generateWeeklyReport,
     formatTime,
     trendHeight,
     failedHeight,
