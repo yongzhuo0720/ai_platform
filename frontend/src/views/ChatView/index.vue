@@ -1,5 +1,9 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted } from "vue";
+import { ref, reactive, computed, onMounted, onUnmounted } from "vue";
+import { ElMessageBox, ElMessage } from "element-plus";
+import { chatApi } from "@/api/chat";
+import { chatShareApi } from "@/api/chatShare";
+import { getCurrentUserId } from "@/utils/user";
 import {
   Expand,
   Fold,
@@ -7,15 +11,112 @@ import {
   Loading,
   Plus,
   Close,
-  Sort,
+  Search,
   MoreFilled,
   Avatar,
   DocumentCopy,
   RefreshRight,
   Edit,
+  Top,
+  CaretTop,
+  CaretBottom,
+  Share,
 } from "@element-plus/icons-vue";
 import { useChat } from "./index";
 import ChatComposer from "./ChatComposer.vue";
+
+// 思考过程折叠状态：未点击过时跟随默认——没有正文的（流式思考中）自动展开，有正文后收起
+const thinkingExpanded = reactive<Record<string, boolean>>({});
+const toggleThinking = (id: string) => {
+  thinkingExpanded[id] = !thinkingExpanded[id];
+};
+const isThinkingOpen = (message: { id: string; content?: string }) =>
+  thinkingExpanded[message.id] ?? !message.content?.trim();
+
+// 会话搜索框的显隐
+const showTopicSearch = ref(false);
+// 助手搜索框的显隐
+const showAssistantSearch = ref(false);
+
+// 消息反馈（Dify 模式）：messageId -> like/dislike；会话历史不落反馈态
+const messageFeedback = reactive<Record<string, 'like' | 'dislike'>>({});
+
+const rateMessage = (messageId: string, rating: 'like' | 'dislike') => {
+  const next = messageFeedback[messageId] === rating ? null : rating
+  if (next) {
+    messageFeedback[messageId] = next
+    chatApi.submitFeedback(messageId, { rating: next, user: getCurrentUserId() })
+      .catch((e) => console.warn('[反馈] 提交失败:', e))
+  } else {
+    delete messageFeedback[messageId]
+  }
+}
+
+/** 分享会话：把消息快照存到后端，返回可复制的只读链接 */
+const handleShareConversation = async (item: { id: string; name: string }) => {
+  try {
+    const conv = directConversations.value.find((c) => c.id === item.id)
+    let source: Array<{ role: string; content: string }> = conv ? conv.messages : messages.value
+    // Dify 会话：当前页可能没加载它的消息，分享时按需拉取历史
+    if (!conv) {
+      try {
+        const resp = await chatApi.getConversationHistory(item.id, getCurrentUserId(), undefined, 100)
+        const history: Array<{ role: string; content: string }> = []
+        ;(resp.data || []).forEach((msg) => {
+          if (msg.query) history.push({ role: 'user', content: msg.query })
+          if (msg.answer) history.push({ role: 'assistant', content: msg.answer })
+        })
+        source = history
+      } catch (e) {
+        console.warn('[分享] 拉取会话历史失败:', e)
+      }
+    }
+    const shareMessages = source
+      .filter((m) => (m.content || '').trim())
+      .map((m) => ({ role: m.role, content: m.content }))
+    if (!shareMessages.length) {
+      ElMessage.warning('会话还没有内容，无法分享')
+      return
+    }
+    const { data: res } = await chatShareApi.create({
+      title: item.name,
+      payload: JSON.stringify({ messages: shareMessages }),
+      authorName: decodeURIComponent((document.cookie.match(/uname=([^;]+)/) || [])[1] || ''),
+    })
+    if (res.resp_code === 0) {
+      const url = location.origin + location.pathname + '#/share/' + res.datas
+      try {
+        await navigator.clipboard.writeText(url)
+        ElMessage.success('分享链接已复制')
+      } catch {
+        ElMessageBox.alert(url, '分享链接', { confirmButtonText: '关闭' })
+      }
+    } else {
+      ElMessage.error(res.resp_msg || '分享失败')
+    }
+  } catch (e) {
+    console.error('分享失败:', e)
+    ElMessage.error('分享失败，请稍后重试')
+  }
+}
+
+// RAG 引用来源折叠状态：默认收起
+const kbSourcesOpen = reactive<Record<string, boolean>>({});
+
+/** 会话重命名：弹窗输入新名称 */
+const handleRenameConversation = (item: { id: string; name: string }) => {
+  ElMessageBox.prompt("输入新的会话名称", "重命名会话", {
+    confirmButtonText: "确定",
+    cancelButtonText: "取消",
+    inputValue: item.name,
+    inputPattern: /\S+/,
+    inputErrorMessage: "名称不能为空",
+  })
+    .then(({ value }) => {
+      if (value) return renameConversationById(item.id, value);
+    })
+    .catch(() => {});
+};
 
 const {
   activeModelId,
@@ -28,7 +129,6 @@ const {
   filteredConversations,
   activeConversationId,
   loading,
-  difyModels,
   parametersLoading,
   chatInputFields,
   chatSelectOptionsMap,
@@ -46,6 +146,17 @@ const {
   toggleHistorySidebar,
   handleSelectConversation,
   handleDeleteHistory,
+  conversationSearch,
+  togglePinConversation,
+  renameConversationById,
+  startEditUserMessage,
+  directConversations,
+  assistantSearch,
+  assistantGroups,
+  assistantIntro,
+  topicGroups,
+  topicPreview,
+  formatTopicTime,
   startNewConversation,
   attachedFiles,
   isDragging,
@@ -194,7 +305,7 @@ onUnmounted(() => {
           </button>
         </header>
 
-        <!-- Tab 切换：助手 / 话题 -->
+        <!-- Tab 切换：助手 / 会话 -->
         <div class="chat-side-tabs" role="tablist">
           <button
             type="button"
@@ -214,38 +325,73 @@ onUnmounted(() => {
             :aria-selected="sideTab === 'topic'"
             @click="sideTab = 'topic'"
           >
-            话题
+            会话
           </button>
         </div>
 
         <!-- 助手 Tab -->
         <div v-show="sideTab === 'assistant'" class="chat-side-pane chat-side-pane-assistant">
-          <button
-            type="button"
-            class="chat-side-add"
-            @click="openAssistantDialog"
-          >
-            <el-icon class="chat-side-add-icon"><Plus /></el-icon>
-            <span>添加助手</span>
-          </button>
+          <div class="chat-side-pane-toolbar">
+            <button
+              type="button"
+              class="chat-side-add"
+              @click="openAssistantDialog"
+            >
+              <el-icon class="chat-side-add-icon"><Plus /></el-icon>
+              <span>新建助手</span>
+            </button>
+            <button
+              type="button"
+              class="chat-side-icon-btn"
+              :aria-label="showAssistantSearch ? '收起搜索' : '搜索助手'"
+              @click.stop="showAssistantSearch = !showAssistantSearch"
+            >
+              <el-icon><Search /></el-icon>
+            </button>
+          </div>
 
-          <div class="chat-side-section">
-            <div class="chat-side-section-head">
-              <span>助手列表</span>
+          <div v-if="showAssistantSearch" class="chat-side-topic-search">
+            <input
+              v-model="assistantSearch"
+              type="text"
+              placeholder="搜索助手（名称 / 提示词）…"
+              aria-label="搜索助手"
+            />
+          </div>
+
+          <div
+            v-if="assistantGroups.length === 0"
+            class="chat-side-empty"
+          >
+            {{ assistantSearch.trim() ? '没有匹配的助手' : '暂无助手，点击上方「添加助手」创建' }}
+          </div>
+
+          <template v-for="group in assistantGroups" :key="group.key">
+            <div class="chat-side-group-head">
+              <span>{{ group.label }}</span>
+              <span class="chat-side-group-count">{{ group.items.length }}</span>
             </div>
             <ul class="chat-side-list">
               <li
-                v-for="model in difyModels"
+                v-for="model in group.items"
                 :key="model.id"
-                class="chat-side-item"
+                class="chat-side-assistant"
                 :class="{ active: activeAssistantId === model.id }"
                 @click="selectAssistant(model.id)"
               >
-                <span class="chat-side-item-icon">
-                  <el-icon><Avatar /></el-icon>
+                <span
+                  class="chat-side-assistant-avatar"
+                  :class="{ 'is-builtin': model.builtin }"
+                  aria-hidden="true"
+                >{{ model.name.charAt(0) }}</span>
+                <span class="chat-side-assistant-body">
+                  <span class="chat-side-assistant-name">
+                    {{ model.name }}
+                    <em v-if="model.builtin" class="chat-side-assistant-tag">内置</em>
+                  </span>
+                  <span class="chat-side-assistant-intro">{{ assistantIntro(model) }}</span>
                 </span>
-                <span class="chat-side-item-name">{{ model.name }}</span>
-                <div class="chat-side-item-action-wrap" @click.stop>
+                <div v-if="!model.builtin" class="chat-side-item-action-wrap" @click.stop>
                   <button
                     v-if="canEditAssistant(model) || canDeleteAssistant(model)"
                     type="button"
@@ -287,10 +433,10 @@ onUnmounted(() => {
                 </div>
               </li>
             </ul>
-          </div>
+          </template>
         </div>
 
-        <!-- 话题 Tab -->
+        <!-- 会话 Tab -->
         <div v-show="sideTab === 'topic'" class="chat-side-pane chat-side-pane-topic">
           <div class="chat-side-pane-toolbar">
             <button
@@ -299,46 +445,97 @@ onUnmounted(() => {
               @click="startNewConversation"
             >
               <el-icon class="chat-side-add-icon"><Plus /></el-icon>
-              <span>新建话题</span>
+              <span>新建会话</span>
             </button>
             <button
               type="button"
               class="chat-side-icon-btn"
-              aria-label="筛选 / 排序"
-              @click.stop
+              :aria-label="showTopicSearch ? '收起搜索' : '搜索会话'"
+              @click.stop="showTopicSearch = !showTopicSearch"
             >
-              <el-icon><Sort /></el-icon>
+              <el-icon><Search /></el-icon>
             </button>
           </div>
 
-          <div v-if="filteredConversations.length === 0" class="chat-side-empty">
-            暂无话题
+          <div v-if="showTopicSearch" class="chat-side-topic-search">
+            <input
+              v-model="conversationSearch"
+              type="text"
+              placeholder="搜索会话…"
+              aria-label="搜索会话"
+            />
           </div>
 
-          <ul v-else class="chat-side-topic-list">
-            <li
-              v-for="item in filteredConversations"
-              :key="item.id"
-              class="chat-side-topic-item"
-              :class="{ active: activeConversationId === item.id }"
-            >
-              <button
-                type="button"
-                class="chat-side-topic-main"
-                @click="handleSelectConversation(item.id)"
+          <div v-if="filteredConversations.length === 0" class="chat-side-empty">
+            {{ conversationSearch.trim() ? '没有匹配的会话' : '暂无会话' }}
+          </div>
+
+          <template v-for="group in topicGroups" :key="group.key">
+            <div class="chat-side-group-head">
+              <span>{{ group.label }}</span>
+              <span class="chat-side-group-count">{{ group.items.length }}</span>
+            </div>
+            <ul class="chat-side-topic-list">
+              <li
+                v-for="item in group.items"
+                :key="item.id"
+                class="chat-side-topic-item"
+                :class="{ active: activeConversationId === item.id }"
               >
-                <span class="chat-side-topic-title">{{ item.name }}</span>
-              </button>
-              <button
-                type="button"
-                class="chat-side-topic-delete"
-                :aria-label="'关闭话题：' + item.name"
-                @click.stop="handleDeleteHistory(item.id)"
-              >
-                <el-icon><Close /></el-icon>
-              </button>
-            </li>
-          </ul>
+                <button
+                  type="button"
+                  class="chat-side-topic-main"
+                  @click="handleSelectConversation(item.id)"
+                >
+                  <span class="chat-side-topic-title">
+                    <span v-if="item.pinned" class="chat-side-topic-pin" title="已置顶">📌</span>
+                    {{ item.name }}
+                  </span>
+                  <span v-if="topicPreview(item.id)" class="chat-side-topic-preview">
+                    {{ topicPreview(item.id) }}
+                  </span>
+                  <span class="chat-side-topic-time">{{ formatTopicTime(item.updated_at) }}</span>
+                </button>
+                <span class="chat-side-topic-actions">
+                  <button
+                    type="button"
+                    class="chat-side-topic-action"
+                    :aria-label="'分享会话：' + item.name"
+                    title="分享"
+                    @click.stop="handleShareConversation(item)"
+                  >
+                    <el-icon><Share /></el-icon>
+                  </button>
+                <button
+                    type="button"
+                    class="chat-side-topic-action"
+                    :aria-label="(item.pinned ? '取消置顶：' : '置顶：') + item.name"
+                    :title="item.pinned ? '取消置顶' : '置顶'"
+                    @click.stop="togglePinConversation(item.id)"
+                  >
+                    <el-icon><Top /></el-icon>
+                  </button>
+                  <button
+                    type="button"
+                    class="chat-side-topic-action"
+                    :aria-label="'重命名会话：' + item.name"
+                    title="重命名"
+                    @click.stop="handleRenameConversation(item)"
+                  >
+                    <el-icon><Edit /></el-icon>
+                  </button>
+                  <button
+                    type="button"
+                    class="chat-side-topic-delete"
+                    :aria-label="'删除会话：' + item.name"
+                    @click.stop="handleDeleteHistory(item.id)"
+                  >
+                    <el-icon><Close /></el-icon>
+                  </button>
+                </span>
+              </li>
+            </ul>
+          </template>
         </div>
       </aside>
     </transition>
@@ -383,55 +580,74 @@ onUnmounted(() => {
                 :class="{ active: sideTab === 'topic' }"
                 @click="sideTab = 'topic'"
               >
-                话题
+                会话
               </button>
             </div>
 
             <div v-show="sideTab === 'assistant'" class="chat-side-pane chat-side-pane-assistant">
               <button type="button" class="chat-side-add" @click="openAssistantDialog">
                 <el-icon class="chat-side-add-icon"><Plus /></el-icon>
-                <span>添加助手</span>
+                <span>新建助手</span>
               </button>
-              <div class="chat-side-section">
-                <div class="chat-side-section-head"><span>助手列表</span></div>
+              <template v-for="group in assistantGroups" :key="'drawer-' + group.key">
+                <div class="chat-side-group-head">
+                  <span>{{ group.label }}</span>
+                  <span class="chat-side-group-count">{{ group.items.length }}</span>
+                </div>
                 <ul class="chat-side-list">
                   <li
-                    v-for="model in difyModels"
+                    v-for="model in group.items"
                     :key="model.id"
-                    class="chat-side-item"
+                    class="chat-side-assistant"
                     :class="{ active: activeAssistantId === model.id }"
                     @click="selectAssistant(model.id)"
                   >
-                    <span class="chat-side-item-icon"><el-icon><Avatar /></el-icon></span>
-                    <span class="chat-side-item-name">{{ model.name }}</span>
+                    <span class="chat-side-assistant-avatar" :class="{ 'is-builtin': model.builtin }" aria-hidden="true">{{ model.name.charAt(0) }}</span>
+                    <span class="chat-side-assistant-body">
+                      <span class="chat-side-assistant-name">
+                        {{ model.name }}
+                        <em v-if="model.builtin" class="chat-side-assistant-tag">内置</em>
+                      </span>
+                      <span class="chat-side-assistant-intro">{{ assistantIntro(model) }}</span>
+                    </span>
                   </li>
                 </ul>
-              </div>
+              </template>
             </div>
 
             <div v-show="sideTab === 'topic'" class="chat-side-pane chat-side-pane-topic">
               <div class="chat-side-pane-toolbar">
                 <button type="button" class="chat-side-add" @click="startNewConversation">
                   <el-icon class="chat-side-add-icon"><Plus /></el-icon>
-                  <span>新建话题</span>
+                  <span>新建会话</span>
                 </button>
               </div>
-              <div v-if="filteredConversations.length === 0" class="chat-side-empty">暂无话题</div>
-              <ul v-else class="chat-side-topic-list">
-                <li
-                  v-for="item in filteredConversations"
-                  :key="item.id"
-                  class="chat-side-topic-item"
-                  :class="{ active: activeConversationId === item.id }"
-                >
-                  <button type="button" class="chat-side-topic-main" @click="handleSelectConversation(item.id)">
-                    <span class="chat-side-topic-title">{{ item.name }}</span>
-                  </button>
-                  <button type="button" class="chat-side-topic-delete" @click.stop="handleDeleteHistory(item.id)">
-                    <el-icon><Close /></el-icon>
-                  </button>
-                </li>
-              </ul>
+              <div v-if="filteredConversations.length === 0" class="chat-side-empty">暂无会话</div>
+              <template v-else v-for="group in topicGroups" :key="'drawer-' + group.key">
+                <div class="chat-side-group-head">
+                  <span>{{ group.label }}</span>
+                  <span class="chat-side-group-count">{{ group.items.length }}</span>
+                </div>
+                <ul class="chat-side-topic-list">
+                  <li
+                    v-for="item in group.items"
+                    :key="item.id"
+                    class="chat-side-topic-item"
+                    :class="{ active: activeConversationId === item.id }"
+                  >
+                    <button type="button" class="chat-side-topic-main" @click="handleSelectConversation(item.id)">
+                      <span class="chat-side-topic-title">
+                        <span v-if="item.pinned" class="chat-side-topic-pin">📌</span>
+                        {{ item.name }}
+                      </span>
+                      <span class="chat-side-topic-time">{{ formatTopicTime(item.updated_at) }}</span>
+                    </button>
+                    <button type="button" class="chat-side-topic-delete" @click.stop="handleDeleteHistory(item.id)">
+                      <el-icon><Close /></el-icon>
+                    </button>
+                  </li>
+                </ul>
+              </template>
             </div>
           </aside>
         </div>
@@ -450,11 +666,11 @@ onUnmounted(() => {
             class="chat-assistant-dialog"
             role="dialog"
             aria-modal="true"
-            :aria-label="isAssistantEditing ? '更新助手' : '添加助手'"
+            :aria-label="isAssistantEditing ? '更新助手' : '新建助手'"
           >
             <header class="chat-assistant-dialog-header">
               <div class="chat-assistant-dialog-title">
-                <h3>{{ isAssistantEditing ? '更新助手' : '创建助手' }}</h3>
+                <h3>{{ isAssistantEditing ? '更新助手' : '新建助手' }}</h3>
               </div>
               <button
                 type="button"
@@ -545,7 +761,7 @@ onUnmounted(() => {
             class="chat-assistant-dialog chat-assistant-confirm-dialog"
             role="alertdialog"
             aria-modal="true"
-            ::aria-label="isAssistantEditing ? '更新助手' : '添加助手'"
+            ::aria-label="isAssistantEditing ? '更新助手' : '新建助手'"
           >
             <header class="chat-assistant-dialog-header">
               <div class="chat-assistant-dialog-title">
@@ -643,7 +859,8 @@ onUnmounted(() => {
               </div>
               <div class="chat-empty-brand">
                 <img src="@/assets/images/brand-logo.svg" alt="AI" class="chat-empty-logo" />
-                <div>您好，我是{{ assistantGreetingName }}</div>
+                <div v-if="isDirectMode">您好，当前对话模型：{{ assistantGreetingName }}</div>
+                <div v-else>您好，我是{{ assistantGreetingName }}</div>
               </div>
 
               <ChatComposer
@@ -657,6 +874,7 @@ onUnmounted(() => {
                 :active-model-id="activeModelId"
                 :loading="loading"
                 :allow-file-upload="allowFileUpload"
+            :file-accept="isDirectMode ? 'image/*' : undefined"
                 :kb-options="chatKbOptions"
                 :active-kb-name="directKbName"
                 placeholder="请输入问题，开始对话..."
@@ -670,7 +888,7 @@ onUnmounted(() => {
                 @select-kb="directKbName = $event"
               />
 
-              <div v-if="!isDirectMode && suggestedQuestions.length > 0" class="suggested-questions">
+              <div v-if="suggestedQuestions.length > 0" class="suggested-questions">
                 <p class="suggested-questions-title">建议问题</p>
                 <div class="suggested-questions-list">
                   <button
@@ -700,12 +918,57 @@ onUnmounted(() => {
 
               <div class="chat-message-content">
                 <div class="chat-message-bubble" :class="{ 'has-thinking': message.thinking && !message.content }">
-                  <span v-if="message.thinking && !message.content" class="thinking-text">
-                    {{ message.thinking }}
-                  </span>
+                  <!-- 思考过程：流式期间自动展开，完成后折叠可回看 -->
+                  <div
+                    v-if="message.thinking"
+                    class="thinking-block"
+                    :class="{ 'is-open': isThinkingOpen(message) }"
+                  >
+                    <button
+                      type="button"
+                      class="thinking-toggle"
+                      @click="toggleThinking(message.id)"
+                    >
+                      <span class="thinking-caret">▸</span>
+                      <span>{{ message.content?.trim() ? '已深度思考' : '思考中…' }}</span>
+                    </button>
+                    <div v-show="isThinkingOpen(message)" class="thinking-body">{{ message.thinking }}</div>
+                  </div>
                   <!-- 助手消息：使用 Markdown 渲染 -->
-                  <template v-else-if="message.role === 'assistant'">
-                    <div class="markdown-content" v-html="formatContent(message.content)"></div>
+                  <template v-if="message.role === 'assistant'">
+                    <div
+                      v-show="message.content?.trim()"
+                      class="markdown-content"
+                      v-html="formatContent(message.content)"
+                    ></div>
+                    <!-- 服务端 RAG 命中来源 -->
+                    <div
+                      v-if="message.kbSources?.length"
+                      class="kb-sources-block"
+                      :class="{ 'is-open': kbSourcesOpen[message.id] }"
+                    >
+                      <button
+                        type="button"
+                        class="kb-sources-toggle"
+                        @click="kbSourcesOpen[message.id] = !kbSourcesOpen[message.id]"
+                      >
+                        <span class="thinking-caret">▸</span>
+                        <span>引用来源 · {{ message.kbSources.length }} 个片段</span>
+                      </button>
+                      <ul v-show="kbSourcesOpen[message.id]" class="kb-sources-list">
+                        <li
+                          v-for="(src, srcIndex) in message.kbSources"
+                          :key="srcIndex"
+                          class="kb-source-item"
+                        >
+                          <div class="kb-source-head">
+                            <span class="kb-source-doc">{{ src.docName || '未命名文档' }} · 第 {{ src.chunkIndex + 1 }} 段</span>
+                            <span class="kb-source-score">相关度 {{ (src.score * 100).toFixed(0) }}%</span>
+                          </div>
+                          <p class="kb-source-content">{{ src.content }}</p>
+                        </li>
+                      </ul>
+                    </div>
                     <span
                       v-if="loading && message.id === messages[messages.length - 1]?.id && !message.content"
                       class="typing-cursor"
@@ -725,7 +988,51 @@ onUnmounted(() => {
                   </div>
                 </div>
 
+                <div v-if="message.role === 'user'" class="chat-message-actions">
+                  <button
+                    type="button"
+                    class="chat-message-action"
+                    aria-label="编辑并重发"
+                    title="编辑并重发"
+                    :disabled="loading"
+                    @click="startEditUserMessage(message.id)"
+                  >
+                    <el-icon><Edit /></el-icon>
+                  </button>
+                  <button
+                    type="button"
+                    class="chat-message-action"
+                    aria-label="复制"
+                    title="复制"
+                    @click="copyMessage(message.content)"
+                  >
+                    <el-icon><DocumentCopy /></el-icon>
+                  </button>
+                </div>
+
                 <div v-if="message.role === 'assistant'" class="chat-message-actions">
+                  <template v-if="!isDirectMode && message.id">
+                    <button
+                      type="button"
+                      class="chat-message-action"
+                      :class="{ 'is-active': messageFeedback[message.id] === 'like' }"
+                      aria-label="赞同"
+                      title="赞同"
+                      @click="rateMessage(message.id, 'like')"
+                    >
+                      <el-icon><CaretTop /></el-icon>
+                    </button>
+                    <button
+                      type="button"
+                      class="chat-message-action"
+                      :class="{ 'is-active': messageFeedback[message.id] === 'dislike' }"
+                      aria-label="不满意"
+                      title="不满意"
+                      @click="rateMessage(message.id, 'dislike')"
+                    >
+                      <el-icon><CaretBottom /></el-icon>
+                    </button>
+                  </template>
                   <button
                     type="button"
                     class="chat-message-action"
@@ -793,6 +1100,7 @@ onUnmounted(() => {
             :active-model-id="activeModelId"
             :loading="loading"
             :allow-file-upload="allowFileUpload"
+            :file-accept="isDirectMode ? 'image/*' : undefined"
             :kb-options="chatKbOptions"
             :active-kb-name="directKbName"
             placeholder="请输入问题，继续对话..."

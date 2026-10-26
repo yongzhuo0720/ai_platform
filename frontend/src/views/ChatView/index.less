@@ -547,6 +547,206 @@ html[data-theme="light"] .chat-sidebar {
   }
 }
 
+/* 话题操作组：置顶 / 重命名 / 删除，hover 时出现 */
+.chat-side-topic-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  flex-shrink: 0;
+}
+
+.chat-side-topic-action {
+  width: 28px;
+  height: 28px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: none;
+  border-radius: 8px;
+  color: var(--text-tertiary);
+  cursor: pointer;
+  font-size: 12px;
+  transition: background var(--transition-fast), color var(--transition-fast), opacity var(--transition-fast);
+  opacity: 0;
+
+  .chat-side-topic-item:hover &,
+  .chat-side-topic-item.active &,
+  &:focus-visible {
+    opacity: 1;
+  }
+
+  &:hover {
+    background: var(--surface-hover, rgba(148, 163, 184, 0.14));
+    color: var(--text-primary);
+  }
+}
+
+.chat-side-topic-pin {
+  font-size: 11px;
+  margin-right: 4px;
+}
+
+/* ============== 侧栏分组（助手 / 话题共用） ============== */
+.chat-side-group-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 14px 6px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: var(--text-tertiary);
+  text-transform: uppercase;
+
+  .chat-side-group-count {
+    min-width: 18px;
+    padding: 0 5px;
+    border-radius: 9px;
+    background: var(--surface-hover, rgba(148, 163, 184, 0.14));
+    color: var(--text-tertiary);
+    font-size: 10.5px;
+    font-weight: 500;
+    line-height: 16px;
+    text-align: center;
+  }
+}
+
+/* ============== 助手卡片 ============== */
+.chat-side-assistant {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0 8px;
+  padding: 8px 10px;
+  border-radius: 10px;
+  cursor: pointer;
+  transition: background var(--transition-fast);
+
+  &:hover {
+    background: var(--surface-hover, rgba(148, 163, 184, 0.12));
+  }
+
+  &.active {
+    background: var(--accent-soft, rgba(99, 102, 241, 0.14));
+
+    .chat-side-assistant-name {
+      color: var(--accent, #7c93ff);
+    }
+  }
+
+  .chat-side-assistant-avatar {
+    width: 34px;
+    height: 34px;
+    flex-shrink: 0;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 10px;
+    background: var(--gradient-primary);
+    color: #fff;
+    font-size: 14px;
+    font-weight: 600;
+    box-shadow: 0 4px 12px rgba(79, 123, 255, 0.25);
+
+    &.is-builtin {
+      background: var(--surface-hover, rgba(148, 163, 184, 0.18));
+      color: var(--text-primary);
+      box-shadow: none;
+    }
+  }
+
+  .chat-side-assistant-body {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+
+  .chat-side-assistant-name {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text-primary);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+
+    .chat-side-assistant-tag {
+      margin-left: 5px;
+      padding: 0 4px;
+      border: 1px solid var(--border-color, rgba(148, 163, 184, 0.3));
+      border-radius: 4px;
+      font-size: 9.5px;
+      font-style: normal;
+      font-weight: 400;
+      color: var(--text-tertiary);
+      vertical-align: 1px;
+    }
+  }
+
+  .chat-side-assistant-intro {
+    font-size: 11.5px;
+    line-height: 1.4;
+    color: var(--text-tertiary);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+}
+
+/* ============== 话题条目增强：摘要 + 时间 ============== */
+.chat-side-topic-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  align-items: flex-start;
+
+  .chat-side-topic-preview {
+    max-width: 100%;
+    font-size: 11.5px;
+    line-height: 1.4;
+    color: var(--text-tertiary);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .chat-side-topic-time {
+    font-size: 10.5px;
+    color: var(--text-tertiary);
+    opacity: 0.75;
+  }
+}
+
+/* 话题搜索框 */
+.chat-side-topic-search {
+  padding: 0 12px 8px;
+
+  input {
+    width: 100%;
+    padding: 7px 10px;
+    border: 1px solid var(--border-color, rgba(148, 163, 184, 0.25));
+    border-radius: 8px;
+    background: transparent;
+    color: var(--text-primary);
+    font-size: 12.5px;
+    outline: none;
+    transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
+
+    &:focus {
+      border-color: var(--accent, #6366f1);
+      box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.15);
+    }
+
+    &::placeholder {
+      color: var(--text-tertiary);
+    }
+  }
+}
+
 .chat-side-empty {
   padding: 16px;
   border-radius: var(--radius-sm);
@@ -1517,21 +1717,138 @@ html[data-theme="dark"] .user-file-size {
   font-style: normal;
 }
 
-.thinking-text {
+/* 思考过程折叠面板：流式时自动展开，完成后收起可回看 */
+.thinking-block {
+  margin-bottom: 10px;
+  border: 1px solid var(--qwen-border);
+  border-radius: 10px;
+  background: var(--qwen-surface);
+  overflow: hidden;
+}
+
+.thinking-toggle {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
+  width: 100%;
+  padding: 8px 12px;
+  border: none;
+  background: transparent;
   color: var(--qwen-text-secondary);
+  font-size: 12.5px;
+  cursor: pointer;
+  text-align: left;
+  transition: color var(--transition-fast);
 
-  &::before {
-    content: "";
-    width: 14px;
-    height: 14px;
-    border: 2px solid var(--qwen-border);
-    border-top-color: var(--qwen-brand-blue);
-    border-radius: 50%;
-    animation: spin 0.8s linear infinite;
+  &:hover {
+    color: var(--qwen-text-primary);
   }
+
+  .thinking-caret {
+    display: inline-block;
+    font-size: 11px;
+    transition: transform 0.2s ease;
+  }
+}
+
+.thinking-block.is-open .thinking-toggle .thinking-caret {
+  transform: rotate(90deg);
+}
+
+.thinking-body {
+  max-height: 220px;
+  overflow-y: auto;
+  padding: 4px 14px 12px;
+  font-size: 12.5px;
+  line-height: 1.7;
+  color: var(--qwen-text-secondary);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+/* RAG 引用来源折叠区 */
+.kb-sources-block {
+  margin-top: 10px;
+  border: 1px solid var(--qwen-border);
+  border-radius: 10px;
+  background: var(--qwen-surface);
+  overflow: hidden;
+}
+
+.kb-sources-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 8px 12px;
+  border: none;
+  background: transparent;
+  color: var(--qwen-text-secondary);
+  font-size: 12.5px;
+  cursor: pointer;
+  text-align: left;
+  transition: color var(--transition-fast);
+
+  &:hover {
+    color: var(--qwen-text-primary);
+  }
+
+  .thinking-caret {
+    display: inline-block;
+    font-size: 11px;
+    transition: transform 0.2s ease;
+  }
+}
+
+.kb-sources-block.is-open .kb-sources-toggle .thinking-caret {
+  transform: rotate(90deg);
+}
+
+.kb-sources-list {
+  list-style: none;
+  margin: 0;
+  padding: 0 12px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.kb-source-item {
+  padding: 8px 10px;
+  border: 1px solid var(--qwen-border);
+  border-radius: 8px;
+  background: var(--surface-hover, rgba(148, 163, 184, 0.08));
+}
+
+.kb-source-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+
+.kb-source-doc {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--qwen-text-primary);
+}
+
+.kb-source-score {
+  font-size: 11px;
+  color: var(--accent, #6366f1);
+  flex-shrink: 0;
+}
+
+.kb-source-content {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--qwen-text-secondary);
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
 }
 
 @keyframes spin {
@@ -1568,6 +1885,11 @@ html[data-theme="dark"] .user-file-size {
   .chat-message-item:hover & {
     opacity: 0.7;
   }
+}
+
+.chat-message-action.is-active {
+  color: var(--accent, #7c93ff);
+  background: var(--accent-soft, rgba(124, 147, 255, 0.15));
 }
 
 .chat-message-action {
