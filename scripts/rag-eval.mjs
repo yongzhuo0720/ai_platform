@@ -185,7 +185,16 @@ function precisionAtK(retrieved, relevant, k) {
   if (retrieved.length === 0 || k <= 0 || relevant.size === 0) return 0
   const limit = Math.min(k, retrieved.length)
   let hit = 0
-  for (let i = 0; i < limit; i++) if (relevant.has(retrieved[i])) hit++
+  // 同一相关结果出现多次只计一次：文档级评估下 top-k 里会混着同一文档的
+  // 多个分块，不去重 Precision 会被虚高（真实跑分暴露）
+  const counted = new Set()
+  for (let i = 0; i < limit; i++) {
+    const id = retrieved[i]
+    if (relevant.has(id) && !counted.has(id)) {
+      counted.add(id)
+      hit++
+    }
+  }
   return hit / limit
 }
 
@@ -201,8 +210,15 @@ function ndcgAtK(retrieved, relevant, k) {
   if (retrieved.length === 0 || relevant.size === 0 || k <= 0) return 0
   const limit = Math.min(k, retrieved.length)
   let dcg = 0
+  // 同一相关结果只计最靠前的一次：重复累加会让 DCG 超过 IDCG，
+  // NDCG 冒出大于 1 的值（真实跑分暴露）
+  const counted = new Set()
   for (let i = 0; i < limit; i++) {
-    if (relevant.has(retrieved[i])) dcg += 1 / (Math.log(i + 2) / Math.log(2))
+    const id = retrieved[i]
+    if (relevant.has(id) && !counted.has(id)) {
+      counted.add(id)
+      dcg += 1 / (Math.log(i + 2) / Math.log(2))
+    }
   }
   let idcg = 0
   const idealHits = Math.min(k, relevant.size)
@@ -242,7 +258,14 @@ class ApiClient {
   }
 
   async login(account, password) {
-    const json = await this.post('/ai/uaccess/logintest', { uaccess: account, upwd: password })
+    // keepUser 必须显式带上：框架的 logintest 第 4 参是 primitive boolean，
+    // 缺字段时解析器传 null，Method.invoke 抛 IllegalArgumentException → HTTP 500
+    // app 必须留空：非空值会被判「该应用下无此账号」
+    const json = await this.post('/ai/uaccess/logintest', {
+      uaccess: account,
+      upwd: password,
+      keepUser: false,
+    })
     const token = json?.datas?.token
     if (!token) {
       throw new Error('登录成功但未拿到 token，请检查账号密码或后端版本')
@@ -379,6 +402,12 @@ function selfCheck() {
   const bad = ndcgAtK(['9', '8', '7', '1', '2'], new Set(['1', '2']), 5)
   pass &= gt('ndcg 惩罚后置（Recall 相同）', good, bad)
   pass &= eq('ndcg 相关多于k时IDCG只算k', ndcgAtK(['1', '2'], new Set(['1', '2', '3', '4', '5']), 2), 1)
+
+  console.log('重复命中去重（文档级评估的真实场景）')
+  pass &= eq('precision 重复只计一次',
+    precisionAtK(['1', '1', '1', '9', '8'], new Set(['1']), 5), 0.2)
+  pass &= eq('ndcg 重复只计最靠前一次',
+    ndcgAtK(['1', '1', '1', '9', '8'], new Set(['1']), 5), 1)
 
   console.log(pass ? '\n自检通过：JS 指标与 Java RagEvaluator 口径一致' : '\n自检失败：指标实现与后端不一致')
   return pass

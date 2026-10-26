@@ -146,6 +146,26 @@ class RagEvaluatorTest {
         assertEquals(1.0, RagEvaluator.ndcgAtK(list(1L, 2L), set(1L, 2L, 3L, 4L, 5L), 2), 1e-9);
     }
 
+    /**
+     * 文档级评估下，同一相关结果会以多个分块的形式重复出现在 top-k 里。
+     * Precision 与 NDCG 都必须去重——否则第一次真实跑分就会出现
+     * NDCG = 1.39 这种数学上不可能的值（DCG 重复累加超过了 IDCG）。
+     * 单测最初的合成用例全是唯一 ID，覆盖不到这个场景，真实数据一进来就露馅。
+     */
+    @Test
+    void duplicates_shouldNotInflatePrecisionAndNdcg() {
+        // 位置 0/1/2 都是同一相关文档的不同分块，3/4 是别的文档
+        List<Long> retrieved = list(1L, 1L, 1L, 9L, 8L);
+        Set<Long> relevant = set(1L);
+
+        // Precision：去重后 1 次命中 / 5 = 0.2（不去重会算出 0.6）
+        assertEquals(0.2, RagEvaluator.precisionAtK(retrieved, relevant, 5), 1e-9);
+        // NDCG：只取最靠前位置，DCG = 1，IDCG = 1 → 1.0（不去重会冒出 1.5+）
+        assertEquals(1.0, RagEvaluator.ndcgAtK(retrieved, relevant, 5), 1e-9);
+        // Recall 用 Set 天然去重，本来就是对的
+        assertEquals(1.0, RagEvaluator.recallAtK(retrieved, relevant, 5), 1e-9);
+    }
+
     // ==================== 整体评估 ====================
 
     /** 整体评估应正确求均值，并记录完全漏召的问题 */
