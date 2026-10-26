@@ -77,4 +77,42 @@ public class AiCallLogBean extends DbEntityBase {
     @SqlColumn()
     @ApiModelProperty("客户端IP")
     String clientIp;
+
+    /**
+     * 本次调用折算的成本，单位「毫分」（1 分 = 1000 毫分）。
+     *
+     * <p>由 promptTokens / completionTokens 乘模型单价得出。
+     * 模型未配置单价时为 0——治理看板据此提示「未配置价格」，
+     * 而不是把 0 元当成真实的免费。</p>
+     *
+     * <p>存毫分而不是分：单次对话常不足 1 分（几百 token ×
+     * 分/百万 级单价），用分会把小调用全部下取整成 0；
+     * 前端展示时再折算成元。</p>
+     */
+    @SqlColumn()
+    @ApiModelProperty("调用成本（分）")
+    Long costCents;
+
+    /**
+     * 首字耗时 TTFT（毫秒）：从网关收到请求到写出第一块流式响应的间隔。
+     *
+     * <p>总耗时衡量整体吞吐，TTFT 衡量「用户等多久看到第一个字」——
+     * 流式对话体验的核心指标，两者不可互相替代。仅流式调用有值，
+     * 非流式 JSON 响应为 null。</p>
+     */
+    @SqlColumn()
+    @ApiModelProperty("首字耗时（毫秒，仅流式）")
+    Long firstTokenMs;
+
+    /**
+     * 全链路请求 ID。
+     *
+     * <p>浏览器生成后随请求头下发，网关透传给上游；审计日志落库。
+     * 排查「某次回答为什么不对」时，用这一个 ID 能把
+     * 浏览器控制台、网关日志、上游调用记录串成一条线——
+     * 没有它就只能靠时间戳猜。</p>
+     */
+    @SqlColumn()
+    @ApiModelProperty("全链路请求ID")
+    String requestId;
 }

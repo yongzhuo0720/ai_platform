@@ -40,6 +40,10 @@ export interface AiGatewayModelStat {
   tokens: number
   failed: number
   avgLatencyMs: number
+  /** 累计成本（单位：分）；未定价模型为 0 且不代表真实成本 */
+  costCents?: number
+  /** 该模型是否配置了单价 */
+  priced?: boolean
 }
 
 export interface AiGatewaySummary {
@@ -50,8 +54,14 @@ export interface AiGatewaySummary {
   totalTokens: number
   avgLatencyMs: number
   p95LatencyMs: number
+  /** 平均首字耗时（毫秒）：流式对话体验核心指标，仅统计流式调用 */
+  avgFirstTokenMs?: number
   successRate: number
   truncated: boolean
+  /** 汇总成本（单位：分），仅统计已定价模型 */
+  totalCostCents?: number
+  /** 是否存在未配置单价的模型（成本汇总不完整） */
+  hasUnpricedModels?: boolean
   trend: AiGatewayTrendPoint[]
   modules: AiGatewayModuleStat[]
   models: AiGatewayModelStat[]

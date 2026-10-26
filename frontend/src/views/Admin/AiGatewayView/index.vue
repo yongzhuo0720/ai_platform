@@ -75,6 +75,13 @@
             <span class="gw-card-sub">按上游返回值统计</span>
           </div>
           <div class="gw-card">
+            <span class="gw-card-label">累计成本</span>
+            <strong class="gw-card-value">{{ formatCost(state.summary?.totalCostCents) }}</strong>
+            <span class="gw-card-sub">
+              {{ state.summary?.hasUnpricedModels ? '仅含已定价模型' : '按模型单价折算' }}
+            </span>
+          </div>
+          <div class="gw-card">
             <span class="gw-card-label">平均耗时</span>
             <strong class="gw-card-value">{{ formatDuration(state.summary?.avgLatencyMs) }}</strong>
             <span class="gw-card-sub">端到端网关转发耗时</span>
@@ -83,6 +90,11 @@
             <span class="gw-card-label">P95 耗时</span>
             <strong class="gw-card-value">{{ formatDuration(state.summary?.p95LatencyMs) }}</strong>
             <span class="gw-card-sub">95% 的调用不慢于此值</span>
+          </div>
+          <div class="gw-card">
+            <span class="gw-card-label">平均首字耗时</span>
+            <strong class="gw-card-value">{{ state.summary?.avgFirstTokenMs != null ? formatDuration(state.summary.avgFirstTokenMs) : '-' }}</strong>
+            <span class="gw-card-sub">流式对话从发问到第一个字的出现时间</span>
           </div>
         </div>
 
@@ -166,6 +178,8 @@
                 <span>
                   {{ item.calls }} 次 · {{ formatTokens(item.tokens) }} tokens
                   · 平均 {{ formatDuration(item.avgLatencyMs) }}
+                  <template v-if="item.priced"> · 成本 {{ formatCost(item.costCents) }}</template>
+                  <em v-else> · 未定价</em>
                   <em v-if="item.failed"> · 失败/拦截 {{ item.failed }}</em>
                 </span>
               </div>
@@ -277,6 +291,39 @@
         </div>
       </el-tab-pane>
 
+      <el-tab-pane label="调用周报" name="weekly">
+        <div class="gw-toolbar gw-toolbar-wrap">
+          <el-button type="primary" :loading="state.reportGenerating" @click="generateWeeklyReport">
+            生成本周报告
+          </el-button>
+          <span class="gw-hint">每周一 02:00 自动生成上一自然周；此处可手动按周补生成。</span>
+        </div>
+        <el-table :data="state.reports" style="width: 100%" size="default">
+          <el-table-column prop="weekStart" label="周起" width="110" />
+          <el-table-column prop="weekEnd" label="周止" width="110" />
+          <el-table-column label="调用" width="90">
+            <template #default="scope">{{ scope.row.totalCalls ?? 0 }}</template>
+          </el-table-column>
+          <el-table-column label="成功 / 失败" width="120">
+            <template #default="scope">{{ scope.row.successCalls ?? 0 }} / {{ scope.row.failedCalls ?? 0 }}</template>
+          </el-table-column>
+          <el-table-column label="Token" width="100">
+            <template #default="scope">{{ formatTokens(scope.row.totalTokens) }}</template>
+          </el-table-column>
+          <el-table-column label="成本" width="110">
+            <template #default="scope">{{ formatCost(scope.row.costCents) }}</template>
+          </el-table-column>
+          <el-table-column label="平均耗时" width="100">
+            <template #default="scope">{{ formatDuration(scope.row.avgLatencyMs) }}</template>
+          </el-table-column>
+          <el-table-column label="平均首字" width="100">
+            <template #default="scope">{{ scope.row.avgFirstTokenMs != null ? formatDuration(scope.row.avgFirstTokenMs) : '-' }}</template>
+          </el-table-column>
+          <el-table-column prop="topUser" label="活跃用户" min-width="140" show-overflow-tooltip />
+          <el-table-column prop="topModel" label="热门模型" min-width="140" show-overflow-tooltip />
+        </el-table>
+      </el-tab-pane>
+
       <el-tab-pane label="配额管理" name="quotas">
         <div class="gw-toolbar">
           <span class="gw-quota-default">
@@ -286,7 +333,7 @@
           </span>
           <button type="button" class="btn btn-primary" @click="openQuotaDialog()">
             <Plus />
-            新增配额
+            新建配额
           </button>
           <button type="button" class="btn" @click="loadQuotas">
             <Refresh />
@@ -348,16 +395,22 @@
 
     <el-dialog
       v-model="state.quotaDialogVisible"
-      :title="state.quotaEditing ? '编辑 AI 配额' : '新增 AI 配额'"
+      :title="state.quotaEditing ? '编辑 AI 配额' : '新建 AI 配额'"
       width="520px"
       :close-on-click-modal="false"
       destroy-on-close
     >
       <el-form :model="state.quotaForm" label-width="110px">
-        <el-form-item label="用户">
+        <el-form-item label="配额类型">
+          <el-radio-group v-model="state.quotaForm.scope" :disabled="state.quotaEditing">
+            <el-radio value="user">用户</el-radio>
+            <el-radio value="unit">部门（共享池）</el-radio>
+          </el-radio-group>
+        </el-form-item>
+        <el-form-item :label="state.quotaForm.scope === 'unit' ? '部门编号' : '用户'">
           <el-input v-if="state.quotaEditing" :model-value="state.quotaForm.userId" disabled />
           <el-select
-            v-else
+            v-else-if="state.quotaForm.scope !== 'unit'"
             v-model="state.quotaForm.userId"
             filterable
             placeholder="请选择用户"
@@ -370,6 +423,17 @@
               :value="user.uid"
             />
           </el-select>
+          <el-input
+            v-else
+            v-model="state.quotaForm.unitGid"
+            placeholder="填 userbase 表中的部门 gid，如 1001"
+            style="width: 100%"
+          >
+            <template #prepend>unit:</template>
+          </el-input>
+          <span v-if="state.quotaForm.scope === 'unit'" class="gw-form-tip">
+            部门内所有用户共享该 Token 池；部门配额与用户个人配额同时生效、各自独立计量
+          </span>
         </el-form-item>
         <el-form-item label="每日配额">
           <el-input-number
@@ -421,6 +485,8 @@ const {
   statusTagType,
   formatTokens,
   formatDuration,
+  formatCost,
+  generateWeeklyReport,
   formatTime,
   trendHeight,
   failedHeight,

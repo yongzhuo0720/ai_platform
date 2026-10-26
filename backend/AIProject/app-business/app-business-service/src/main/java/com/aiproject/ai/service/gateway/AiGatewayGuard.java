@@ -1,5 +1,8 @@
 package com.aiproject.ai.service.gateway;
 
+import com.aiproject.ai.permission.bean.MyUserBaseDb;
+import com.aiproject.ai.permission.holde.MyUserBaseDbHolder;
+import com.aiproject.ai.service.bean.AiUserQuotaBean;
 import com.aiproject.ai.service.holde.AiUserQuotaHolder;
 import com.heneng.hnsp.common.redis.service.RedisServer;
 import lombok.Getter;
@@ -38,6 +41,14 @@ public class AiGatewayGuard {
     @Autowired
     AiUserQuotaHolder quotaHolder;
 
+    /** 部门配额需要按用户查所属部门（gid） */
+    @Autowired
+    MyUserBaseDbHolder userBaseDbHolder;
+
+    /** uid -> gid 进程内缓存（部门归属低频变更，10 分钟足够新） */
+    private final java.util.concurrent.ConcurrentHashMap<String, String[]> gidCache = new java.util.concurrent.ConcurrentHashMap<String, String[]>();
+    private static final long GID_CACHE_MS = 10 * 60 * 1000L;
+
     public Decision check(String userId, String module) {
         Decision rate = checkRateLimit(userId);
         if (!rate.isAllowed()) {
@@ -69,23 +80,43 @@ public class AiGatewayGuard {
         if (!tokenQuotaApplies(module)) {
             return Decision.allow();
         }
-        long quota;
+        long userQuota;
         try {
-            quota = quotaHolder.effectiveQuota(userId);
+            userQuota = quotaHolder.effectiveQuota(userId);
         } catch (Exception e) {
             log.warn("[AiGateway] 读取用户配额失败，已放行, uid={}: {}", userId, e.getMessage());
             return Decision.allow();
         }
-        if (quota <= 0) {
-            return Decision.allow();
+        if (userQuota > 0) {
+            long used = usedTokens(userId);
+            if (used >= userQuota) {
+                return Decision.block("quota_exceeded",
+                        "今日 AI 额度已用完（已用 " + used + " / " + userQuota + " tokens），请明天再试或联系管理员");
+            }
         }
-        long used = usedTokens(userId);
-        if (used >= quota) {
-            return Decision.block("quota_exceeded",
-                    "今日 AI 额度已用完（已用 " + used + " / " + quota + " tokens），请明天再试或联系管理员");
+
+        // 部门共享池：配额行 userId 存 "unit:部门gid"，部门内所有人共用一个 Token 池
+        String gid = gidOf(userId);
+        if (gid != null && !gid.trim().isEmpty()) {
+            try {
+                AiUserQuotaBean unitQuota = quotaHolder.find(UNIT_PREFIX + gid.trim());
+                long unitLimit = unitQuota == null || unitQuota.getDailyTokenQuota() == null
+                        ? 0L : unitQuota.getDailyTokenQuota();
+                if (unitLimit > 0) {
+                    long unitUsed = usedTokens(UNIT_PREFIX + gid.trim());
+                    if (unitUsed >= unitLimit) {
+                        return Decision.block("quota_exceeded",
+                                "所在部门今日 AI 额度已用完（" + unitUsed + " / " + unitLimit + " tokens），请联系管理员");
+                    }
+                }
+            } catch (Exception e) {
+                log.warn("[AiGateway] 读取部门配额失败，已放行, uid={}: {}", userId, e.getMessage());
+            }
         }
         return Decision.allow();
     }
+
+    /** 部门配额行的 userId 前缀 */
 
     public long usedTokens(String userId) {
         try {
@@ -99,17 +130,50 @@ public class AiGatewayGuard {
         }
     }
 
+    public static final String UNIT_PREFIX = "unit:";
+
     public void addTokens(String userId, long tokens) {
         if (userId == null || tokens <= 0) {
             return;
         }
-        String key = todayTokenKey(userId);
         try {
+            String key = todayTokenKey(userId);
             redisServer.increment(key, tokens);
             redisTemplate.expire(key, 2, TimeUnit.DAYS);
+            // 部门共享池同步累计：配额检查按双池各自比对
+            String gid = gidOf(userId);
+            if (gid != null && !gid.trim().isEmpty()) {
+                String unitKey = todayTokenKey(UNIT_PREFIX + gid.trim());
+                redisServer.increment(unitKey, tokens);
+                redisTemplate.expire(unitKey, 2, TimeUnit.DAYS);
+            }
         } catch (Exception e) {
             log.warn("[AiGateway] 记录 Token 用量失败, uid={}: {}", userId, e.getMessage());
         }
+    }
+
+    /** 查用户所属部门 gid，带 10 分钟进程内缓存；查不到返回 null（无部门配额概念） */
+    private String gidOf(String userId) {
+        if (userId == null || userId.isEmpty()) {
+            return null;
+        }
+        String[] cached = gidCache.get(userId);
+        long now = System.currentTimeMillis();
+        if (cached != null && now - Long.parseLong(cached[0]) < GID_CACHE_MS) {
+            // 空串占位表示「已查过且无部门」
+            return cached[1].isEmpty() ? null : cached[1];
+        }
+        String gid = null;
+        try {
+            MyUserBaseDb user = userBaseDbHolder.queryUserByUid(userId);
+            if (user != null) {
+                gid = user.getGid();
+            }
+        } catch (Exception e) {
+            log.warn("[AiGateway] 查询用户部门失败: {}", e.getMessage());
+        }
+        gidCache.put(userId, new String[]{String.valueOf(now), gid == null ? "" : gid});
+        return gid;
     }
 
     private String todayTokenKey(String userId) {

@@ -54,4 +54,20 @@ public class ModelsConfigBean extends DbEntityBase {
     @ApiModelProperty("向量模型（本地RAG用，空=不可用于向量化）")
     String embedModel;
 
+    /**
+     * 输入 token 单价，单位「分 / 百万 tokens」。
+     *
+     * <p>用整数分而不是浮点元：单价是人工配置的小数（如 0.002 元/千 token），
+     * 浮点累加会有误差，而分是天然整数。为空表示未配置价格，
+     * 该模型的调用成本记为 0，治理看板会显示「未配置价格」。</p>
+     */
+    @SqlColumn()
+    @ApiModelProperty("输入token单价（分/百万tokens），空=未配置")
+    Long priceInputPerMillion;
+
+    /** 输出 token 单价，单位「分 / 百万 tokens」。通常比输入贵 */
+    @SqlColumn()
+    @ApiModelProperty("输出token单价（分/百万tokens），空=未配置")
+    Long priceOutputPerMillion;
+
 }
