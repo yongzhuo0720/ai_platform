@@ -11,6 +11,7 @@ import org.springframework.context.annotation.EnableAspectJAutoProxy;
  * @author Hnsp快速开发框架
  */
 @EnableAspectJAutoProxy(exposeProxy = true)
+@org.springframework.scheduling.annotation.EnableScheduling
 @Slf4j
 @EnableConfigurationProperties
 @SpringBootApplication(scanBasePackages={"com.heneng","com.aiproject"})
