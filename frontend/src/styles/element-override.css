@@ -9,7 +9,7 @@
   --el-input-text-color: #ffffff;
   --el-input-border-color: rgba(100, 150, 255, 0.3);
   --el-input-hover-border-color: rgba(100, 150, 255, 0.5);
-  --el-input-focus-border-color: #4da6ff;
+  --el-input-focus-border-color: #7c93ff;
   --el-input-placeholder-color: rgba(255, 255, 255, 0.4);
   --el-input-icon-color: rgba(255, 255, 255, 0.6);
   
@@ -30,7 +30,7 @@
   --el-border-color-lighter: rgba(100, 150, 255, 0.2);
   --el-border-color-extra-light: rgba(100, 150, 255, 0.15);
   --el-border-color-hover: rgba(100, 150, 255, 0.5);
-  --el-border-color-focus: #4da6ff;
+  --el-border-color-focus: #7c93ff;
   
   /* 文字颜色 */
   --el-text-color-primary: rgba(255, 255, 255, 0.95);
@@ -78,14 +78,14 @@
 
 .el-select-dropdown__item.selected {
   background: rgba(77, 166, 255, 0.35) !important;
-  color: #4da6ff !important;
+  color: #7c93ff !important;
   font-weight: 600;
 }
 
 /* 选中项的高亮样式 - 增加优先级 */
 .el-select-dropdown__item.is-selected {
   background: rgba(77, 166, 255, 0.35) !important;
-  color: #4da6ff !important;
+  color: #7c93ff !important;
   font-weight: 600;
 }
 
@@ -120,7 +120,7 @@
 }
 
 .el-input__wrapper.is-focus {
-  box-shadow: 0 0 0 1px #4da6ff inset !important;
+  box-shadow: 0 0 0 1px #7c93ff inset !important;
 }
 
 .el-input__inner {
@@ -144,7 +144,7 @@
 }
 
 .el-select .el-input__wrapper.is-focus {
-  box-shadow: 0 0 0 1px #4da6ff inset !important;
+  box-shadow: 0 0 0 1px #7c93ff inset !important;
 }
 
 .el-select .el-input__inner {
@@ -169,7 +169,7 @@
 }
 
 .el-textarea__inner:focus {
-  border-color: #4da6ff !important;
+  border-color: #7c93ff !important;
 }
 
 .el-textarea__inner::placeholder {
@@ -264,7 +264,7 @@ html[data-theme="light"] {
   --el-input-text-color: #0D3064;
   --el-input-border-color: rgba(13, 48, 100, 0.18);
   --el-input-hover-border-color: rgba(0, 102, 255, 0.45);
-  --el-input-focus-border-color: #0066ff;
+  --el-input-focus-border-color: #3d5bf5;
   --el-input-placeholder-color: rgba(13, 48, 100, 0.4);
   --el-input-icon-color: rgba(13, 48, 100, 0.55);
 
@@ -285,7 +285,7 @@ html[data-theme="light"] {
   --el-border-color-lighter: rgba(13, 48, 100, 0.1);
   --el-border-color-extra-light: rgba(13, 48, 100, 0.08);
   --el-border-color-hover: rgba(0, 102, 255, 0.45);
-  --el-border-color-focus: #0066ff;
+  --el-border-color-focus: #3d5bf5;
 
   /* 文字颜色 */
   --el-text-color-primary: #0D3064;
@@ -320,7 +320,7 @@ html[data-theme="light"] .el-select-dropdown__item.hover {
 html[data-theme="light"] .el-select-dropdown__item.selected,
 html[data-theme="light"] .el-select-dropdown__item.is-selected {
   background: rgba(0, 102, 255, 0.18) !important;
-  color: #0066ff !important;
+  color: #3d5bf5 !important;
 }
 
 html[data-theme="light"] .el-select-dropdown__item.selected.hover,
@@ -348,7 +348,7 @@ html[data-theme="light"] .el-input__wrapper:hover {
 }
 
 html[data-theme="light"] .el-input__wrapper.is-focus {
-  box-shadow: 0 0 0 1px #0066ff inset !important;
+  box-shadow: 0 0 0 1px #3d5bf5 inset !important;
 }
 
 html[data-theme="light"] .el-input__inner {
@@ -369,7 +369,7 @@ html[data-theme="light"] .el-select .el-input__wrapper:hover {
 }
 
 html[data-theme="light"] .el-select .el-input__wrapper.is-focus {
-  box-shadow: 0 0 0 1px #0066ff inset !important;
+  box-shadow: 0 0 0 1px #3d5bf5 inset !important;
 }
 
 html[data-theme="light"] .el-select .el-input__inner {
@@ -391,7 +391,7 @@ html[data-theme="light"] .el-textarea__inner:hover {
 }
 
 html[data-theme="light"] .el-textarea__inner:focus {
-  border-color: #0066ff !important;
+  border-color: #3d5bf5 !important;
 }
 
 html[data-theme="light"] .el-textarea__inner::placeholder {

@@ -1,0 +1,13 @@
+{
+  "name": "智汇平台 NexusAI",
+  "short_name": "智汇平台",
+  "description": "企业级 AI 能力门户：对话、知识库与治理",
+  "start_url": "./#/chat",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#101a45",
+  "theme_color": "#4f7bff",
+  "icons": [
+    { "src": "favicon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }
+  ]
+}

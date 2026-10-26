@@ -22,8 +22,8 @@ html[data-theme="light"] {
   --layout-content-bg: #ffffff;
   --layout-border-color: rgba(13, 48, 100, 0.08);
   --layout-menu-text: #1f4b8a;
-  --layout-menu-text-hover: #0066ff;
-  --layout-menu-active-text: #0066ff;
+  --layout-menu-text-hover: #3d5bf5;
+  --layout-menu-active-text: #3d5bf5;
   --layout-menu-hover-bg: rgba(0, 102, 255, 0.08);
   --layout-menu-active-bg: linear-gradient(
     90deg,
@@ -361,7 +361,7 @@ html[data-theme="light"] {
   align-items: center;
   justify-content: center;
   border-radius: 50%;
-  background: #667eea;
+  background: #6c4dff;
   color: #ffffff;
   font-size: 14px;
   font-weight: 600;
@@ -581,7 +581,7 @@ html[data-theme="light"] {
   align-items: center;
   justify-content: center;
   border-radius: 50%;
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  background: linear-gradient(135deg, #4f7bff 0%, #9d3bea 100%);
   color: #ffffff;
   font-size: 11px;
   font-weight: 600;

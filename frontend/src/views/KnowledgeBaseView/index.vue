@@ -487,9 +487,9 @@ function getFileTypeInfo(doc: KnowledgeBaseDocument) {
   if (map[key]) return map[key]
   // key 太长说明是整个文件名，兜底为 FILE
   if (key && key.length <= 6) {
-    return { label: key.toUpperCase(), color: '#4da6ff', bg: 'rgba(77, 166, 255, 0.12)' }
+    return { label: key.toUpperCase(), color: '#7c93ff', bg: 'rgba(77, 166, 255, 0.12)' }
   }
-  return { label: 'FILE', color: '#4da6ff', bg: 'rgba(77, 166, 255, 0.12)' }
+  return { label: 'FILE', color: '#7c93ff', bg: 'rgba(77, 166, 255, 0.12)' }
 }
 
 // ============== 文档预览对话框状态 ==============
@@ -2196,7 +2196,11 @@ function clearChatMessages() {
       />
 
       <div v-else-if="activeMenu === 'personal'" class="kb-empty">
-        <p>请选择一个知识库查看内容</p>
+        <img src="@/assets/images/brand-logo.svg" alt="" class="kb-empty-logo" />
+        <p class="kb-empty-title">从左侧选择一个知识库，开始检索与问答</p>
+        <p class="kb-empty-hint">
+          还没有知识库？点击左侧「新建知识库」，上传文档后即可在聊天中引用。
+        </p>
       </div>
 
       <!-- ========== 共享知识库视图：左侧详情 + 右侧对话 ========== -->
@@ -2590,7 +2594,7 @@ function clearChatMessages() {
     <!-- Create Knowledge Base Dialog -->
     <el-dialog
       v-model="createDialogVisible"
-      title="创建知识库"
+      title="新建知识库"
       width="520px"
       :close-on-click-modal="false"
       class="kb-create-dialog"
@@ -2962,7 +2966,7 @@ function clearChatMessages() {
 
   &:hover {
     background: rgba(0, 10, 40, 0.45);
-    border-color: #4da6ff;
+    border-color: #7c93ff;
     color: rgba(255, 255, 255, 0.75);
   }
 }
@@ -3468,7 +3472,7 @@ html[data-theme="light"] {
 
     &:hover {
       background: rgba(255, 255, 255, 0.9);
-      border-color: #0066ff;
+      border-color: #3d5bf5;
       color: rgb(13, 48, 100);
     }
   }
@@ -3587,8 +3591,8 @@ html[data-theme="light"] {
     background: rgba(13, 48, 100, 0.04);
 
     &.checked {
-      background: #0066ff;
-      border-color: #0066ff;
+      background: #3d5bf5;
+      border-color: #3d5bf5;
       color: #fff;
     }
 
@@ -3884,8 +3888,8 @@ html[data-theme="light"] {
   color: transparent;
 
   &.checked {
-    background: #4da6ff;
-    border-color: #4da6ff;
+    background: #7c93ff;
+    border-color: #7c93ff;
     color: #fff;
   }
 

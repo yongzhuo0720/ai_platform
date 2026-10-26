@@ -19,7 +19,7 @@ export function useIndex() {
     dataList: [] as any[],
     allTags: [] as any[],
     params: {
-      title: '新增数据集',
+      title: '新建数据集',
       dialogVisible: false,
       type: 'add',
       form: null as any
@@ -77,7 +77,7 @@ export function useIndex() {
 
     resetForm(ruleFormRef.value)
     state.params = {
-      title: '新增数据集',
+      title: '新建数据集',
       dialogVisible: true,
       type: 'add',
       form: {

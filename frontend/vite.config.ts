@@ -9,6 +9,17 @@ export default defineConfig({
   // 产物目录统一为 dist，Nginx 部署时 root 指向该目录即可
   build: {
     outDir: 'dist',
+    rollupOptions: {
+      output: {
+        // 大体积三方库拆独立 chunk：首屏只加载用到的部分，
+        // element-plus / highlight.js 可被浏览器长缓存（业务改动不失效缓存）
+        manualChunks: {
+          'element-plus': ['element-plus'],
+          'highlight': ['highlight.js'],
+          'vendor-vue': ['vue', 'vue-router', 'pinia'],
+        },
+      },
+    },
   },
   plugins: [
     vue(),

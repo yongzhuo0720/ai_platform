@@ -19,6 +19,12 @@ const router = createRouter({
       meta: { title: "登录" },
     },
     {
+      path: "/share/:token",
+      name: "chat-share",
+      component: () => import("@/views/ShareView/index.vue"),
+      meta: { title: "对话分享" },
+    },
+    {
       path: "/preview",
       name: "preview",
       component: () => import("@/views/PreviewView/index.vue"),
@@ -33,7 +39,7 @@ const router = createRouter({
           path: "chat",
           name: "chat",
           component: () => import("@/views/ChatView/index.vue"),
-          meta: { title: "智能问答", group: "问答交互引擎" },
+          meta: { title: "智能问答" },
         },
         {
           path: "capabilities",
@@ -45,31 +51,31 @@ const router = createRouter({
           path: "applications",
           name: "applications",
           component: () => import("@/views/ApplicationsView/index.vue"),
-          meta: { title: "场景应用", group: "智能开发工具" },
+          meta: { title: "场景应用", group: "场景应用" },
         },
         {
           path: "models",
           name: "models",
           component: () => import("@/views/ModelsView/index.vue"),
-          meta: { title: "模型库", group: "仓库" },
+          meta: { title: "模型库", group: "资源仓库" },
         },
         {
           path: "datasets",
           name: "datasets",
           component: () => import("@/views/DatasetView/index.vue"),
-          meta: { title: "数据集市场", group: "仓库" },
+          meta: { title: "数据集市场", group: "资源仓库" },
         },
         {
           path: "knowledge-bases",
           name: "knowledge-bases",
           component: () => import("@/views/KnowledgeBaseView/index.vue"),
-          meta: { title: "知识库", group: "知识库", activeNavRouteName: "knowledge-bases" },
+          meta: { title: "知识库", group: "知识库中心", activeNavRouteName: "knowledge-bases" },
         },
         {
           path: "kb-search",
           name: "kb-search",
           component: () => import("@/views/KbSearchView/index.vue"),
-          meta: { title: "知识检索", group: "知识库" },
+          meta: { title: "知识检索", group: "知识库中心" },
         },
         {
           path: "my-usage",
@@ -112,7 +118,7 @@ const router = createRouter({
           path: "dify-config",
           name: "admin-dify-config",
           component: () => import("@/views/Admin/DifyConfigView/index.vue"),
-          meta: { title: "Dify配置管理" },
+          meta: { title: "Dify 配置管理" },
         },
         {
           path: "models-config",
@@ -124,7 +130,7 @@ const router = createRouter({
           path: "ai-gateway",
           name: "admin-ai-gateway",
           component: () => import("@/views/Admin/AiGatewayView/index.vue"),
-          meta: { title: "AI调用治理" },
+          meta: { title: "AI 调用治理" },
         },
         {
           path: "logs",
@@ -139,6 +145,7 @@ const router = createRouter({
 
 router.beforeEach((to, _from, next) => {
   if (to.path === '/login') return next()
+  if (to.path.startsWith('/share/')) return next()
   if (to.path === '/admin/login') return next()
 
   if (to.path.startsWith('/admin')) {

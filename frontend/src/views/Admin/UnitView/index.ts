@@ -14,7 +14,7 @@ export function useIndex() {
     rid: parseInt(Cookies.get('admin_rid') || '0'),
     isAdmin: isSuperAdmin(Cookies.get('admin_rid')) || Cookies.get('admin_access') === '1',
     params: {
-      title: '新增',
+      title: '新建',
       dialogVisible: false,
       type: 'add',
       form: null as any,
@@ -53,7 +53,7 @@ export function useIndex() {
   const showAdd = () => {
     resetForm(ruleFormRef.value)
     state.params = {
-      title: '新增部门',
+      title: '新建部门',
       dialogVisible: true,
       type: 'add',
       form: { parentsno: '', unitname: '', unittel: '', remark: '', enable: true },

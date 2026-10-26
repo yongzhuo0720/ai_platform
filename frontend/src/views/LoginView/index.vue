@@ -38,8 +38,8 @@
             <div class="panel-logo">
                 <img src="@/assets/images/brand-logo.svg" alt="logo" class="logo-image" />
             </div>
-            <div class="panel-title">AI 聚合平台</div>
-            <p class="panel-desc">统一智能工作台，汇聚多模型 AI 能力</p>
+            <div class="panel-title">智汇平台</div>
+            <p class="panel-desc">企业级 AI 能力门户 · 对话 · 知识库 · 应用治理</p>
 
             <form class="login-form" @submit.prevent="handleLogin">
               <div class="login-field">
@@ -81,7 +81,7 @@
                <img src="@/assets/images/brand-logo.svg" alt="logo" class="logo-image" />
             </div>
             <div class="panel-title">系统管理后台</div>
-            <p class="panel-desc">统一智能工作台 · 系统管理中心</p>
+            <p class="panel-desc">智汇平台 · 系统管理中心</p>
 
             <form class="login-form" @submit.prevent="handleLogin">
               <div class="login-field">
@@ -136,7 +136,7 @@
               <div class="slider-icon">
                 <Monitor />
               </div>
-              <h3>AI 聚合平台</h3>
+              <h3>智汇平台</h3>
               <p>模型对话、知识库、能力广场与开发工具</p>
               <button type="button" class="slider-btn" @click="switchMode(true)">
                 前往管理后台

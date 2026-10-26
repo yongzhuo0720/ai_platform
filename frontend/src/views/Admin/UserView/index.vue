@@ -31,7 +31,7 @@
                     </button>
                     <button type="button" class="btn btn-primary" @click="showAdd" v-if="state.isAdmin">
                         <CirclePlusFilled />
-                        新增用户
+                        新建用户
                     </button>
                 </el-form-item>
             </el-form>

@@ -142,7 +142,7 @@ onBeforeUnmount(() => {
           <img src="@/assets/images/brand-logo.svg" alt="logo"  class="logo-image"/>
         </div>
         <div v-show="!isCollapsed" class="brand-copy">
-          <span>AI聚合平台</span>
+          <span>智汇平台</span>
           <span>系统管理后台</span>
         </div>
       </div>

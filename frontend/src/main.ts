@@ -8,6 +8,10 @@ import './styles/markdown.css'
 import './styles/element-override.css'
 
 import { useThemeStore } from './stores/theme'
+import { installCodeCopy } from './utils/markdown'
+
+// 代码块复制按钮的点击委托：全局一次，聊天页与知识库聊天的 v-html 均生效
+installCodeCopy()
 import { ensureLoaded } from './stores/difyConfig'
 
 import * as ElementPlusIconsVue from '@element-plus/icons-vue'
@@ -25,3 +29,7 @@ for (const [key, component] of Object.entries(ElementPlusIconsVue)) {
   app.component(key, component)
 }
 app.mount('#app')
+// PWA：注册极简 Service Worker（仅满足可安装性；生产 https/localhost 环境）
+if (import.meta.env.PROD && "serviceWorker" in navigator) {
+  navigator.serviceWorker.register("./sw.js").catch(() => undefined)
+}

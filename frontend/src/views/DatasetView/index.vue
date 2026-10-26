@@ -15,13 +15,13 @@
       <div class="page-eyebrow">数据资产</div>
       <div class="page-heading">
         <div>
-          <h1>数据集仓库</h1>
+          <h1>数据集市场</h1>
           <p>{{ pageDescriptions.datasets }}</p>
         </div>
         <div class="hero-actions">
           <button type="button" class="btn btn-primary" @click="showAdd" v-if="state.rid === SUPER_ADMIN_RID">
             <Upload />
-            新增数据集
+            新建数据集
           </button>
         </div>
       </div>
