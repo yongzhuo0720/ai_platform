@@ -18,13 +18,13 @@
       <div class="page-eyebrow">基础模型</div>
       <div class="page-heading">
         <div>
-          <h1>模型仓库</h1>
+          <h1>模型库</h1>
           <p>{{ pageDescriptions.models }}</p>
         </div>
         <div class="hero-stats">
           <button type="button" class="btn btn-primary" @click="showAdd" v-if="state.rid === SUPER_ADMIN_RID">
             <Plus />
-            新增模型
+            新建模型
           </button>
           <div class="hero-stat">
             <span>在线模型</span>
@@ -127,7 +127,7 @@
       </article>
     </div>
 
-    <!-- 新增/编辑弹窗 -->
+    <!-- 新建/编辑弹窗 -->
     <el-dialog :title="state.params.title" v-model="state.params.dialogVisible" width="700px" center :close-on-click-modal="false">
       <el-form ref="ruleFormRef" :model="state.params.form" label-width="100px" :rules="state.rules" size="large">
         <el-form-item label="名称" prop="name">

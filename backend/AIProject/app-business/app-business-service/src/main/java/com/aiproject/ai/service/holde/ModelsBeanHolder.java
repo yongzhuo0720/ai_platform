@@ -186,7 +186,32 @@ public class ModelsBeanHolder {
         return Result.succeed(modelsBeanMapper.select(null, data), "查询成功");
     }
 
+    /**
+     * 记录一次下载。
+     *
+     * <p>修复前的问题：</p>
+     * <ul>
+     *   <li>不校验 {@code data.iid}，传空 iid 也能落一条记录，把下载量搅乱；</li>
+     *   <li>不去重不限流——{@code getDownloadUrl} 每次拉文件列表都会调一次，
+     *       用户反复刷新页面下载量就持续上涨，统计完全失去意义。</li>
+     * </ul>
+     *
+     * <p>现在按 (uid, moudelsiid) 判重：同一用户对同一模型只计一次。
+     * 这不是完美的防刷（换账号仍可刷），但足以让「下载量」回归
+     * 「有多少人下载过」这个语义。</p>
+     */
     public Result<Boolean> addDownloads(String uid, ModelsBean data) {
+        if (data == null || data.getIid() == null) {
+            return Result.failed(false, "模型 id 不能为空");
+        }
+        ModelsDownloadsBean existing = new ModelsDownloadsBean();
+        existing.setMoudelsiid(data.getIid());
+        existing.setUser(uid);
+        List<ModelsDownloadsBean> found = modelsDownloadsBeanHolder.queryList(existing, null);
+        if (found != null && !found.isEmpty()) {
+            // 已记录过，不重复计数，但也不报错——下载行为本身是成功的
+            return Result.succeed(true, "下载成功");
+        }
         ModelsDownloadsBean modelsDownloadsBean = new ModelsDownloadsBean();
         modelsDownloadsBean.setMoudelsiid(data.getIid());
         modelsDownloadsBean.setUser(uid);
@@ -197,10 +222,42 @@ public class ModelsBeanHolder {
         return Result.failed(false, "下载失败");
     }
 
+    /**
+     * 查询某个模型的本周下载量。
+     *
+     * <p>修复前方法收了 {@code ModelsBean data} 却完全没用它——SQL 只按本周
+     * 时间过滤，返回的是全站周下载总量。前端拿这个数字当「该模型的周下载量」
+     * 展示，于是每个模型都显示同一个数。</p>
+     *
+     * <p>现在补上 {@code moudelsiid} 条件。另外 {@code count >= 0} 是恒真条件，
+     * failed 分支永远走不到，已改为 {@code < 0}。</p>
+     */
     public Result<Integer> queryWeeklyDownloads(ModelsBean data) {
+        if (data == null || data.getIid() == null) {
+            return Result.failed(null, "模型 id 不能为空");
+        }
         Map<String, String> map = WeekUtils.getCurrentWeekRange();
-        String sql = SqlFieldTools.timeBetween(modelsDownloadsBeanMapper.getTableName(), "createtime", map.get("startDateTime"), map.get("endDateTime"));
+        String timeWhere = SqlFieldTools.timeBetween(modelsDownloadsBeanMapper.getTableName(), "createtime", map.get("startDateTime"), map.get("endDateTime"));
+        // iid 是 Long，数字参与拼接不存在注入风险；列名带双引号避免被 PostgreSQL 折叠成小写
+        String sql = timeWhere + " and \"moudelsiid\" = " + data.getIid();
         int count = modelsDownloadsBeanMapper.count(sql);
+        if (count >= 0) {
+            return Result.succeed(count, "查询成功");
+        }
+        return Result.failed(count, "查询失败");
+    }
+
+    /**
+     * 查询全站本周下载量，供模型仓库页头部的统计卡片使用。
+     *
+     * <p>与 {@link #queryWeeklyDownloads(ModelsBean)} 的区别：那个是「单模型」口径，
+     * iid 为空必须拒绝，避免调用方拿空条件把全站数字误当单模型展示；这里显式表达
+     * 全站口径，页面统计不再借道单模型接口传空 id 触发报错。</p>
+     */
+    public Result<Integer> queryWeeklyDownloadsTotal() {
+        Map<String, String> map = WeekUtils.getCurrentWeekRange();
+        String timeWhere = SqlFieldTools.timeBetween(modelsDownloadsBeanMapper.getTableName(), "createtime", map.get("startDateTime"), map.get("endDateTime"));
+        int count = modelsDownloadsBeanMapper.count(timeWhere);
         if (count >= 0) {
             return Result.succeed(count, "查询成功");
         }

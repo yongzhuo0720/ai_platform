@@ -19,7 +19,7 @@ export function useIndex() {
      weeklyDownloads:0,
      rid: parseInt(Cookies.get('rid') || '0'),
     params: {
-      title: '新增模型',
+      title: '新建模型',
       dialogVisible: false,
       type: 'add',
       form: null as any
@@ -123,10 +123,9 @@ export function useIndex() {
   }
   const queryWeeklyDownloads = async () => {
     try {
-      let reqdata={
-        data: {},
-      }
-      const {data:res} = await modelsMngApi.queryWeeklyDownloads(reqdata)
+      // 页面头部的「周下载数量」是全站口径，走专门的统计端点；
+      // 单模型口径的 queryWeeklyDownloads 要求 iid，传空会被后端拒绝并弹错
+      const {data:res} = await modelsMngApi.queryWeeklyDownloadsTotal()
       if (res.resp_code == 0) {
         state.weeklyDownloads = res.datas || 0
       }
@@ -165,7 +164,7 @@ export function useIndex() {
   const showAdd = () => {
     resetForm(ruleFormRef.value)
     state.params = {
-      title: '新增模型',
+      title: '新建模型',
       dialogVisible: true,
       type: 'add',
       form: {
