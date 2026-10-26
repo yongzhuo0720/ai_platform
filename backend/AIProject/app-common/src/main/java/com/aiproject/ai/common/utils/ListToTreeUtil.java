@@ -37,16 +37,21 @@ public class ListToTreeUtil<T> {
      * */
     public List<T> tree(List<T> list){
         List<T> treeList = new ArrayList<>();
-        Map<Object, T> codeMap = list.stream().collect(Collectors.toMap(t->code.apply(t), t -> t));
-        list.stream().forEach(t -> {
-            if(!codeMap.containsKey(parent.apply(t))){
+        Map<Object, T> codeMap = buildCodeMap(list);
+        for (T t : list) {
+            Object parentCode = parent.apply(t);
+            // code 为 null 或父节点就是自己：都当作顶级节点。
+            // 修复前用 Collectors.toMap 且无 merge 函数，遇到重复 code 直接抛
+            // IllegalStateException；自引用父节点更糟——会把自己挂进自己的 children，
+            // JSON 序列化时无限递归直到 StackOverflow。
+            if (parentCode == null || Objects.equals(parentCode, code.apply(t))
+                    || !codeMap.containsKey(parentCode)) {
                 treeList.add(t);
-            }else{
-                T parentT = codeMap.get(parent.apply(t));
-                children.apply(parentT).add(t);
+            } else {
+                children.apply(codeMap.get(parentCode)).add(t);
             }
-        });
-        return  treeList;
+        }
+        return treeList;
     }
 
     /**
@@ -55,17 +60,39 @@ public class ListToTreeUtil<T> {
      * */
     public List<T> tree(List<T> list, Object pid){
         List<T> treeList = new ArrayList<>();
-        Map<Object, T> codeMap = list.stream().collect(Collectors.toMap(t->code.apply(t), t -> t));
-        list.stream().forEach(t -> {
-            if(Objects.equals(pid,parent.apply(t))){
+        Map<Object, T> codeMap = buildCodeMap(list);
+        for (T t : list) {
+            if(Objects.equals(pid, parent.apply(t))){
                 treeList.add(t);
             }else{
                 T parentT = codeMap.get(parent.apply(t));
-                if(Objects.nonNull(parentT)){
+                // 修复前这里没判 null：pid 之外的节点若父节点不在集合内会直接 NPE
+                if(Objects.nonNull(parentT) && !Objects.equals(parentT, t)){
                     children.apply(parentT).add(t);
                 }
             }
-        });
-        return  treeList;
+        }
+        return treeList;
+    }
+
+    /**
+     * 构造 code -> 节点 的映射。
+     *
+     * <p>跳过 code 为 null 的项（{@code Collectors.toMap} 遇 null key 会 NPE），
+     * 并给重复 code 提供 merge 函数（默认保留先出现的，避免 IllegalStateException）。</p>
+     */
+    private Map<Object, T> buildCodeMap(List<T> list) {
+        Map<Object, T> map = new java.util.LinkedHashMap<Object, T>();
+        if (list == null) {
+            return map;
+        }
+        for (T t : list) {
+            Object key = code.apply(t);
+            if (key == null) {
+                continue;
+            }
+            map.putIfAbsent(key, t);
+        }
+        return map;
     }
 }

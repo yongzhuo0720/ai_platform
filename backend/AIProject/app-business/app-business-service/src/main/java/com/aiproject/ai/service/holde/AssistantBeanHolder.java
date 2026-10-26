@@ -51,7 +51,15 @@ public class AssistantBeanHolder {
         return Result.succeed(true, "删除成功");
     }
 
+    /**
+     * 修改助手。
+     *
+     * <p>归属收敛：{@code data.userId} 会被拼进 UPDATE 的 SET 子句，
+     * 修复前没有强制为当前登录 uid，所有者可以把助手转让给任意 uid（或抢走他人助手）。
+     * 现在强制覆盖，归属只能在 create 时确定。</p>
+     */
     public Result<Boolean> update(String uid, AssistantBean data, AssistantBean where) {
+        data.setUserId(uid);
         data.setLastuser(uid);
         where.setUserId(uid);
         if (assistantBeanMapper.update(data, where) <= 0) {

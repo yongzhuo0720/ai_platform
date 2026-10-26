@@ -1,6 +1,7 @@
 package com.aiproject.ai.service.holde;
 
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 import java.util.Set;
 import java.util.stream.Collectors;
@@ -140,11 +141,40 @@ public class KnowledgeBaseBeanHolder {
         return knowledgeBaseBeanMapper.selectPageLike(pageRequest, data);
     }
 
+    /**
+     * 查询知识库权限记录。
+     *
+     * <p>归属收窄：非管理员看不到他人的 {@code only_me} 记录。</p>
+     *
+     * <p>修复前这里把 {@code uid} 声明了却完全不用，等于任意登录用户可拉全量
+     * 权限记录（含他人的 ownerUid / kbId / 部门与角色黑名单）。</p>
+     *
+     * <p>为什么不是简单地按 ownerUid 过滤：前端的知识库页会用这个接口拉全量记录，
+     * 再调 {@link #filterVisible} 按 my / square / shared / joined 等上下文拆分标签页。
+     * 一刀切按归属过滤会让「广场」「已加入」两个标签页直接空掉。</p>
+     *
+     * <p>因此按 permissionType 的语义收窄——这个字段本来就是在声明「谁能看」：
+     * public 与 partial_invisible 的记录其存在本身就对他人公开，
+     * 只有 only_me 必须对非所有者隐藏。</p>
+     */
     public Result<List<KnowledgeBaseBean>> queryList(String uid, KnowledgeBaseBean data) {
         PageRequest pageRequest = new PageRequest();
         pageRequest.setOrder("iid");
         pageRequest.setDesc("desc");
         List<KnowledgeBaseBean> list = knowledgeBaseBeanMapper.select(pageRequest, data);
+        if (list == null || list.isEmpty()) {
+            return Result.succeed(list, "查询成功");
+        }
+        if (!isAdmin(uid)) {
+            List<KnowledgeBaseBean> visible = new ArrayList<KnowledgeBaseBean>(list.size());
+            for (KnowledgeBaseBean record : list) {
+                boolean own = uid != null && uid.equals(record.getOwnerUid());
+                if (own || !"only_me".equals(record.getPermissionType())) {
+                    visible.add(record);
+                }
+            }
+            list = visible;
+        }
         return Result.succeed(list, "查询成功");
     }
 
@@ -161,6 +191,14 @@ public class KnowledgeBaseBeanHolder {
 
         KnowledgeBaseBean queryBean = new KnowledgeBaseBean();
         List<KnowledgeBaseBean> allRecords = knowledgeBaseBeanMapper.select(null, queryBean);
+
+        /*
+         * joined 场景需要「用户加入过哪些库」，这个结果对整次过滤是固定的。
+         * 修复前它在 stream 的 filter 里调用，每个 kbId 都查一次库——
+         * 传 100 个 kbId 就是 100 次查询。提到循环外只查一次。
+         */
+        Set<String> joinedIds = "joined".equals(context)
+                ? knowledgeBaseMemberHolder.getJoinedKbIds(uid) : Collections.<String>emptySet();
 
         List<String> result = kbIds.stream().filter(kbId -> {
             KnowledgeBaseBean record = allRecords.stream()
@@ -184,7 +222,6 @@ public class KnowledgeBaseBeanHolder {
                             && !"only_me".equals(record.getPermissionType());
                 case "joined":
                     // 用户是成员 且 不是所有者
-                    Set<String> joinedIds = knowledgeBaseMemberHolder.getJoinedKbIds(uid);
                     return joinedIds.contains(kbId)
                             && (record == null || !uid.equals(record.getOwnerUid()));
                 default:
@@ -195,7 +232,17 @@ public class KnowledgeBaseBeanHolder {
         return Result.succeed(result, "查询成功");
     }
 
+    /**
+     * 判断某条知识库记录对指定用户是否可见。
+     *
+     * <p>userBaseDb 为 null（账号被删 / 查不到）时必须按不可见处理。
+     * 修复前 only_me 分支直接 {@code ownerUid.equals(userBaseDb.getUid())}，
+     * square 场景下 userBaseDb 可能为 null，一进这个分支就 NPE 500。</p>
+     */
     private boolean isVisibleToUser(KnowledgeBaseBean record, MyUserBaseDb userBaseDb) {
+        if (userBaseDb == null) {
+            return false;
+        }
         String permissionType = record.getPermissionType();
         String ownerUid = record.getOwnerUid();
 

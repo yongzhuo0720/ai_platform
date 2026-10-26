@@ -51,22 +51,49 @@ public class UnitBeanHolder {
         return Result.succeed(true, "增加成功");
     }
 
+    /**
+     * 生成部门编号 unitsno。
+     *
+     * <p>修复前的三个问题：</p>
+     * <ol>
+     *   <li>{@code parentsno} 为 null 时直接 NPE —— 创建顶级部门很可能不传这个字段；</li>
+     *   <li>{@code sno.substring(sno.length() - 4)} 在长度不足 4 时抛 StringIndexOutOfBounds；</li>
+     *   <li>{@code Long.valueOf(sno)} 遇到非数字内容直接抛 NumberFormatException；</li>
+     *   <li>MAX + 自增没有唯一约束保护，并发创建同级部门会生成重复 unitsno。</li>
+     * </ol>
+     *
+     * <p>这里的兜底策略是「取不到可用最大值就从 1111 重新开始」而不是抛异常——
+     * 部门编号是展示用字段，不应让一个格式问题阻断建部门。
+     * 并发重复的问题需要在 unitsno 上加唯一约束才能真正解决，
+     * 那属于 schema 变更，见 docs 中的说明。</p>
+     */
     private String createUnitSno(String parentsno) {
-        String unit_sno = "";
-        String sno = unitBeanMapper.queryMaxSno(parentsno);
-        DecimalFormat f = new DecimalFormat("0000");
-        if (CheckUtils.isNotEmpty(sno)) {
-            sno = sno.substring(sno.length() - 4);
-            Long sno_long = Long.valueOf(sno) + 1;
-            unit_sno = f.format(sno_long);
+        String parent = parentsno == null ? "" : parentsno.trim();
+        boolean topLevel = parent.isEmpty() || "0".equals(parent);
+
+        String sno = unitBeanMapper.queryMaxSno(parent);
+        String unit_sno;
+        if (CheckUtils.isNotEmpty(sno) && sno.length() >= 4 && isNumeric(sno)) {
+            String tail = sno.substring(sno.length() - 4);
+            long next = Long.parseLong(tail) + 1;
+            unit_sno = new DecimalFormat("0000").format(next);
         } else {
             unit_sno = "1111";
         }
-        if (!parentsno.equals("0")) {
-            //非顶级单位
-            unit_sno = parentsno + unit_sno;
+        if (!topLevel) {
+            unit_sno = parent + unit_sno;
         }
         return unit_sno;
+    }
+
+    /** 纯数字校验：部门编号只允许数字，避免 Long.valueOf 抛异常 */
+    private static boolean isNumeric(String value) {
+        for (int i = 0; i < value.length(); i++) {
+            if (!Character.isDigit(value.charAt(i))) {
+                return false;
+            }
+        }
+        return !value.isEmpty();
     }
 
     /**
@@ -232,16 +259,6 @@ public class UnitBeanHolder {
     /**
      * 查询单个
      */
-
-    public UnitBean matching(String text, UnitBean data) {
-        //translate函数说明，去除字符串A和B，B中包含A的字符会从A剔除，新产生A假设与原A一样，说明B中与A没有交际，反之判断有
-        String where = "(length(remark) - length(translate(remark,'" + text + "',''))) > 3";
-        List<UnitBean> list = unitBeanMapper.select(null, data, where);
-        if (list == null || list.size() == 0) {
-            return null;
-        }
-        return list.get(0);
-    }
 
     /**
      * 功能描述: 根据uid和字段名称,构造sql片段
