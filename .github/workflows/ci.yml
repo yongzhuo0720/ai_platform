@@ -28,5 +28,27 @@ jobs:
         run: npm run build
 
   # 后端暂不进 CI：依赖私有框架 com.heneng.hnsp / blxt.qjava（不在 Maven Central），
-  # 本地离线仓库 hd_redis/ai-maven/pro 也不入库。仓库恢复私服后可补 backend job：
-  # setup-java (temurin 8) + mvn -DskipTests compile。
+  # 本地离线仓库 hd_redis/ai-maven/pro 也不入库。
+  #
+  # 恢复私服访问后，把下面这段取消注释即可接上（其余不用改）：
+  #
+  # backend:
+  #   name: 后端编译 + 单元测试
+  #   runs-on: ubuntu-latest
+  #   steps:
+  #     - uses: actions/checkout@v4
+  #     - uses: actions/setup-java@v4
+  #       with:
+  #         distribution: temurin
+  #         java-version: '8'   # 必须 8：Java 21 与项目 Lombok 版本不兼容
+  #     - name: 编译并运行单元测试
+  #       run: mvn -B test
+  #       working-directory: backend/AIProject
+  #
+  # 注意两点：
+  #   1. settings.xml 里要配置私服地址与凭据（用 GitHub Secrets 注入，不要写进仓库）；
+  #   2. 目前后端单测覆盖率只覆盖鉴权/权限/SSO/网关 usage/本地 RAG，接入 CI 后
+  #      每次改动都会被这层网兜住，补测试的收益会立刻显现。
+  #
+  # 在私服恢复前，本地改完后端请跑 scripts/verify.ps1（一条命令跑完后端测试 +
+  # 前端 typecheck + 前端构建），它是后端质量目前唯一的门禁。

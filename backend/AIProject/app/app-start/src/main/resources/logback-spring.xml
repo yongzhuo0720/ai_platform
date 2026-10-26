@@ -111,7 +111,27 @@
     <logger name="reactor.util" level="WARN"/>
     <logger name="com.alibaba" level="WARN"/>
     <logger name="org.jnativehook" level="OFF"/>
-<!--    <logger name="com.heneng" level="WARN"/>-->
+
+    <!--
+      压掉「每条 SQL 都打 DEBUG」的噪声。
+
+      框架会为每个 @SqlBean 自动生成一个 logger（名字就是 Bean 全类名），
+      在 DEBUG 级别下把 insert/update/select 的完整语句连同**全部参数值**
+      逐条打印。实测一个会话就能产出数十万行、日志文件近 1MB，
+      带来的问题有三个：
+        1. 输出缓冲被撑满时进程会被终止，而终止时又会卡在 logback 的
+           关闭钩子里（ConcurrentModificationException），留下占着 jar
+           却不释放端口的僵尸进程；
+        2. SQL 参数里可能包含用户数据（姓名、手机号、密码哈希），
+           等于把敏感信息写进了日志文件；
+        3. 真正的业务日志被淹没，排查时反而找不到。
+
+      需要看 SQL 时，把下面三行的 level 临时改成 DEBUG，排查完立刻改回。
+    -->
+    <logger name="com.aiproject.ai.service.bean" level="WARN"/>
+    <logger name="com.aiproject.ai.permission.bean" level="WARN"/>
+    <logger name="com.heneng.hnsp.common.controller.bean" level="WARN"/>
+
     <logger name="org.jboss" level="WARN"/>
     <logger name="org.jboss" level="WARN"/>
     <logger name="com.sun" level="WARN"/>
