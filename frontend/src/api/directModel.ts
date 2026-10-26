@@ -12,7 +12,12 @@ import { getModelsGatewayBase, gatewayAuthHeaders } from '@/stores/difyConfig'
 
 export interface DirectChatMessage {
   role: 'system' | 'user' | 'assistant'
-  content: string
+  /**
+   * 文本内容；user 消息携带图片时为 OpenAI 多模态数组格式
+   * [{type:'text',text},{type:'image_url',image_url:{url}}]。
+   * 网关按 JSON 原样透传，多模态能力由上游模型决定。
+   */
+  content: string | Array<{ type: 'text'; text: string } | { type: 'image_url'; image_url: { url: string } }>
 }
 
 /**
@@ -145,6 +150,9 @@ export const streamDirectChat = (
     const decoder = new TextDecoder()
     let buffer = ''
     let eventType = ''
+    // reasoning_content 是增量片段；上层回调按"覆盖式"使用（thinking.value = thought），
+    // 因此这里累积成完整思考文本后再回调
+    let reasoningBuffer = ''
 
     while (true) {
       const { done, value } = await reader.read()
@@ -191,7 +199,8 @@ export const streamDirectChat = (
         }
         const reasoning = delta.reasoning_content ?? delta.reasoning
         if (reasoning) {
-          onThinking?.(reasoning)
+          reasoningBuffer += reasoning
+          onThinking?.(reasoningBuffer)
         }
         if (delta.content) {
           onChunk(delta.content)

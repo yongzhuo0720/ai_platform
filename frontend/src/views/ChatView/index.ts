@@ -1,11 +1,12 @@
-import { computed, ref, nextTick, onMounted, onUnmounted, watch, type ComputedRef } from "vue";
+import { computed, ref, nextTick, onMounted, onUnmounted, watch, type ComputedRef, type Ref } from "vue";
 import { debug } from '@/utils/debug'
 import { ElMessageBox, ElMessage } from "element-plus";
 import { chatApi } from "@/api/chat";
 import { assistantApi } from "@/api/assistant";
 import { modelsConfigApi } from "@/api/modelsConfig";
 import { streamDirectChat } from "@/api/directModel";
-import { kbRagApi } from "@/api/kbRag";
+import { kbRagApi, type KbSearchItemDto } from "@/api/kbRag";
+import { chatConversationApi, type CloudConversation } from "@/api/chatConversation";
 import { uploadFileToDify } from "@/api/request";
 import type {
   Conversation,
@@ -28,6 +29,8 @@ interface UploadedChatFile {
   name: string;
   type: string;
   size: number;
+  /** 直连模式的本地图片（base64 dataURL，不经 Dify 上传） */
+  dataUrl?: string;
 }
 
 export interface MessageItem {
@@ -35,6 +38,8 @@ export interface MessageItem {
   role: MessageRole;
   content: string;
   thinking?: string;
+  /** 服务端 RAG 命中的知识库片段（直连+知识库模式） */
+  kbSources?: KbSearchItemDto[];
   requestQueryContent?: string;
   requestDisplayContent?: string;
   requestFiles?: UploadedChatFile[];
@@ -46,6 +51,8 @@ export interface ChatModel {
   name: string;
   provider: string;
   description?: string;
+  /** 侧栏卡片上的一行简介；没有时从 description 截取首句 */
+  intro?: string;
   builtin?: boolean;
   createdAt?: number;
   userId?: string;
@@ -53,6 +60,13 @@ export interface ChatModel {
   iid?: number;
   /** 直连协议：openai = OpenAI 兼容直连，空 = 仅作为 Dify 应用变量 */
   protocol?: string;
+  /**
+   * 上游真实模型名。
+   *
+   * <p>有值 = 这行配置可以作为对话模型（网关按它转发）；为空 = 只配了向量模型，
+   * 仅供本地 RAG 做 embedding，不能出现在对话模型下拉里。</p>
+   */
+  upstreamModel?: string;
 }
 
 export interface ChatSelectOption {
@@ -82,7 +96,7 @@ export interface UseChatReturn {
   chatInputFields: typeof composerInputFields;
   chatSelectOptionsMap: typeof composerSelectOptionsMap;
   modelOptions: typeof modelOptions;
-  suggestedQuestions: typeof suggestedQuestions;
+  suggestedQuestions: typeof displaySuggestedQuestions;
   postAnswerSuggestions: typeof postAnswerSuggestions;
   lastMessageId: typeof lastMessageId;
   userInput: typeof userInput;
@@ -108,6 +122,24 @@ export interface UseChatReturn {
   toggleHistorySidebar: () => void;
   handleSelectConversation: (conversationId: string) => void;
   handleDeleteHistory: (itemId: string) => Promise<void>;
+  conversationSearch: Ref<string>;
+  togglePinConversation: (conversationId: string) => void;
+  renameConversationById: (conversationId: string, name: string) => Promise<void>;
+  startEditUserMessage: (messageId: string) => void;
+  /** 直连会话列表（分享时读取消息快照） */
+  directConversations: typeof directConversations;
+  /** 助手搜索词（侧栏「助手」Tab） */
+  assistantSearch: Ref<string>;
+  /** 助手分组：内置推荐 / 我的助手（已应用搜索过滤） */
+  assistantGroups: ComputedRef<{ key: string; label: string; items: ChatModel[] }[]>;
+  /** 助手卡片的一行简介 */
+  assistantIntro: (model: ChatModel) => string;
+  /** 会话时间分组：置顶 / 今天 / 近 7 天 / 更早 */
+  topicGroups: ComputedRef<{ key: string; label: string; items: Conversation[] }[]>;
+  /** 会话条目的最近消息摘要（直连会话） */
+  topicPreview: (conversationId: string) => string;
+  /** 会话更新时间的展示格式 */
+  formatTopicTime: (ts: number) => string;
   startNewConversation: () => void;
   /** 已上传的文件列表，包含文件ID、名称、类型和大小 */
   attachedFiles: typeof attachedFiles;
@@ -137,7 +169,7 @@ export interface UseChatReturn {
   formatContent: (content: string) => string;
   /** 渲染用户消息内容（XSS 安全 + 保留换行） */
   formatUserContent: (content: string) => string;
-  /** 侧栏 Tab：助手 / 话题 */
+  /** 侧栏 Tab：助手 / 会话 */
   sideTab: typeof sideTab;
   /** 添加助手弹窗：是否可见 */
   assistantDialogVisible: typeof assistantDialogVisible;
@@ -218,8 +250,6 @@ const writeStorage = (key: string, value: unknown) => {
 
 const defaultModels = ref<ChatModel[]>([]);
 
-const defaultAssistants: ChatModel[] = [];
-
 const toBuiltinAssistants = (models: ChatModel[]): ChatModel[] =>
   models.map((model, index) => ({
     ...model,
@@ -228,7 +258,7 @@ const toBuiltinAssistants = (models: ChatModel[]): ChatModel[] =>
     createdAt: index,
   }));
 
-const builtinAssistants = ref<ChatModel[]>(toBuiltinAssistants(defaultAssistants));
+const builtinAssistants = ref<ChatModel[]>([]);
 const customAssistants = ref<ChatModel[]>([]);
 const hiddenAssistantIds = ref<string[]>(
   readStorage<string[]>(getHiddenAssistantStorageKey(), [])
@@ -248,6 +278,10 @@ const activeModelId = ref(
 interface DirectChatTurn {
   role: "user" | "assistant";
   content: string;
+  /** 模型思考过程（reasoning_content / <think>），完成后保留供回看 */
+  thinking?: string;
+  /** 服务端 RAG 命中的知识库片段，供「引用来源」回看 */
+  kbSources?: KbSearchItemDto[];
 }
 interface DirectConversation {
   id: string;
@@ -256,6 +290,8 @@ interface DirectConversation {
   modelName: string;
   messages: DirectChatTurn[];
   updatedAt: number;
+  /** 置顶的会话排在列表最前（本地持久化） */
+  pinned?: boolean;
 }
 const DIRECT_CONVERSATIONS_KEY = "ai-direct-conversations";
 const DIRECT_MODEL_KEY_PREFIX = "direct-";
@@ -264,6 +300,63 @@ const directConversations = ref<DirectConversation[]>(
 );
 const activeDirectConversationId = ref("");
 const persistDirectConversations = () => writeStorage(DIRECT_CONVERSATIONS_KEY, directConversations.value);
+
+/**
+ * 云端同步（直连会话多端持久化）。
+ *
+ * <p>本地 localStorage 仍是第一写入位（离线可用）；这里在每次本地持久化后
+ * 异步 upsert 云端，登录后拉取合并。网络失败静默——同步是增强能力，
+ * 绝不能阻塞对话本身。</p>
+ */
+let cloudSyncTimer: number | undefined;
+const syncConversationToCloud = (conv: DirectConversation) => {
+  if (cloudSyncTimer) window.clearTimeout(cloudSyncTimer);
+  cloudSyncTimer = window.setTimeout(() => {
+    const payload: CloudConversation = {
+      convId: conv.id,
+      title: conv.name,
+      modelName: conv.modelName,
+      pinned: conv.pinned ?? false,
+      clientUpdatedAt: conv.updatedAt,
+      payload: JSON.stringify(conv),
+    };
+    chatConversationApi.save(payload).catch((e) =>
+      console.warn('[云端会话] 同步失败（不影响本地）:', (e as Error)?.message || e)
+    );
+  }, 800);
+};
+
+/** 登录后从云端拉取并与本地合并：同 id 取 clientUpdatedAt 较新者 */
+const mergeCloudConversations = async () => {
+  try {
+    const { data: res } = await chatConversationApi.list();
+    if (res.resp_code !== 0 || !Array.isArray(res.datas)) return;
+    const localById = new Map(directConversations.value.map((c) => [c.id, c]));
+    let changed = false;
+    for (const row of res.datas) {
+      if (!row?.convId || !row?.payload) continue;
+      const local = localById.get(row.convId);
+      const cloudUpdatedAt = row.clientUpdatedAt ?? 0;
+      if (!local || (local.updatedAt ?? 0) < cloudUpdatedAt) {
+        try {
+          const parsed = JSON.parse(row.payload) as DirectConversation;
+          if (parsed && parsed.id === row.convId && Array.isArray(parsed.messages)) {
+            localById.set(row.convId, parsed);
+            changed = true;
+          }
+        } catch {
+          // 云端快照损坏：跳过该条，本地为准
+        }
+      }
+    }
+    if (changed) {
+      directConversations.value = [...localById.values()];
+      persistDirectConversations();
+    }
+  } catch (e) {
+    console.warn('[云端会话] 拉取失败:', (e as Error)?.message || e);
+  }
+};
 
 // ============== 直连模式的知识库增强（服务端 RAG） ==============
 /** 当前选中的知识库名；空串 = 不引用知识库 */
@@ -295,8 +388,21 @@ const loadDirectKbOptions = async () => {
     directKbOptions.value = [];
   }
 };
+/**
+ * 可作为「对话模型」出现在下拉里的直连配置。
+ *
+ * <p>必须同时有 {@code upstreamModel}：只配了向量模型（embedModel）的配置行
+ * 是给本地 RAG 做 embedding 用的，不属于对话模型。</p>
+ *
+ * <p>为什么需要这个判断：DeepSeek 没有 embeddings 接口，RAG 必须用第二家
+ * 服务商做向量化，于是会出现「纯向量」的配置行。若不过滤，它会出现在对话
+ * 模型下拉里，用户选中后网关拿不到 upstreamModel，直接调用失败。</p>
+ */
+const isChatCapableDirectModel = (m: ChatModel) =>
+  m.protocol === "openai" && m.iid != null && !!m.upstreamModel?.trim();
+
 const directModels = computed<ChatModel[]>(() =>
-  defaultModels.value.filter((m) => m.protocol === "openai" && m.iid != null)
+  defaultModels.value.filter(isChatCapableDirectModel)
 );
 const directModelKey = (model: ChatModel) => `${DIRECT_MODEL_KEY_PREFIX}${model.iid}`;
 const isDirectModelValue = (value: string) =>
@@ -330,9 +436,10 @@ const assistantDialogVisible = ref(false);
 const assistantForm = ref<AssistantForm>({ name: "", description: "" });
 const assistantEditingId = ref<string | null>(null);
 const isAssistantEditing = computed(() => assistantEditingId.value !== null);
-const assistantTemplates: { name: string; description: string }[] = [
+const assistantTemplates: { name: string; description: string; intro: string }[] = [
   {
     name: "商业数据分析",
+    intro: "指标拆解、图表解读，先给结论再给行动建议",
     description:
       "你是一名资深的商业数据分析师，专长于业务指标解读与图表分析。\n" +
       "当用户提出问题时，请遵循以下流程：\n" +
@@ -345,6 +452,7 @@ const assistantTemplates: { name: string; description: string }[] = [
   },
   {
     name: "公文写作助手",
+    intro: "通知、请示、报告、纪要，六要素完整的正式文体",
     description:
       "你是一名公文写作助理，熟悉通知、请示、报告、纪要等常用文体的写作规范。\n" +
       "工作要求：\n" +
@@ -357,6 +465,7 @@ const assistantTemplates: { name: string; description: string }[] = [
   },
   {
     name: "翻译助理",
+    intro: "中英日互译，术语对照、两种译法对比",
     description:
       "你是一名精通中英日多语种互译的翻译助理，熟悉法律、商务、技术等领域的专业表达。\n" +
       "工作要求：\n" +
@@ -369,6 +478,7 @@ const assistantTemplates: { name: string; description: string }[] = [
   },
   {
     name: "学习计划",
+    intro: "拆解目标到周/天，带检验节点与补强建议",
     description:
       "你是一名善于拆解目标、制定学习节奏的私人学习教练。\n" +
       "工作要求：\n" +
@@ -380,6 +490,20 @@ const assistantTemplates: { name: string; description: string }[] = [
       "输出语言：中文，鼓励式表达，避免制造焦虑。",
   },
 ];
+/**
+ * 内置推荐助手：由上方模板生成，侧栏「内置推荐」分组直接可选。
+ * id 用稳定前缀（不落在直连模型 direct- 命名空间内），createdAt 用负数排在自定义助手之前。
+ */
+const buildDefaultAssistants = (): ChatModel[] =>
+  assistantTemplates.map((t, i) => ({
+    id: `builtin-${i}-${t.name}`,
+    name: t.name,
+    provider: "内置",
+    description: t.description,
+    intro: t.intro,
+  }));
+// 模块加载即填充内置推荐助手（loadAppParameters 里的重置只是兜底刷新）
+builtinAssistants.value = toBuiltinAssistants(buildDefaultAssistants());
 const canConfirmAssistant = computed(
   () => assistantForm.value.name.trim().length > 0
 );
@@ -568,6 +692,24 @@ const parametersLoading = ref(false);
 const appParameters = ref<AppParametersResponse | null>(null);
 const baseInputFields = ref<NormalizedUserInputField[]>([]);
 const suggestedQuestions = ref<string[]>([]);
+/**
+ * 直连模式的空状态建议问题。
+ *
+ * <p>Dify 模式的建议来自应用参数（suggested_questions）；直连模型没有这套
+ * 参数，空状态会只剩一行问候语。这里补一组通用开场问题，点击即发送，
+ * 让空状态有可点的引导。</p>
+ */
+const DIRECT_MODEL_SUGGESTIONS = [
+  "用一句话介绍你自己",
+  "帮我把一段中文总结成三条要点",
+  "解释一下什么是 HTTP 302 重定向",
+  "帮我写一封请假邮件",
+];
+/** 空状态最终展示的建议问题：Dify 用应用参数，直连用通用开场 */
+const displaySuggestedQuestions = computed(() => {
+  if (suggestedQuestions.value.length > 0) return suggestedQuestions.value;
+  return isDirectMode.value ? DIRECT_MODEL_SUGGESTIONS : [];
+});
 /** 消息回答完成后推荐的后续问题 */
 const postAnswerSuggestions = ref<string[]>([]);
 /** 当前消息的 message_id，用于调用推荐消息接口 */
@@ -804,9 +946,9 @@ const getFileInputTargets = (existingInputs: Record<string, unknown>): string[] 
 };
 
 const allowFileUpload = computed(() => {
-  // 直连模型走 OpenAI 协议，暂未实现文件/图片消息内容
+  // 直连模式：OpenAI 兼容协议支持 image_url 多模态，放开图片（仅图片）
   if (isDirectMode.value) {
-    return false;
+    return true;
   }
   const fileUpload = appParameters.value?.file_upload;
   if (!fileUpload) {
@@ -925,13 +1067,36 @@ export function useChat(): UseChatReturn {
    * 过滤会话，排除知识库中心创建的会话
    * 由于 Dify 不存储未定义的 inputs 字段，改用 localStorage 追踪
    * 旧会话（无记录）默认归属问答交互引擎
+   *
+   * 另外叠加侧栏搜索关键词与置顶排序：置顶优先，其余按更新时间
    */
+  const conversationSearch = ref("");
+  /** Dify 会话的置顶标记没有专用接口，按用户存本地（直连会话存在 DirectConversation.pinned） */
+  const DIFY_PINNED_KEY = (uid: string) => `chat-pinned-conversations-${uid}`;
+  const readDifyPinned = (): Set<string> =>
+    new Set(readStorage<string[]>(DIFY_PINNED_KEY(currentUserId.value), []));
+  const writeDifyPinned = (ids: Set<string>) =>
+    writeStorage(DIFY_PINNED_KEY(currentUserId.value), [...ids]);
+
   const filteredConversations = computed<Conversation[]>(() => {
+    const keyword = conversationSearch.value.trim().toLowerCase();
+    const matchKeyword = (name: string) =>
+      !keyword || name.toLowerCase().includes(keyword);
+    const sortByPinned = (a: Conversation, b: Conversation) => {
+      if (!!a.pinned !== !!b.pinned) return a.pinned ? -1 : 1;
+      return b.updated_at - a.updated_at;
+    };
+
     // 直连模式：会话保存在本地，按当前直连模型过滤
     if (isDirectMode.value) {
       const modelIid = activeDirectModel.value?.iid != null ? String(activeDirectModel.value.iid) : "";
       return directConversations.value
         .filter((c) => c.modelIid === modelIid)
+        .filter((c) => matchKeyword(c.name))
+        .sort((a, b) => {
+          if (!!a.pinned !== !!b.pinned) return a.pinned ? -1 : 1;
+          return b.updatedAt - a.updatedAt;
+        })
         .map((c) => ({
           id: c.id,
           name: c.name,
@@ -940,13 +1105,170 @@ export function useChat(): UseChatReturn {
           introduction: "",
           created_at: Math.floor(c.updatedAt / 1000),
           updated_at: Math.floor(c.updatedAt / 1000),
+          pinned: c.pinned,
         }));
     }
-    return conversations.value.filter((c: any) => {
-      if (isKbConversation(c.id)) return false;
-      return true;
-    });
+    const pinnedIds = readDifyPinned();
+    return conversations.value
+      .filter((c: any) => {
+        if (isKbConversation(c.id)) return false;
+        return matchKeyword(c.name || "");
+      })
+      .map((c: any) => ({ ...c, pinned: pinnedIds.has(c.id) }))
+      .sort(sortByPinned);
   });
+
+  // ============== 侧栏「助手」分组与简介 ==============
+
+  /** 助手搜索（名称或提示词关键词） */
+  const assistantSearch = ref("");
+
+  /** 助手卡片的一行简介：内置用定制 intro，自定义从提示词截取首句 */
+  const assistantIntro = (model: ChatModel): string => {
+    if (model.intro?.trim()) return model.intro.trim();
+    const desc = (model.description || "").replace(/\s+/g, " ").trim();
+    if (!desc) return "";
+    const first = desc.split(/[。；;!！?？\n]/)[0];
+    return first.length > 42 ? `${first.slice(0, 42)}…` : first || "自定义提示词助手";
+  };
+
+  /** 助手两个分组：内置推荐 + 我的助手，各自应用搜索过滤 */
+  const assistantGroups = computed(() => {
+    const kw = assistantSearch.value.trim().toLowerCase();
+    const match = (m: ChatModel) =>
+      !kw ||
+      m.name.toLowerCase().includes(kw) ||
+      (m.description || "").toLowerCase().includes(kw);
+    return [
+      { key: "builtin", label: "内置推荐", items: builtinAssistants.value.filter(match) },
+      { key: "custom", label: "我的助手", items: customAssistants.value.filter(match) },
+    ].filter((g) => g.items.length > 0);
+  });
+
+  // ============== 侧栏「会话」时间分组与摘要 ==============
+
+  /** 会话按 置顶 / 今天 / 近 7 天 / 更早 分组（输入已在 filteredConversations 过滤） */
+  const topicGroups = computed(() => {
+    // updated_at 是 Unix 秒（Dify 惯例，直连映射时同样除以 1000），比较前统一转毫秒
+    const now = new Date();
+    const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+    const dayMs = 86_400_000;
+    const pinned: Conversation[] = [];
+    const today: Conversation[] = [];
+    const week: Conversation[] = [];
+    const earlier: Conversation[] = [];
+    for (const c of filteredConversations.value) {
+      const tsMs = c.updated_at * 1000;
+      if (c.pinned) {
+        pinned.push(c);
+      } else if (tsMs >= startOfToday) {
+        today.push(c);
+      } else if (tsMs >= startOfToday - 6 * dayMs) {
+        week.push(c);
+      } else {
+        earlier.push(c);
+      }
+    }
+    return [
+      { key: "pinned", label: "置顶", items: pinned },
+      { key: "today", label: "今天", items: today },
+      { key: "week", label: "近 7 天", items: week },
+      { key: "earlier", label: "更早", items: earlier },
+    ].filter((g) => g.items.length > 0);
+  });
+
+  /** 会话摘要：直连会话取最后一条消息，其余（Dify 会话本地无消息体）返回空 */
+  const topicPreview = (conversationId: string): string => {
+    const conv = directConversations.value.find((c) => c.id === conversationId);
+    if (!conv || conv.messages.length === 0) return "";
+    const last = conv.messages[conv.messages.length - 1];
+    const text = (last.content || "").replace(/\s+/g, " ").trim();
+    return text.length > 40 ? `${text.slice(0, 40)}…` : text;
+  };
+
+  /** 会话时间：一小时内相对时间，更早显示日期。入参是 Unix 秒 */
+  const formatTopicTime = (ts: number): string => {
+    if (!ts) return "";
+    const tsMs = ts * 1000;
+    const diff = Date.now() - tsMs;
+    if (diff < 60_000) return "刚刚";
+    if (diff < 3_600_000) return `${Math.floor(diff / 60_000)} 分钟前`;
+    if (diff < 86_400_000) return `${Math.floor(diff / 3_600_000)} 小时前`;
+    const d = new Date(tsMs);
+    const now = new Date();
+    if (d.getFullYear() === now.getFullYear()) return `${d.getMonth() + 1}-${d.getDate()}`;
+    return `${d.getFullYear()}-${d.getMonth() + 1}-${d.getDate()}`;
+  };
+
+  /** 置顶 / 取消置顶会话（直连改本地会话字段，Dify 存本地 id 列表） */
+  const togglePinConversation = (conversationId: string) => {
+    if (isDirectMode.value) {
+      const target = directConversations.value.find((c) => c.id === conversationId);
+      if (!target) return;
+      target.pinned = !target.pinned;
+      persistDirectConversations();
+      return;
+    }
+    const pinnedIds = readDifyPinned();
+    if (pinnedIds.has(conversationId)) {
+      pinnedIds.delete(conversationId);
+    } else {
+      pinnedIds.add(conversationId);
+    }
+    writeDifyPinned(pinnedIds);
+  };
+
+  /** 重命名会话：直连改本地；Dify 走 renameConversation 接口 */
+  const renameConversationById = async (conversationId: string, rawName: string) => {
+    const name = rawName.trim();
+    if (!name) return;
+    if (isDirectMode.value) {
+      const target = directConversations.value.find((c) => c.id === conversationId);
+      if (!target) return;
+      target.name = name;
+      persistDirectConversations();
+      return;
+    }
+    try {
+      await chatApi.renameConversation(conversationId, {
+        name,
+        auto_generate: false,
+        user: getCurrentUser(),
+      });
+      const target = conversations.value.find((c: any) => c.id === conversationId);
+      if (target) target.name = name;
+    } catch (error) {
+      console.error("重命名会话失败:", error);
+      ElMessage.error("重命名失败，请重试");
+    }
+  };
+
+  /**
+   * 编辑用户消息：把内容填回输入框。
+   * 直连会话无状态，直接截断该消息之后的历史，重发即覆盖；
+   * Dify 会话有状态（服务端保留历史），只回填输入框、由用户重新发送。
+   */
+  const startEditUserMessage = (messageId: string) => {
+    const index = messages.value.findIndex((m) => m.id === messageId);
+    if (index < 0) return;
+    const message = messages.value[index];
+    if (message.role !== "user") return;
+    inputValue.value = message.content;
+    if (isDirectMode.value && activeDirectConversationId.value) {
+      const conversation = directConversations.value.find(
+        (c) => c.id === activeDirectConversationId.value
+      );
+      // 本地镜像与服务端无关，直接截断：该消息之前的保留，其本身及之后丢弃
+      const keepCount = messages.value.slice(0, index).filter((m) => m.role === "user" || m.role === "assistant").length;
+      if (conversation) {
+        conversation.messages = conversation.messages.slice(0, keepCount);
+        conversation.updatedAt = Date.now();
+        persistDirectConversations();
+      }
+      messages.value = messages.value.slice(0, index);
+    }
+    closeAssistantMenu();
+  };
 
   const handleQuickAction = (title: string) => {
     inputValue.value = `请帮我${title}`;
@@ -968,20 +1290,22 @@ export function useChat(): UseChatReturn {
       });
       if (res.resp_code === 0 && res.datas?.length > 0) {
         defaultModels.value = res.datas.map(
-          (item: { id: string; name: string; provider: string; iid?: number; protocol?: string }) => ({
+          (item: { id: string; name: string; provider: string; iid?: number; protocol?: string; upstreamModel?: string }) => ({
             id: item.id,
             name: item.name,
             provider: item.provider,
             iid: item.iid,
             protocol: item.protocol,
+            // 直连模型判断依赖 upstreamModel：丢了它，所有 OpenAI 兼容配置都会被过滤出对话下拉
+            upstreamModel: item.upstreamModel,
           })
         );
       }
-      builtinAssistants.value = toBuiltinAssistants(defaultAssistants);
+      builtinAssistants.value = toBuiltinAssistants(buildDefaultAssistants());
     } catch (error) {
       console.warn("加载模型列表失败:", error);
       defaultModels.value = [];
-      builtinAssistants.value = toBuiltinAssistants(defaultAssistants);
+      builtinAssistants.value = toBuiltinAssistants(buildDefaultAssistants());
     } finally {
       await initCustomAssistants();
       syncModelBoundInput(activeModelId.value);
@@ -1260,7 +1584,7 @@ export function useChat(): UseChatReturn {
           thinking.value = "";
           const msg = messages.value.find((m) => m.id === assistantMessageId);
           if (msg) {
-            delete msg.thinking;
+            // 思考过程保留在消息上，折叠面板可回看；仅重新生成时才清空
             // 兜底：流结束后内容仍为空（模型未返回有效内容），给出提示而非空白
             if (!msg.content || !msg.content.trim()) {
               msg.content = "模型未返回有效内容，请重试或尝试切换其他模型。";
@@ -1277,7 +1601,7 @@ export function useChat(): UseChatReturn {
                   user: getCurrentUser(),
                 });
               } catch (error) {
-                console.warn("重命名话题失败:", error);
+                console.warn("重命名会话失败:", error);
               }
             }
             await loadConversations();
@@ -1319,7 +1643,6 @@ export function useChat(): UseChatReturn {
           const msg = messages.value.find((m) => m.id === assistantMessageId);
           if (msg) {
             msg.content = parsed.message;
-            delete msg.thinking;
           }
           loading.value = false;
           currentStopFn = null;
@@ -1405,6 +1728,7 @@ export function useChat(): UseChatReturn {
         });
         directConversations.value = directConversations.value.filter((c) => c.id !== itemId);
         persistDirectConversations();
+        chatConversationApi.delete(itemId).catch(() => undefined);
         if (activeDirectConversationId.value === itemId) {
           activeDirectConversationId.value = "";
           messages.value = [];
@@ -1464,19 +1788,28 @@ export function useChat(): UseChatReturn {
     directConversations.value = [conversation, ...directConversations.value];
     activeDirectConversationId.value = conversation.id;
     persistDirectConversations();
+    syncConversationToCloud(conversation);
     return conversation;
   };
 
   const persistPartialDirectReply = (
     conversation: DirectConversation,
-    content: string
+    content: string,
+    thinking?: string,
+    kbSources?: KbSearchItemDto[]
   ) => {
     if (!content.trim()) {
       return;
     }
-    conversation.messages.push({ role: "assistant", content });
+    conversation.messages.push({
+      role: "assistant",
+      content,
+      thinking: thinking?.trim() ? thinking : undefined,
+      kbSources: kbSources?.length ? kbSources : undefined,
+    });
     conversation.updatedAt = Date.now();
     persistDirectConversations();
+    syncConversationToCloud(conversation);
   };
 
   /** 发起直连流式请求并把分片写进消息列表与本地会话 */
@@ -1484,7 +1817,8 @@ export function useChat(): UseChatReturn {
     conversation: DirectConversation,
     assistantMessageId: string,
     userMessageId: string,
-    queryContent: string
+    queryContent: string,
+    images: { url: string; name: string }[] = []
   ) => {
     const model = activeDirectModel.value;
     if (!model || model.iid == null) {
@@ -1519,10 +1853,60 @@ export function useChat(): UseChatReturn {
      * OpenAI 协议无状态：把历史轮次一并带给网关才能多轮对话。
      * 只取最近 40 条，防止上下文超长。
      */
-    const context = conversation.messages.slice(-40).map((turn) => ({
+    const context: {
+      role: "system" | "user" | "assistant";
+      content: string | Array<{ type: "text"; text: string } | { type: "image_url"; image_url: { url: string } }>;
+    }[] = conversation.messages.slice(-40).map((turn) => ({
       role: turn.role,
       content: turn.content,
     }));
+    // 携带图片时：最后一条 user 消息升级为 OpenAI 多模态数组（text + image_url）
+    if (images.length > 0) {
+      const lastUser = [...context].reverse().find((m) => m.role === "user");
+      if (lastUser && typeof lastUser.content === "string") {
+        lastUser.content = [
+          { type: "text", text: lastUser.content },
+          ...images.map((im) => ({ type: "image_url" as const, image_url: { url: im.url } })),
+        ];
+      }
+    }
+
+    // 自定义/内置助手的提示词注入为 system 首消息——
+    // 直连模型此前完全不感知助手角色，提示词只在 Dify 模式生效。
+    // 助手的 prompt 在加载时存进 description 字段
+    const assistantPrompt = activeAssistant.value?.description?.trim();
+    if (assistantPrompt) {
+      context.unshift({ role: "system", content: assistantPrompt });
+    }
+
+    // 并行拉取检索命中片段（与网关注入同源的检索接口），
+    // 回答完成后展示「引用来源」。失败静默——不影响主对话流
+    if (directKbName.value) {
+      kbRagApi
+        .search({ query: queryContent, kbName: directKbName.value })
+        .then(({ data: res }) => {
+          if (requestToken !== currentRequestToken) {
+            return;
+          }
+          const items: KbSearchItemDto[] = res?.datas?.items ?? [];
+          if (!items.length) return;
+          const msg = messages.value.find((m) => m.id === assistantMessageId);
+          if (msg) {
+            msg.kbSources = items;
+          }
+          // 流已结束时（turn 已落盘）补写最后一条 assistant 轮次并持久化
+          if (!loading.value && conversation.messages.length) {
+            const last = conversation.messages[conversation.messages.length - 1];
+            if (last.role === "assistant") {
+              last.kbSources = items;
+              persistDirectConversations();
+            }
+          }
+        })
+        .catch((error) => {
+          console.warn("[RAG 来源] 检索片段获取失败（不影响对话）:", error);
+        });
+    }
 
     currentStopFn = streamDirectChat(String(model.iid), context, {
       onChunk: (text) => {
@@ -1554,16 +1938,22 @@ export function useChat(): UseChatReturn {
         thinking.value = "";
         const msg = messages.value.find((m) => m.id === assistantMessageId);
         if (msg) {
-          delete msg.thinking;
+          // 思考过程保留在消息上，折叠面板可回看；仅重新生成时才清空
           if (!msg.content || !msg.content.trim()) {
             msg.content = "模型未返回有效内容，请重试或尝试切换其他模型。";
           }
         }
         if (assistantContent.trim()) {
-          conversation.messages.push({ role: "assistant", content: assistantContent });
+          conversation.messages.push({
+            role: "assistant",
+            content: assistantContent,
+            thinking: msg?.thinking || undefined,
+            kbSources: msg?.kbSources,
+          });
         }
         conversation.updatedAt = Date.now();
         persistDirectConversations();
+        syncConversationToCloud(conversation);
         currentStopFn = null;
       },
       onError: (error) => {
@@ -1575,10 +1965,9 @@ export function useChat(): UseChatReturn {
         const msg = messages.value.find((m) => m.id === assistantMessageId);
         if (msg) {
           msg.content = error.message || "直连模型调用失败，请稍后重试";
-          delete msg.thinking;
         }
         // 已生成的部分内容保留到本地会话，切换/刷新后不丢
-        persistPartialDirectReply(conversation, assistantContent);
+        persistPartialDirectReply(conversation, assistantContent, msg?.thinking, msg?.kbSources);
         loading.value = false;
         currentStopFn = null;
       },
@@ -1600,8 +1989,14 @@ export function useChat(): UseChatReturn {
       requestQueryContent: queryContent,
       requestDisplayContent: queryContent,
     });
+    // 直连图片：取本地 dataUrl 附件随本次请求发送（多模态数组仅在请求体中构造，
+    // 本地历史存纯文本——旧图在后续轮次没有再利用的价值，还占存储）
+    const images = attachedFiles.value
+      .filter((f) => f.dataUrl)
+      .map((f) => ({ url: f.dataUrl as string, name: f.name }));
     conversation.messages.push({ role: "user", content: queryContent });
-    runDirectStream(conversation, `assistant-${Date.now()}`, userMessageId, queryContent);
+    attachedFiles.value = attachedFiles.value.filter((f) => !f.dataUrl);
+    runDirectStream(conversation, `assistant-${Date.now()}`, userMessageId, queryContent, images);
   };
 
   const loadDirectConversation = (conversationId: string) => {
@@ -1617,7 +2012,10 @@ export function useChat(): UseChatReturn {
       content: turn.content,
       ...(turn.role === "user"
         ? { requestQueryContent: turn.content, requestDisplayContent: turn.content }
-        : {}),
+        : {
+            ...(turn.thinking ? { thinking: turn.thinking } : {}),
+            ...(turn.kbSources?.length ? { kbSources: turn.kbSources } : {}),
+          }),
     }));
   };
 
@@ -1713,12 +2111,12 @@ export function useChat(): UseChatReturn {
     try {
       const res = await assistantApi.create(payload);
       if (!isSuccessResponse(res)) {
-        ElMessage.error(getResponseMessage(res, "创建助手失败"));
+        ElMessage.error(getResponseMessage(res, "新建助手失败"));
         return;
       }
     } catch (error) {
-      console.warn("创建助手失败:", error);
-      ElMessage.error("创建助手失败，请稍后重试");
+      console.warn("新建助手失败:", error);
+      ElMessage.error("新建助手失败，请稍后重试");
       return;
     }
 
@@ -1931,9 +2329,61 @@ export function useChat(): UseChatReturn {
    * @param file - 用户选择的文件
    * @description 与拖拽上传逻辑一致，上传到 Dify 并加入 attachedFiles
    */
+/**
+ * 图片压缩为 dataURL：Canvas 缩到最长边 1280 / JPEG 82%。
+ * 网关请求体上限 2MB，原图直接 base64 很容易超；压缩后单图约 200-400KB。
+ */
+  const compressImageToDataUrl = (file: File, maxSide = 1280): Promise<string> =>
+    new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onerror = () => reject(new Error("读取文件失败"));
+      reader.onload = () => {
+        const img = new Image();
+        img.onerror = () => reject(new Error("解析图片失败"));
+        img.onload = () => {
+          const scale = Math.min(1, maxSide / Math.max(img.width, img.height));
+          const canvas = document.createElement("canvas");
+          canvas.width = Math.round(img.width * scale);
+          canvas.height = Math.round(img.height * scale);
+          const ctx = canvas.getContext("2d");
+          if (!ctx) { reject(new Error("画布不可用")); return; }
+          ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+          resolve(canvas.toDataURL("image/jpeg", 0.82));
+        };
+        img.src = String(reader.result);
+      };
+      reader.readAsDataURL(file);
+    });
   const handleFileSelected = async (file: File) => {
     if (!allowFileUpload.value) {
       ElMessage.warning("当前对话未开启文件上传");
+      return;
+    }
+
+    if (isDirectMode.value) {
+      // 直连模式：图片本地压缩成 dataURL 随消息体走网关（不走 Dify 上传）
+      if (!file.type.startsWith("image/")) {
+        ElMessage.warning("直连模型当前仅支持图片附件");
+        return;
+      }
+      if (attachedFiles.value.length >= 2) {
+        ElMessage.warning("直连模式最多携带 2 张图片");
+        return;
+      }
+      try {
+        const dataUrl = await compressImageToDataUrl(file);
+        attachedFiles.value.push({
+          id: `local-${Date.now()}`,
+          name: file.name,
+          type: file.type,
+          size: file.size,
+          dataUrl,
+        });
+        ElMessage.success(`已附加图片 ${file.name}`);
+      } catch (error) {
+        console.error("读取图片失败:", error);
+        ElMessage.error("读取图片失败，请重试");
+      }
       return;
     }
 
@@ -2067,6 +2517,7 @@ export function useChat(): UseChatReturn {
     loadAppParameters();
     loadConversations();
     loadDirectKbOptions();
+    mergeCloudConversations();
     if (typeof document !== "undefined") {
       document.addEventListener("click", closeAssistantMenu);
     }
@@ -2165,7 +2616,7 @@ export function useChat(): UseChatReturn {
     chatInputFields: composerInputFields,
     chatSelectOptionsMap: composerSelectOptionsMap,
     modelOptions,
-    suggestedQuestions,
+    suggestedQuestions: displaySuggestedQuestions,
     postAnswerSuggestions,
     lastMessageId,
     userInput,
@@ -2187,6 +2638,17 @@ export function useChat(): UseChatReturn {
     toggleHistorySidebar,
     handleSelectConversation,
     handleDeleteHistory,
+    conversationSearch,
+    togglePinConversation,
+    renameConversationById,
+    startEditUserMessage,
+    directConversations,
+    assistantSearch,
+    assistantGroups,
+    assistantIntro,
+    topicGroups,
+    topicPreview,
+    formatTopicTime,
     startNewConversation,
     attachedFiles,
     isDragging,

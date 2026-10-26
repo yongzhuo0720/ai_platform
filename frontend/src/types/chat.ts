@@ -65,6 +65,8 @@ export interface Conversation {
   introduction: string;
   created_at: number;
   updated_at: number;
+  /** 是否置顶（直连会话存本地，Dify 会话按用户存本地） */
+  pinned?: boolean;
 }
 
 export interface ConversationListResponse {
