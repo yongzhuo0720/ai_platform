@@ -65,6 +65,11 @@ public class RagEvaluator {
      *
      * <p>分母用 {@code min(k, retrieved.size())} 而不是固定 k：
      * 只检索出 2 条时，不该因为"没凑满 5 条"而被判低分。</p>
+     *
+     * <p>同一相关结果出现多次只计一次。文档级评估下 top-k 里会出现同一文档的
+     * 多个分块，不去重的话 Precision 会被虚高——
+     * 这是第一次真实跑分（NDCG 冒出 1.39）暴露的问题，单测的合成用例
+     * 全是唯一 ID，覆盖不到。</p>
      */
     public static double precisionAtK(List<Long> retrieved, Set<Long> relevant, int k) {
         if (retrieved == null || retrieved.isEmpty() || k <= 0) {
@@ -75,8 +80,10 @@ public class RagEvaluator {
         }
         int limit = Math.min(k, retrieved.size());
         int hit = 0;
+        Set<Long> counted = new HashSet<Long>();
         for (int i = 0; i < limit; i++) {
-            if (relevant.contains(retrieved.get(i))) {
+            Long id = retrieved.get(i);
+            if (relevant.contains(id) && counted.add(id)) {
                 hit++;
             }
         }
@@ -110,6 +117,10 @@ public class RagEvaluator {
      *
      * <p>这里用二值相关度（相关=1，不相关=0），因为知识库检索场景下
      * "部分相关"很难客观标注，强行分等级反而引入噪声。</p>
+     *
+     * <p>同一相关结果出现多次只计一次（取最靠前的位置）：文档级评估下
+     * top-k 会混着同一文档的多个分块，重复累加会让 DCG 超过 IDCG，
+     * NDCG 冒出大于 1 的值——真实跑分暴露的问题。</p>
      */
     public static double ndcgAtK(List<Long> retrieved, Set<Long> relevant, int k) {
         if (retrieved == null || relevant == null || relevant.isEmpty() || k <= 0) {
@@ -117,8 +128,10 @@ public class RagEvaluator {
         }
         int limit = Math.min(k, retrieved.size());
         double dcg = 0.0;
+        Set<Long> counted = new HashSet<Long>();
         for (int i = 0; i < limit; i++) {
-            if (relevant.contains(retrieved.get(i))) {
+            Long id = retrieved.get(i);
+            if (relevant.contains(id) && counted.add(id)) {
                 // 标准 NDCG 折损：位置越靠后增益越低
                 dcg += 1.0 / (Math.log(i + 2) / Math.log(2));
             }
