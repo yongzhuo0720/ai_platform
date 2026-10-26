@@ -48,6 +48,9 @@ public class ChatShareHolder {
      *
      * <p>这是全站少数免登录接口之一：分享链接要发给未注册的访客。
      * 只读、只按随机 token 匹配，不暴露 uid 之外的用户信息。</p>
+     *
+     * <p>作者 uid 对访客没有意义，返回前抹掉——免登录接口的原则是
+     * 能不给的字段一律不给。</p>
      */
     public Result<ChatShareBean> getByToken(String token) {
         if (token == null || token.trim().isEmpty()) {
@@ -59,7 +62,9 @@ public class ChatShareHolder {
         if (rows == null || rows.isEmpty()) {
             return Result.failed(null, "分享不存在或已失效");
         }
-        return Result.succeed(rows.get(0));
+        ChatShareBean row = rows.get(0);
+        row.setUserId(null);
+        return Result.succeed(row);
     }
 
     public Result<Boolean> delete(String uid, String token) {

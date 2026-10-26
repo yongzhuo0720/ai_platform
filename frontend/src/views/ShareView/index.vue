@@ -33,7 +33,7 @@
 import { onMounted, reactive } from 'vue'
 import { useRoute } from 'vue-router'
 import { chatShareApi } from '@/api/chatShare'
-import { renderMarkdown, preserveNewlines } from '@/utils/markdown'
+import { renderMarkdown, renderUserContent } from '@/utils/markdown'
 
 const route = useRoute()
 
@@ -47,7 +47,10 @@ const state = reactive({
 })
 
 const formatContent = (text: string) => renderMarkdown(text || '')
-const formatUser = (text: string) => preserveNewlines(text || '')
+// 用户消息必须走转义版本：payload 是任意登录用户提交的快照，
+// 分享页又免登录打开，直接 v-html 未转义文本就是 XSS 注入点
+// （此前误用 preserveNewlines——只透传不转义，主聊天页用的是 renderUserContent）
+const formatUser = (text: string) => renderUserContent(text || '')
 
 onMounted(async () => {
   const token = String(route.params.token || '')
