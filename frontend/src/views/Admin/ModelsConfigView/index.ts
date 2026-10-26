@@ -21,7 +21,7 @@ export function useIndex() {
       desc: 'desc',
     },
     params: {
-      title: '新增模型配置',
+      title: '新建模型配置',
       dialogVisible: false,
       type: 'add' as 'add' | 'edit',
       form: null as any,
@@ -73,7 +73,7 @@ export function useIndex() {
   const showAdd = () => {
     ruleFormRef.value?.resetFields()
     state.params = {
-      title: '新增模型配置',
+      title: '新建模型配置',
       dialogVisible: true,
       type: 'add',
       form: {
@@ -123,8 +123,13 @@ export function useIndex() {
         // 编辑时密钥留空 = 沿用已配置的密钥，由后端合并
         const form = state.params.form
         if (form.protocol === 'openai') {
-          if (!form.baseUrl?.trim() || !form.upstreamModel?.trim()) {
-            ElMessage.warning('启用直连时必须填写服务地址与上游模型名')
+          // 允许「纯向量」配置行：对话用 A 家、向量用 B 家时（DeepSeek 没有
+          // embeddings 接口，这是必需组合），B 家那行没有上游对话模型，
+          // 只填服务地址 + 密钥 + 向量模型即可。
+          const hasChatModel = !!form.upstreamModel?.trim()
+          const hasEmbedModel = !!form.embedModel?.trim()
+          if (!form.baseUrl?.trim() || (!hasChatModel && !hasEmbedModel)) {
+            ElMessage.warning('启用直连时必须填写服务地址，以及上游模型名或向量模型名（至少一个）')
             return
           }
           if (state.params.type === 'add' && !form.apiKey?.trim()) {
@@ -145,7 +150,7 @@ export function useIndex() {
             if (res.resp_code == 0) {
               state.params.dialogVisible = false
               getDataList()
-              ElMessage.success('新增成功')
+              ElMessage.success('新建成功')
             }
           } else {
             const reqdata = {

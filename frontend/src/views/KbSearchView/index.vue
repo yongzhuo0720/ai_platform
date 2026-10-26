@@ -97,7 +97,7 @@
     >
       <el-form label-width="90px">
         <el-form-item label="选择文件">
-          <input type="file" accept=".txt,.md,.markdown,text/plain" @change="handleFileChange" />
+          <input type="file" accept=".txt,.md,.markdown,.pdf,.docx,text/plain" @change="handleFileChange" />
         </el-form-item>
         <el-form-item label="文档名称">
           <el-input v-model="state.uploadForm.name" placeholder="如：部署手册" maxlength="100" />
