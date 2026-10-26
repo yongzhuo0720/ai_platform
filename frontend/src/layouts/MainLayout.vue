@@ -10,6 +10,7 @@ import {
   Menu,
   Expand,
   Fold,
+  Setting,
 } from "@element-plus/icons-vue";
 import { userApi } from "@/api/user";
 import { roleApi } from "@/api/role";
@@ -33,15 +34,23 @@ const state = reactive({
   menuSections: [] as any[],
 });
 
+/** 超管才显示「管理后台」入口，避免普通用户看到点进去被弹回登录页 */
+const isAdminUser = computed(() => state.rid === SUPER_ADMIN_RID);
+
+const goAdminPortal = () => {
+  showAccountMenu.value = false;
+  router.push("/admin");
+};
+
 const isSubmenuItemActive = (item: any) => {
   const currentRouteName = String(route.name ?? "");
   const currentPath = route.path;
   return currentRouteName === item.routeName || currentPath === item.path;
 };
 
-const pageTitle = computed(() => String(route.meta.title ?? "AI 聚合平台"));
+const pageTitle = computed(() => String(route.meta.title ?? "智汇平台"));
 const pageSubtitle = computed(() =>
-  String(route.meta.group ?? "统一智能工作台"),
+  String(route.meta.group ?? "企业级 AI 能力门户"),
 );
 
 // 账户菜单
@@ -218,8 +227,8 @@ onBeforeUnmount(() => {
           />
         </div>
         <div v-show="!isCollapsed" class="brand-copy">
-          <span>AI聚合平台</span>
-          <span>统一智能工作台</span>
+          <span>智汇平台</span>
+          <span>NexusAI</span>
         </div>
       </div>
 
@@ -318,6 +327,15 @@ onBeforeUnmount(() => {
               </button>
             </div>
           </div>
+          <button
+            v-if="isAdminUser"
+            type="button"
+            class="account-dropdown-item"
+            @click="goAdminPortal"
+          >
+            <Setting class="account-dropdown-icon" />
+            <span>管理后台</span>
+          </button>
           <button
             type="button"
             class="account-dropdown-item"

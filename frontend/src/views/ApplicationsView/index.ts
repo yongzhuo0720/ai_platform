@@ -23,7 +23,7 @@ export function useIndex() {
     dataList: [] as any[],
     allTags: [] as any[],
     params: {
-      title: '新增应用',
+      title: '新建应用',
       dialogVisible: false,
       type: 'add',
       form: null as any
@@ -92,7 +92,7 @@ export function useIndex() {
   const showAdd = () => {
     resetForm(ruleFormRef.value)
     state.params = {
-      title: '新增应用',
+      title: '新建应用',
       dialogVisible: true,
       type: 'add',
       form: {

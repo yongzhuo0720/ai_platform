@@ -24,7 +24,7 @@ export function useIndex() {
     isAdmin: isSuperAdmin(Cookies.get('admin_rid')) || Cookies.get('admin_access') === '1',
 
     params: {
-      title: '新增',
+      title: '新建',
       dialogVisible: false,
       type: 'add',
       form: null as any,
@@ -125,7 +125,7 @@ export function useIndex() {
   const showAdd = () => {
     resetForm(ruleFormRef.value)
     state.params = {
-      title: '新增用户',
+      title: '新建用户',
       dialogVisible: true,
       type: 'add',
       form: {

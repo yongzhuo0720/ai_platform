@@ -1,12 +1,17 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="AI 聚合平台">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="智汇平台 NexusAI">
   <defs>
     <linearGradient id="brand-mark-gradient" x1="6" y1="2" x2="58" y2="62" gradientUnits="userSpaceOnUse">
-      <stop offset="0" stop-color="#3B82F6" />
-      <stop offset="0.55" stop-color="#4F46E5" />
-      <stop offset="1" stop-color="#7C3AED" />
+      <stop offset="0" stop-color="#4F7BFF" />
+      <stop offset="0.52" stop-color="#6C4DFF" />
+      <stop offset="1" stop-color="#9D3BEA" />
+    </linearGradient>
+    <linearGradient id="brand-mark-sheen" x1="10" y1="4" x2="34" y2="34" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#FFFFFF" stop-opacity="0.32" />
+      <stop offset="1" stop-color="#FFFFFF" stop-opacity="0" />
     </linearGradient>
   </defs>
   <rect width="64" height="64" rx="16" fill="url(#brand-mark-gradient)" />
+  <path d="M0 22C14 26 24 12 28 0H16C6 0 0 6 0 16Z" fill="url(#brand-mark-sheen)" />
   <g fill="none" stroke="#FFFFFF" stroke-linecap="round" stroke-width="3.4" opacity="0.92">
     <path d="M32 17.5v8.5" />
     <path d="M28.4 36.2 20.6 43.4" />

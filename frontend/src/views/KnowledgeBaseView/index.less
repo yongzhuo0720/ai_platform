@@ -398,7 +398,7 @@
   transition: all 0.2s;
 
   &:hover {
-    background: linear-gradient(135deg, #4da6ff 0%, #136dc3 100%);
+    background: linear-gradient(135deg, #7c93ff 0%, #136dc3 100%);
     color: #ffffff;
     border-color: transparent;
     box-shadow: 0 2px 8px rgba(77, 166, 255, 0.4);
@@ -545,11 +545,11 @@
 
   &.active {
     background: linear-gradient(90deg, rgba(77, 166, 255, 0.22) 0%, rgba(77, 166, 255, 0.05) 100%);
-    color: #4da6ff;
+    color: #7c93ff;
     font-weight: 600;
 
     .el-icon {
-      color: #4da6ff;
+      color: #7c93ff;
     }
   }
 }
@@ -852,7 +852,7 @@
   transition: all 0.2s;
 
   &:focus {
-    border-color: #4da6ff;
+    border-color: #7c93ff;
     background: rgba(16, 30, 80, 0.8);
     box-shadow: 0 0 0 3px rgba(77, 166, 255, 0.15);
   }
@@ -1333,10 +1333,36 @@
 .kb-empty {
   flex: 1;
   display: flex;
+  flex-direction: column;
   align-items: center;
   justify-content: center;
+  gap: 8px;
   color: rgba(255, 255, 255, 0.55);
   font-size: 13px;
+  text-align: center;
+  padding: 24px;
+
+  .kb-empty-logo {
+    width: 52px;
+    height: 52px;
+    border-radius: 12px;
+    opacity: 0.9;
+    margin-bottom: 8px;
+    box-shadow: 0 12px 32px rgba(79, 123, 255, 0.28);
+  }
+
+  .kb-empty-title {
+    font-size: 15px;
+    font-weight: 600;
+    color: var(--text-primary, rgba(255, 255, 255, 0.92));
+  }
+
+  .kb-empty-hint {
+    max-width: 420px;
+    line-height: 1.7;
+    font-size: 12.5px;
+    color: var(--text-tertiary, rgba(255, 255, 255, 0.5));
+  }
 }
 
 // ========================================
@@ -1497,7 +1523,7 @@
 
   .el-icon {
     font-size: 12px;
-    color: #0066ff;
+    color: #3d5bf5;
   }
 
   &:hover {
@@ -1520,7 +1546,7 @@
   transition: color 0.2s ease;
 
   &:hover {
-    color: #4da6ff;
+    color: #7c93ff;
     text-decoration: underline;
   }
 }
@@ -2054,7 +2080,7 @@ html[data-theme="light"] .kb-shared-chat-bubble.user-bubble {
   }
 
   &:hover {
-    background: linear-gradient(135deg, #4da6ff 0%, #1a4a8c 100%);
+    background: linear-gradient(135deg, #7c93ff 0%, #1a4a8c 100%);
     box-shadow: 0 4px 12px rgba(26, 74, 140, 0.5);
   }
 
@@ -2149,7 +2175,7 @@ html[data-theme="light"] .kb-shared-chat-bubble.user-bubble {
     color: rgba(255, 255, 255, 0.6);
 
     &:hover {
-      color: #4da6ff;
+      color: #7c93ff;
     }
   }
 }
@@ -2206,7 +2232,7 @@ html[data-theme="light"] .kb-shared-chat-bubble.user-bubble {
 
   &:focus {
     outline: none;
-    border-color: #4da6ff;
+    border-color: #7c93ff;
     background: rgba(0, 10, 40, 0.45);
   }
 }
@@ -2254,7 +2280,7 @@ html[data-theme="light"] .kb-shared-chat-bubble.user-bubble {
 
   &:focus {
     outline: none;
-    border-color: #4da6ff;
+    border-color: #7c93ff;
   }
 }
 
@@ -2295,14 +2321,14 @@ html[data-theme="light"] .kb-shared-chat-bubble.user-bubble {
     width: 6px;
     height: 6px;
     border-radius: 50%;
-    background: #4da6ff;
+    background: #7c93ff;
     opacity: 0;
     transition: opacity 0.2s;
   }
 }
 
 .kb-radio:checked + .kb-radio-dot {
-  border-color: #4da6ff;
+  border-color: #7c93ff;
 
   &::after {
     opacity: 1;
@@ -2316,7 +2342,7 @@ html[data-theme="light"] .kb-shared-chat-bubble.user-bubble {
 
 .kb-btn-confirm {
   padding: 8px 24px;
-  background: linear-gradient(135deg, #4da6ff 0%, #136dc3 100%);
+  background: linear-gradient(135deg, #7c93ff 0%, #136dc3 100%);
   color: #ffffff;
   border: none;
   border-radius: 4px;
@@ -2379,7 +2405,7 @@ html[data-theme="light"] .kb-shared-chat-bubble.user-bubble {
     color: rgba(255, 255, 255, 0.6);
 
     &:hover {
-      color: #4da6ff;
+      color: #7c93ff;
     }
   }
 }
@@ -2585,7 +2611,7 @@ html[data-theme="light"] {
 
     &:hover {
       background: rgba(0, 102, 255, 0.08);
-      color: #0066ff;
+      color: #3d5bf5;
     }
   }
 
@@ -2599,7 +2625,7 @@ html[data-theme="light"] {
   }
 
   .kb-sidebar-logo:hover .kb-sidebar-logo-arrow {
-    color: #0066ff;
+    color: #3d5bf5;
   }
 
   .kb-sidebar-header-actions {
@@ -2612,7 +2638,7 @@ html[data-theme="light"] {
     position: relative;
 
     &:focus-within {
-      border-color: #0066ff;
+      border-color: #3d5bf5;
       box-shadow: 0 0 0 3px rgba(0, 102, 255, 0.12);
     }
   }
@@ -2621,7 +2647,7 @@ html[data-theme="light"] {
     border: 1px solid #d6e0f5;
 
     &:focus-within {
-      border-color: #0066ff;
+      border-color: #3d5bf5;
       box-shadow: 0 0 0 3px rgba(0, 102, 255, 0.12);
     }
 
@@ -2672,19 +2698,19 @@ html[data-theme="light"] {
 
     &:hover {
       background: rgba(0, 102, 255, 0.08);
-      color: #0066ff;
+      color: #3d5bf5;
     }
 
     &.active {
       background: rgba(0, 102, 255, 0.12);
-      color: #0066ff;
+      color: #3d5bf5;
       font-weight: 600;
     }
   }
 
   .kb-badge {
     color: #ffffff;
-    background: #0066ff;
+    background: #3d5bf5;
   }
 
   .kb-sidebar-group-header {
@@ -2700,16 +2726,16 @@ html[data-theme="light"] {
 
     &:hover {
       background: rgba(0, 102, 255, 0.08);
-      color: #0066ff;
+      color: #3d5bf5;
     }
   }
 
   .kb-sidebar-group-header-capabilities {
     &.active {
-      color: #0066ff;
+      color: #3d5bf5;
 
       .el-icon {
-        color: #0066ff;
+        color: #3d5bf5;
       }
     }
   }
@@ -2746,18 +2772,18 @@ html[data-theme="light"] {
 
     &:hover {
       background: rgba(0, 102, 255, 0.08);
-      color: #0066ff;
+      color: #3d5bf5;
     }
 
     &.active {
       background: rgba(0, 102, 255, 0.12);
-      color: #0066ff;
+      color: #3d5bf5;
       font-weight: 600;
-      border-left: 3px solid #0066ff;
+      border-left: 3px solid #3d5bf5;
       padding-left: 21px;
 
       .el-icon {
-        color: #0066ff;
+        color: #3d5bf5;
       }
     }
   }
@@ -2800,8 +2826,8 @@ html[data-theme="light"] {
     box-shadow: 0 2px 8px rgba(13, 48, 100, 0.06);
 
     &:hover {
-      background: #0066ff;
-      border-color: #0066ff;
+      background: #3d5bf5;
+      border-color: #3d5bf5;
       color: #ffffff;
       box-shadow: 0 6px 16px rgba(0, 102, 255, 0.3);
       transform: translateY(-2px);
@@ -2833,10 +2859,10 @@ html[data-theme="light"] {
 
     &:hover {
       background: rgba(0, 102, 255, 0.08);
-      color: #0066ff !important;
+      color: #3d5bf5 !important;
 
       svg {
-        fill: #0066ff !important;
+        fill: #3d5bf5 !important;
       }
     }
 
@@ -2885,7 +2911,7 @@ html[data-theme="light"] {
     color: rgb(13, 48, 100);
 
     &:focus {
-      border-color: #0066ff;
+      border-color: #3d5bf5;
       background: #ffffff;
       box-shadow: 0 0 0 3px rgba(0, 102, 255, 0.12);
     }
@@ -2910,8 +2936,8 @@ html[data-theme="light"] {
     box-shadow: 0 2px 6px rgba(13, 48, 100, 0.05);
 
     &:hover {
-      background: #0066ff;
-      border-color: #0066ff;
+      background: #3d5bf5;
+      border-color: #3d5bf5;
       color: #ffffff;
       box-shadow: 0 6px 16px rgba(0, 102, 255, 0.28);
       transform: translateY(-2px);
@@ -2928,7 +2954,7 @@ html[data-theme="light"] {
 
     &:hover,
     &:focus-within {
-      border-color: #0066ff;
+      border-color: #3d5bf5;
       background: #ffffff;
       box-shadow: 0 0 0 3px rgba(0, 102, 255, 0.12);
     }
@@ -2952,7 +2978,7 @@ html[data-theme="light"] {
 
     &:hover {
       background: rgba(0, 102, 255, 0.12);
-      color: #0066ff;
+      color: #3d5bf5;
     }
   }
 
@@ -2970,7 +2996,7 @@ html[data-theme="light"] {
     box-shadow: 0 2px 8px rgba(13, 48, 100, 0.05);
 
     &:hover {
-      border-color: #0066ff;
+      border-color: #3d5bf5;
       box-shadow: 0 8px 24px rgba(0, 102, 255, 0.2);
       background: rgba(255, 255, 255, 0.85);
       transform: translateY(-2px);
@@ -2980,7 +3006,7 @@ html[data-theme="light"] {
   .kb-doc-thumb {
     background: rgba(0, 102, 255, 0.06);
     border: 1px solid rgba(0, 102, 255, 0.15);
-    color: #0066ff;
+    color: #3d5bf5;
   }
 
   .kb-doc-name {
@@ -2990,7 +3016,7 @@ html[data-theme="light"] {
 
   .kb-doc-type {
     &.word {
-      color: #0066ff;
+      color: #3d5bf5;
       background: rgba(0, 102, 255, 0.1);
     }
 
@@ -3015,14 +3041,14 @@ html[data-theme="light"] {
 
     &:hover {
       background: rgba(255, 255, 255, 0.85);
-      border-color: #0066ff;
+      border-color: #3d5bf5;
     }
   }
 
   .kb-doc-list-thumb {
     background: rgba(0, 102, 255, 0.06);
     border: 1px solid rgba(0, 102, 255, 0.15);
-    color: #0066ff;
+    color: #3d5bf5;
   }
 
   .kb-doc-list-name {
@@ -3057,7 +3083,7 @@ html[data-theme="light"] {
       color: #4a6ba8;
 
       &:hover {
-        color: #0066ff;
+        color: #3d5bf5;
       }
     }
   }
@@ -3085,7 +3111,7 @@ html[data-theme="light"] {
 
     &:focus {
       outline: none;
-      border-color: #0066ff;
+      border-color: #3d5bf5;
       box-shadow: 0 0 0 3px rgba(0, 102, 255, 0.12);
     }
   }
@@ -3117,16 +3143,16 @@ html[data-theme="light"] {
     background: rgba(255, 255, 255, 0.7);
 
     &::after {
-      background: #0066ff;
+      background: #3d5bf5;
     }
   }
 
   .kb-radio:checked + .kb-radio-dot {
-    border-color: #0066ff;
+    border-color: #3d5bf5;
   }
 
   .kb-btn-confirm {
-    background: linear-gradient(135deg, #0066ff 0%, #2855b8 100%);
+    background: linear-gradient(135deg, #3d5bf5 0%, #2855b8 100%);
     box-shadow: 0 4px 14px rgba(0, 102, 255, 0.35);
     color: #ffffff;
     border-radius: 6px;
@@ -3178,7 +3204,7 @@ html[data-theme="light"] {
     background: rgba(0, 102, 255, 0.12);
 
     .el-icon {
-      color: #0066ff;
+      color: #3d5bf5;
     }
   }
 
@@ -3191,7 +3217,7 @@ html[data-theme="light"] {
   }
 
   .kb-shared-info-join-count {
-    color: #0066ff;
+    color: #3d5bf5;
 
     &:hover {
       color: #004bcc;
@@ -3200,7 +3226,7 @@ html[data-theme="light"] {
 
   .kb-info-tag {
     background: rgba(0, 102, 255, 0.08);
-    color: #0066ff;
+    color: #3d5bf5;
 
     &:hover {
       background: rgba(0, 102, 255, 0.15);
@@ -3225,7 +3251,7 @@ html[data-theme="light"] {
 
     &:hover,
     &:focus-within {
-      border-color: #0066ff;
+      border-color: #3d5bf5;
       background: #ffffff;
       box-shadow: 0 0 0 3px rgba(0, 102, 255, 0.12);
     }
@@ -3249,7 +3275,7 @@ html[data-theme="light"] {
 
     &:hover {
       background: rgba(0, 102, 255, 0.12);
-      color: #0066ff;
+      color: #3d5bf5;
     }
   }
 
@@ -3323,7 +3349,7 @@ html[data-theme="light"] {
     }
 
     a {
-      color: #0066ff;
+      color: #3d5bf5;
 
       &:hover {
         color: #004bcc;
@@ -3381,7 +3407,7 @@ html[data-theme="light"] {
   }
 
   .kb-shared-chat-source-icon {
-    color: #0066ff;
+    color: #3d5bf5;
   }
 
   .kb-shared-chat-loading {
@@ -3395,7 +3421,7 @@ html[data-theme="light"] {
 
     &:hover {
       background: rgba(0, 102, 255, 0.12);
-      color: #0066ff;
+      color: #3d5bf5;
     }
   }
 
@@ -3412,7 +3438,7 @@ html[data-theme="light"] {
 
     &:focus-within {
       background: rgba(255, 255, 255, 0.9);
-      border-color: #0066ff;
+      border-color: #3d5bf5;
       box-shadow: 0 0 0 3px rgba(0, 102, 255, 0.12);
     }
   }
@@ -3455,7 +3481,7 @@ html[data-theme="light"] {
 
     &:hover {
       background: rgba(0, 102, 255, 0.08);
-      color: #0066ff;
+      color: #3d5bf5;
     }
   }
 
@@ -3487,7 +3513,7 @@ html[data-theme="light"] {
       color: #4a6ba8;
 
       &:hover {
-        color: #0066ff;
+        color: #3d5bf5;
       }
     }
   }
@@ -3497,7 +3523,7 @@ html[data-theme="light"] {
     border: 1px solid #d6e0f5;
 
     &:focus-within {
-      border-color: #0066ff;
+      border-color: #3d5bf5;
       box-shadow: 0 0 0 3px rgba(0, 102, 255, 0.12);
     }
   }
@@ -3520,7 +3546,7 @@ html[data-theme="light"] {
 
     &:hover {
       background: rgba(0, 102, 255, 0.12);
-      color: #0066ff;
+      color: #3d5bf5;
     }
   }
 
@@ -3676,10 +3702,10 @@ html[data-theme="light"] {
 
     &:hover {
       background: rgba(0, 102, 255, 0.08);
-      color: #0066ff;
+      color: #3d5bf5;
 
       .el-icon {
-        color: #0066ff;
+        color: #3d5bf5;
       }
     }
   }

@@ -181,7 +181,7 @@
 }
 
 .btn-primary {
-  background: linear-gradient(180deg, #023491 0%, #136dc3 60%, #4da6ff 100%);
+  background: linear-gradient(180deg, #023491 0%, #136dc3 60%, #7c93ff 100%);
   color: #ffffff;
   border: none;
   border-radius: 9999px;
@@ -943,7 +943,7 @@
 /* 修改按钮 */
 .action-btn:hover {
   border-color: rgba(77, 166, 255, 0.6);
-  color: #4da6ff;
+  color: #7c93ff;
   background: rgba(77, 166, 255, 0.15);
   box-shadow: 0 0 16px rgba(77, 166, 255, 0.25);
 }
@@ -1010,7 +1010,7 @@
 
 .tags-popover-item .el-icon {
   font-size: 12px;
-  color: #0066ff;
+  color: #3d5bf5;
 }
 
 .tags-popover-item:hover {

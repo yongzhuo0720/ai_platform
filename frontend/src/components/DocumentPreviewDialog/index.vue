@@ -175,7 +175,7 @@ const typeInfo = computed(() => {
     md: { label: 'MD', color: '#8b5cf6', bg: 'rgba(139, 92, 246, 0.12)' },
     txt: { label: 'TXT', color: '#6b7280', bg: 'rgba(107, 114, 128, 0.12)' },
   }
-  return map[ext.value] || { label: (ext.value || 'FILE').toUpperCase(), color: '#4da6ff', bg: 'rgba(77, 166, 255, 0.12)' }
+  return map[ext.value] || { label: (ext.value || 'FILE').toUpperCase(), color: '#7c93ff', bg: 'rgba(77, 166, 255, 0.12)' }
 })
 
 // ============== 预览 URL ==============
@@ -497,7 +497,7 @@ watch(
   &:hover {
     background: rgba(77, 166, 255, 0.18);
     border-color: rgba(77, 166, 255, 0.4);
-    color: #4da6ff;
+    color: #7c93ff;
   }
 }
 
@@ -570,7 +570,7 @@ watch(
   width: 36px;
   height: 36px;
   border: 3px solid rgba(100, 150, 255, 0.2);
-  border-top-color: #4da6ff;
+  border-top-color: #7c93ff;
   border-radius: 50%;
   animation: kb-preview-spin 0.8s linear infinite;
 }
@@ -640,7 +640,7 @@ watch(
 
 .kb-preview-chunk-index {
   background: rgba(77, 166, 255, 0.18);
-  color: #4da6ff;
+  color: #7c93ff;
   padding: 2px 8px;
   border-radius: 999px;
   font-weight: 600;
@@ -648,7 +648,7 @@ watch(
 }
 
 .kb-preview-chunk-hits {
-  color: var(--accent, #4da6ff);
+  color: var(--accent, #7c93ff);
 }
 
 .kb-preview-chunk-content {
@@ -750,8 +750,8 @@ html[data-theme="light"] {
 
   .kb-preview-action-btn:hover {
     background: rgba(0, 102, 255, 0.1);
-    border-color: #0066ff;
-    color: #0066ff;
+    border-color: #3d5bf5;
+    color: #3d5bf5;
   }
 
   .kb-preview-close:hover {

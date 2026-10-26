@@ -12,13 +12,19 @@ body,
   
 }
 #app {
-  background: url('@/assets/images/bg.png') no-repeat center center fixed;
-  background-size: cover;
+  /* 品牌深色背景：CSS 渐变替代 4.8MB 的 bg.png，首屏不再下载大图 */
+  background:
+    radial-gradient(1200px 800px at 85% -10%, rgba(157, 59, 234, 0.22), transparent 60%),
+    radial-gradient(1000px 700px at -10% 110%, rgba(79, 123, 255, 0.20), transparent 55%),
+    linear-gradient(160deg, #0b1030 0%, #101a45 48%, #1a1245 100%);
+  background-attachment: fixed;
 }
 
 html[data-theme="light"] #app {
-  background: url('@/assets/images/bg-qianse.png') no-repeat center center fixed;
-  background-size: cover;
+  background:
+    radial-gradient(1200px 800px at 85% -10%, rgba(157, 59, 234, 0.10), transparent 60%),
+    radial-gradient(1000px 700px at -10% 110%, rgba(79, 123, 255, 0.12), transparent 55%),
+    linear-gradient(160deg, #f2f6ff 0%, #e8eefb 48%, #f3edfc 100%);
   background-attachment: fixed;
 }
 

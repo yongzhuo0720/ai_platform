@@ -26,7 +26,7 @@ export const adminMenus = [
     icon: 'Collection',
   },
   {
-    title: 'Dify配置管理',
+    title: 'Dify 配置管理',
     path: '/admin/dify-config',
     routeName: 'admin-dify-config',
     icon: 'Tools',
@@ -38,7 +38,7 @@ export const adminMenus = [
     icon: 'Cpu',
   },
   {
-    title: 'AI调用治理',
+    title: 'AI 调用治理',
     path: '/admin/ai-gateway',
     routeName: 'admin-ai-gateway',
     icon: 'DataLine',
