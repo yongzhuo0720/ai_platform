@@ -3,6 +3,7 @@ package com.aiproject.ai.service.holde;
 import com.aiproject.ai.service.bean.KbChunkBean;
 import com.aiproject.ai.service.bean.KbDocBean;
 import com.aiproject.ai.service.gateway.EmbeddingClient;
+import com.aiproject.ai.service.gateway.RerankResolver;
 import com.aiproject.ai.service.gateway.dto.KbDocUpload;
 import com.aiproject.ai.service.gateway.dto.KbSearchItem;
 import com.aiproject.ai.service.gateway.dto.KbSearchResult;
@@ -20,9 +21,11 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 
 /**
  * 本地知识库（RAG）：文档解析 → 分块 → 向量化 → 相似度检索。
@@ -33,6 +36,9 @@ import java.util.Map;
 @Slf4j
 @Service
 public class KbRagHolder {
+
+    /** RRF 融合常数。原论文与业界常用 60 */
+    private static final int RRF_K = 60;
 
     private static final int MAX_DOC_CHARS = 200000;
     private static final int MAX_CHUNKS = 500;
@@ -52,12 +58,24 @@ public class KbRagHolder {
     @Autowired
     EmbeddingClient embeddingClient;
 
-    /** 文档列表（含分块数与状态），不返回任何向量与正文 */
+    /** 二阶段精排：可选，未配置时检索仍走混合排序 */
+    @Autowired
+    RerankResolver rerankResolver;
+
+    /**
+     * 文档列表（含分块数与状态），不返回任何向量与正文。
+     *
+     * <p>归属隔离：只返回当前用户自己上传的文档。
+     * 修复前这里用空 Bean 查询，等于拉全表——任意登录用户都能看到
+     * 其他人的文档名、分块数与状态。</p>
+     */
     public Result<List<KbDocBean>> listDocs(String uid) {
         if (uid == null || uid.trim().isEmpty()) {
             return Result.failed(null, "未登录或登录已过期");
         }
-        List<KbDocBean> docs = kbDocBeanMapper.select(null, new KbDocBean());
+        KbDocBean where = new KbDocBean();
+        where.setLastuser(uid);
+        List<KbDocBean> docs = kbDocBeanMapper.select(null, where);
         docs.sort(new Comparator<KbDocBean>() {
             @Override
             public int compare(KbDocBean a, KbDocBean b) {
@@ -146,6 +164,13 @@ public class KbRagHolder {
         return Result.succeed(doc, "文档已入库，共 " + chunks.size() + " 块");
     }
 
+    /**
+     * 删除文档（连同分块）。
+     *
+     * <p>归属隔离：删除条件同时带 iid 与 lastuser，属于他人的文档匹配不到行，
+     * 直接返回失败（fail-closed）。修复前只按 iid 删，任意登录用户
+     * 知道文档 iid 即可删除他人文档。</p>
+     */
     public Result<Boolean> deleteDoc(String uid, KbDocBean data) {
         if (uid == null || uid.trim().isEmpty()) {
             return Result.failed(false, "未登录或登录已过期");
@@ -155,8 +180,9 @@ public class KbRagHolder {
         }
         KbDocBean where = new KbDocBean();
         where.setIid(data.getIid());
+        where.setLastuser(uid);
         if (kbDocBeanMapper.delete(where) <= 0) {
-            return Result.failed(false, "删除失败：文档不存在");
+            return Result.failed(false, "删除失败：文档不存在或不属于当前用户");
         }
         KbChunkBean chunkWhere = new KbChunkBean();
         chunkWhere.setDocIid(data.getIid());
@@ -165,7 +191,26 @@ public class KbRagHolder {
     }
 
     /**
-     * 相似度检索：查询向量化后与知识库分块做余弦匹配，返回 topK。
+     * 相似度检索：向量路 + 关键词路混合，RRF 融合后取 topK。
+     *
+     * <p>归属隔离：分块查询同时带 kbName（可选）与 lastuser，只在自己的文档里检索。
+     * 修复前只按 kbName 过滤，任意登录用户都能检索并读取他人文档的正文分块——
+     * 这是本地 RAG 最严重的泄露面，因为返回内容直接是原文。</p>
+     *
+     * <p><b>为什么是混合检索</b>：单一向量路有两个结构性盲区——</p>
+     * <ul>
+     *   <li>专有名词、版本号、SKU、人名：embedding 对这类 token 的区分度很差，
+     *       「BGE-M3」和「BGE-M2」的向量可能非常接近；</li>
+     *   <li>用户的问法和文档用词不一致时（问「怎么报销」vs 文档写「差旅费用流程」），
+     *       纯语义匹配反而可能漏掉关键词完全一致的片段。</li>
+     * </ul>
+     * <p>反过来纯关键词路又不懂同义词。两路互补，用 RRF（Reciprocal Rank Fusion）
+     * 融合排名——RRF 只看排名不看原始分，因此不需要把余弦分和词频归一到同一量纲，
+     * 这是它比加权求和更适合这里的原因。</p>
+     *
+     * <p><b>两路的分工</b>：关键词路用 PostgreSQL 全文检索（GIN 表达式索引）做候选召回，
+     * 向量路对全部自有分块算余弦。召回阶段用索引、精排阶段在内存，
+     * 与当前「万块以内」的规模匹配。</p>
      */
     public Result<KbSearchResult> search(String uid, String query, String kbName, Integer topK) {
         if (uid == null || uid.trim().isEmpty()) {
@@ -197,6 +242,7 @@ public class KbRagHolder {
         if (kbName != null && !kbName.trim().isEmpty()) {
             where.setKbName(kbName.trim());
         }
+        where.setLastuser(uid);
         List<KbChunkBean> chunks = kbChunkBeanMapper.select(null, where);
         if (chunks == null || chunks.isEmpty()) {
             KbSearchResult empty = new KbSearchResult();
@@ -206,30 +252,14 @@ public class KbRagHolder {
             return Result.succeed(empty, "知识库为空，请先上传文档");
         }
 
-        List<KbSearchItem> scored = new ArrayList<KbSearchItem>(chunks.size());
-        for (KbChunkBean chunk : chunks) {
-            double[] vector = parseVector(chunk.getEmbedding());
-            if (vector == null || vector.length != queryVector.length) {
-                continue;
-            }
-            KbSearchItem item = new KbSearchItem();
-            item.setDocIid(chunk.getDocIid());
-            item.setKbName(chunk.getKbName());
-            item.setChunkIndex(chunk.getChunkIndex());
-            item.setContent(chunk.getContent());
-            item.setScore(round4(cosine(queryVector, vector)));
-            scored.add(item);
-        }
-        scored.sort(new Comparator<KbSearchItem>() {
-            @Override
-            public int compare(KbSearchItem a, KbSearchItem b) {
-                return Double.compare(b.getScore(), a.getScore());
-            }
-        });
+        Set<Long> lexicalHits = lexicalCandidates(uid, kbName, query.trim());
+        List<KbSearchItem> fused = hybridRank(query.trim(), chunks, queryVector, lexicalHits);
 
         int limit = topK == null ? 5 : Math.max(1, Math.min(MAX_TOP_K, topK));
-        Map<Long, String> docNames = loadDocNames();
-        List<KbSearchItem> items = scored.size() > limit ? new ArrayList<KbSearchItem>(scored.subList(0, limit)) : scored;
+        fused = applyRerank(query.trim(), fused, limit);
+        Map<Long, String> docNames = loadDocNames(uid);
+        List<KbSearchItem> items = fused.size() > limit
+                ? new ArrayList<KbSearchItem>(fused.subList(0, limit)) : fused;
         for (KbSearchItem item : items) {
             item.setDocName(docNames.get(item.getDocIid()));
         }
@@ -240,6 +270,272 @@ public class KbRagHolder {
         result.setScanned(chunks.size());
         result.setItems(items);
         return Result.succeed(result, "检索成功");
+    }
+
+    /**
+     * 二阶段精排：已配置 rerank 服务时，把混合检索的前若干候选取原文
+     * 交给 rerank 模型重排，取回顺序覆盖融合序。
+     *
+     * <p>候选窗口取 limit*3（上限 24）：精排模型按对打分成本高，
+     * 只对混合检索认为「可能有戏」的片段做，兼顾效果与延迟。</p>
+     *
+     * <p>任何失败（未配置 / 超时 / 响应异常）都降级返回原列表——
+     * 精排是增强路径，绝不能阻塞检索主链路。</p>
+     */
+    private List<KbSearchItem> applyRerank(String query, List<KbSearchItem> fused, int limit) {
+        try {
+            RerankResolver.ResolvedRerank config = rerankResolver.resolve();
+            if (config == null || fused.size() <= 1) {
+                return fused;
+            }
+            int window = Math.min(Math.max(limit * 3, limit), 24);
+            List<KbSearchItem> candidates = fused.size() > window
+                    ? new ArrayList<KbSearchItem>(fused.subList(0, window)) : fused;
+            List<String> docs = new ArrayList<String>();
+            for (KbSearchItem item : candidates) {
+                docs.add(item.getContent() == null ? "" : item.getContent());
+            }
+            List<Integer> order = rerankResolver.rerank(config, query, docs);
+            if (order == null) {
+                return fused;
+            }
+            List<KbSearchItem> reranked = new ArrayList<KbSearchItem>(candidates.size());
+            for (Integer idx : order) {
+                if (idx != null && idx >= 0 && idx < candidates.size()) {
+                    reranked.add(candidates.get(idx));
+                }
+            }
+            // 窗口外的尾部片段保持在后面，不因精排被整段丢弃
+            for (KbSearchItem item : fused) {
+                if (!reranked.contains(item)) {
+                    reranked.add(item);
+                }
+            }
+            log.info("[KbRag] rerank 生效: 候选 {} 条已重排", candidates.size());
+            return reranked;
+        } catch (Exception e) {
+            log.warn("[KbRag] rerank 异常，降级混合排序: {}", e.getMessage());
+            return fused;
+        }
+    }
+
+    /**
+     * 混合排序：向量路算余弦，关键词路按词项重叠排序，RRF 融合。
+     *
+     * <p>关键词路的召回结果作为入参传入而不是在这里查库——这样这段纯排序逻辑
+     * 可以被单测直接驱动（见 KbRetrievalEvalTest），用来量化"混合检索比纯向量
+     * 好多少"。I/O 与算法分离也让这个方法的职责更清楚。</p>
+     *
+     * @param query        用户问题（用于词项重叠打分）
+     * @param chunks       候选分块（已按归属/知识库过滤）
+     * @param queryVector  问题的向量
+     * @param lexicalHits  关键词路召回的 chunk iid 集合；空集合表示该路无结果
+     */
+    public List<KbSearchItem> hybridRank(String query, List<KbChunkBean> chunks,
+                                         double[] queryVector, Set<Long> lexicalHits) {
+        // ---- 向量路：对全部分块算余弦 ----
+        Map<Long, KbSearchItem> byChunkIid = new HashMap<Long, KbSearchItem>();
+        List<KbSearchItem> denseRanked = new ArrayList<KbSearchItem>();
+        for (KbChunkBean chunk : chunks) {
+            double[] vector = parseVector(chunk.getEmbedding());
+            if (vector == null || vector.length != queryVector.length) {
+                continue;
+            }
+            KbSearchItem item = new KbSearchItem();
+            item.setDocIid(chunk.getDocIid());
+            item.setKbName(chunk.getKbName());
+            item.setChunkIndex(chunk.getChunkIndex());
+            item.setContent(chunk.getContent());
+            item.setDenseScore(round4(cosine(queryVector, vector)));
+            byChunkIid.put(chunk.getIid(), item);
+            denseRanked.add(item);
+        }
+        // 余弦降序 = 向量路排名
+        denseRanked.sort(new Comparator<KbSearchItem>() {
+            @Override
+            public int compare(KbSearchItem a, KbSearchItem b) {
+                return Double.compare(b.getDenseScore(), a.getDenseScore());
+            }
+        });
+
+        // ---- 关键词路：按词项重叠数排序 ----
+        List<KbSearchItem> lexicalRanked = new ArrayList<KbSearchItem>();
+        Set<Long> lexicalChunkIids = new HashSet<Long>();
+        if (lexicalHits != null && !lexicalHits.isEmpty()) {
+            for (KbChunkBean chunk : chunks) {
+                if (!lexicalHits.contains(chunk.getIid())) {
+                    continue;
+                }
+                KbSearchItem item = byChunkIid.get(chunk.getIid());
+                if (item == null) {
+                    continue;
+                }
+                item.setLexicalScore(countTermOverlap(query, chunk.getContent()));
+                lexicalRanked.add(item);
+                lexicalChunkIids.add(chunk.getIid());
+            }
+            lexicalRanked.sort(new Comparator<KbSearchItem>() {
+                @Override
+                public int compare(KbSearchItem a, KbSearchItem b) {
+                    return Integer.compare(b.getLexicalScore(), a.getLexicalScore());
+                }
+            });
+        }
+
+        // ---- RRF 融合 ----
+        // score = Σ 1/(k + rank)，k 取 60 是原论文与业界的常用值：
+        // 大到能让头部条目的排名差占主导，又小到不完全忽略中下部。
+        for (int i = 0; i < denseRanked.size(); i++) {
+            denseRanked.get(i).setScore(round4(
+                    denseRanked.get(i).getScore() + 1.0 / (RRF_K + i + 1)));
+        }
+        for (int i = 0; i < lexicalRanked.size(); i++) {
+            lexicalRanked.get(i).setScore(round4(
+                    lexicalRanked.get(i).getScore() + 1.0 / (RRF_K + i + 1)));
+        }
+
+        // 标注命中来源，便于解释「为什么这条排在前面」
+        for (Map.Entry<Long, KbSearchItem> entry : byChunkIid.entrySet()) {
+            KbSearchItem item = entry.getValue();
+            boolean inDense = item.getDenseScore() >= 0;
+            boolean inLexical = lexicalChunkIids.contains(entry.getKey());
+            if (inDense && inLexical) {
+                item.setChannel("both");
+            } else if (inLexical) {
+                item.setChannel("lexical");
+            } else {
+                item.setChannel("dense");
+            }
+        }
+
+        List<KbSearchItem> fused = new ArrayList<KbSearchItem>(byChunkIid.values());
+        fused.sort(new Comparator<KbSearchItem>() {
+            @Override
+            public int compare(KbSearchItem a, KbSearchItem b) {
+                return Double.compare(b.getScore(), a.getScore());
+            }
+        });
+        return fused;
+    }
+
+    /**
+     * 关键词路召回：用 PostgreSQL 全文检索找出内容命中的分块 iid。
+     *
+     * <p>用 {@code plainto_tsquery('simple', ...)} 而不是 {@code to_tsquery}：
+     * 前者把用户输入当纯文本处理，不解析 {@code & | !} 等操作符，
+     * 避免了「用户输入包含布尔语法导致查询报错」，也缩小了注入面。</p>
+     *
+     * <p>查询文本仍必须转义——它来自用户输入。这里只做最小必要转义
+     * （单引号加倍 + 去 NUL），因为 plainto_tsquery 内部不再解释语法。</p>
+     *
+     * <p>任何异常都返回空集合而非抛出：让检索降级为纯向量路。</p>
+     */
+    private Set<Long> lexicalCandidates(String uid, String kbName, String query) {
+        Set<Long> hits = new HashSet<Long>();
+        try {
+            KbChunkBean where = new KbChunkBean();
+            where.setLastuser(uid);
+            if (kbName != null && !kbName.trim().isEmpty()) {
+                where.setKbName(kbName.trim());
+            }
+            String escaped = escapeSqlLiteral(query);
+            String ftsWhere = "to_tsvector('simple', \"content\") @@ plainto_tsquery('simple', '" + escaped + "')";
+            List<KbChunkBean> matched = kbChunkBeanMapper.select(null, where, ftsWhere);
+            if (matched != null) {
+                for (KbChunkBean chunk : matched) {
+                    if (chunk.getIid() != null) {
+                        hits.add(chunk.getIid());
+                    }
+                }
+            }
+        } catch (Exception e) {
+            // 索引未建、SQL 方言差异、权限变更等都可能让这一路失败。
+            // 检索是增强而非依赖：降级为纯向量路，只在日志里留痕。
+            log.warn("[KbRag] 关键词路召回失败，降级为纯向量检索: {}", e.getMessage());
+        }
+        return hits;
+    }
+
+    /**
+     * 词项重叠数：查询里有多少个词项出现在分块正文中。
+     *
+     * <p>用作关键词路的排序依据。intentionally 简单——
+     * RRF 只需要排名，不需要精确的 BM25 分值；而且这一路已有 PG 全文检索
+     * 做过一轮筛选，这里只是把召回的候选排出先后。</p>
+     */
+    static int countTermOverlap(String query, String content) {
+        if (query == null || content == null) {
+            return 0;
+        }
+        String lowerContent = content.toLowerCase();
+        int overlap = 0;
+        for (String term : tokenize(query)) {
+            if (lowerContent.contains(term)) {
+                overlap++;
+            }
+        }
+        return overlap;
+    }
+
+    /**
+     * 中英混合取词项。
+     *
+     * <p>英文按单词取（{@code approval} 是一个词项）；中文不按单字取——
+     * 单字噪声太大（「的」「是」到处都有，会把所有片段都算成命中），
+     * 也不引入外部分词器（项目不该为这点事多一个依赖）。
+     * 采用折衷的<b>二元滑窗</b>：连续中文段每两字取一个词项，
+     * 「报销流程」→ {@code 报销、销流、流程}。这覆盖了绝大多数
+     * 中文词组（中文词以二字居多），且对单字查询仍能通过包含判断命中。</p>
+     */
+    static List<String> tokenize(String text) {
+        List<String> terms = new ArrayList<String>();
+        StringBuilder cjkRun = new StringBuilder();
+        StringBuilder latin = new StringBuilder();
+
+        for (int i = 0; i < text.length(); i++) {
+            char c = text.charAt(i);
+            if (c >= 0x4E00 && c <= 0x9FFF) {
+                if (latin.length() > 0) {
+                    terms.add(latin.toString());
+                    latin.setLength(0);
+                }
+                cjkRun.append(c);
+            } else if (Character.isLetterOrDigit(c)) {
+                if (cjkRun.length() > 0) {
+                    addCjkBigrams(cjkRun, terms);
+                    cjkRun.setLength(0);
+                }
+                latin.append(c);
+            }
+            // 其它字符（标点、空格）作为分隔符，直接跳过
+        }
+        if (cjkRun.length() > 0) {
+            addCjkBigrams(cjkRun, terms);
+        }
+        if (latin.length() > 0) {
+            terms.add(latin.toString());
+        }
+        return terms;
+    }
+
+    /** 连续中文段转二元词项；只剩单字时保留单字（好过丢掉） */
+    private static void addCjkBigrams(StringBuilder run, List<String> terms) {
+        String s = run.toString();
+        if (s.length() == 1) {
+            terms.add(s);
+            return;
+        }
+        for (int i = 0; i + 1 < s.length(); i++) {
+            terms.add(s.substring(i, i + 2));
+        }
+    }
+
+    /** SQL 字面量转义：单引号加倍，去掉 NUL */
+    static String escapeSqlLiteral(String value) {
+        if (value == null) {
+            return "";
+        }
+        return value.replace("\0", "").replace("'", "''");
     }
 
     private Long findDocIid(String kbName, String name, String uid) {
@@ -258,9 +554,17 @@ public class KbRagHolder {
         return result.getDatas().getContent().get(0).getIid();
     }
 
-    private Map<Long, String> loadDocNames() {
+    /**
+     * 载入文档名映射，仅限当前用户的文档。
+     *
+     * <p>检索结果里的 docName 用于展示「来源：文档名」，因此这里同样按
+     * lastuser 收窄，既避免全表扫描，也保证不会把他人文档名带进响应。</p>
+     */
+    private Map<Long, String> loadDocNames(String uid) {
         Map<Long, String> names = new HashMap<Long, String>();
-        List<KbDocBean> docs = kbDocBeanMapper.select(null, new KbDocBean());
+        KbDocBean where = new KbDocBean();
+        where.setLastuser(uid);
+        List<KbDocBean> docs = kbDocBeanMapper.select(null, where);
         if (docs != null) {
             for (KbDocBean doc : docs) {
                 names.put(doc.getIid(), doc.getName());

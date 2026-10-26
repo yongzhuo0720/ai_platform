@@ -4,6 +4,43 @@ import { kbRagApi, type KbDoc, type KbSearchResultDto } from '@/api/kbRag'
 import { debug } from '@/utils/debug'
 import { isConfirmCancelled } from '@/utils/confirm'
 
+/**
+ * 按扩展名提取文档文本：txt/md 直接读；pdf 用 pdfjs；docx 用 mammoth。
+ * 解析器全部动态 import——只有真的上传对应格式才加载（pdfjs ~350KB）。
+ */
+async function extractTextFromFile(file: File): Promise<string> {
+  const lower = file.name.toLowerCase()
+  if (lower.endsWith('.pdf')) {
+    const pdfjs = await import('pdfjs-dist/legacy/build/pdf.min.js')
+    pdfjs.GlobalWorkerOptions.workerSrc = new URL(
+      'pdfjs-dist/legacy/build/pdf.worker.js',
+      import.meta.url,
+    ).toString()
+    const buf = await file.arrayBuffer()
+    const doc = await pdfjs.getDocument({ data: buf }).promise
+    const parts: string[] = []
+    for (let i = 1; i <= doc.numPages; i++) {
+      const page = await doc.getPage(i)
+      const content = await page.getTextContent()
+      parts.push(content.items.map((it: { str?: string }) => it.str || '').join(' '))
+    }
+    return parts.join('\n')
+  }
+  if (lower.endsWith('.docx')) {
+    const mammoth = await import('mammoth/mammoth.browser')
+    const buf = await file.arrayBuffer()
+    const result = await mammoth.extractRawText({ arrayBuffer: buf })
+    return result.value || ''
+  }
+  // txt / md / markdown 及其他文本类：直接读
+  return await new Promise<string>((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => resolve(String(reader.result ?? ''))
+    reader.onerror = () => reject(new Error('读取文件失败'))
+    reader.readAsText(file, 'utf-8')
+  })
+}
+
 const MAX_DOC_CHARS = 200000
 
 export function useIndex() {
@@ -52,26 +89,37 @@ export function useIndex() {
   }
 
   /** 读取本地 txt/md 文本，填入上传弹窗 */
-  function handleFileChange(event: Event) {
+  async function handleFileChange(event: Event) {
     const input = event.target as HTMLInputElement
     const file = input.files?.[0]
     if (!file) return
-    if (file.size > MAX_DOC_CHARS) {
-      ElMessage.warning('文件过大，单篇最多 20 万字符')
+    // 20MB 是文件体积上限；文本量上限（20 万字符）在解析后校验
+    if (file.size > 20 * 1024 * 1024) {
+      ElMessage.warning('文件过大，单篇最多 20MB')
       input.value = ''
       return
     }
-    const reader = new FileReader()
-    reader.onload = () => {
-      state.uploadForm.content = String(reader.result ?? '')
+    const lower = file.name.toLowerCase()
+    const needsParse = lower.endsWith('.pdf') || lower.endsWith('.docx')
+    if (needsParse) ElMessage.info('正在解析文档…')
+    try {
+      const text = await extractTextFromFile(file)
+      if (!text.trim()) {
+        ElMessage.warning('未能从文档中提取到文本（可能是扫描件/纯图片 PDF）')
+      }
+      if (text.length > MAX_DOC_CHARS) {
+        ElMessage.warning(`提取文本 ${text.length} 字符，超过单篇 20 万上限，将截断入库`)
+        state.uploadForm.content = text.slice(0, MAX_DOC_CHARS)
+      } else {
+        state.uploadForm.content = text
+      }
       if (!state.uploadForm.name) {
         state.uploadForm.name = file.name
       }
+    } catch (e) {
+      console.error('文档解析失败:', e)
+      ElMessage.error('文档解析失败，请确认文件未损坏')
     }
-    reader.onerror = () => {
-      ElMessage.error('读取文件失败，请重试')
-    }
-    reader.readAsText(file, 'utf-8')
     input.value = ''
   }
 

@@ -28,6 +28,8 @@ public class TableSchemaInitializer implements ApplicationListener<ApplicationRe
     public void onApplicationEvent(ApplicationReadyEvent event) {
         ensureCapabilitiesIconColumn();
         ensureAiGatewayIndexes();
+        ensureKbChunkFullTextIndex();
+        ensureCostAndTracingColumns();
     }
 
     /**
@@ -48,6 +50,54 @@ public class TableSchemaInitializer implements ApplicationListener<ApplicationRe
         execute("CREATE INDEX IF NOT EXISTS idx_aicalllog_user_time ON aicalllogbean (\"userId\", \"createtime\")");
         execute("CREATE INDEX IF NOT EXISTS idx_aicalllog_module_time ON aicalllogbean (\"module\", \"createtime\")");
         execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_aiuserquota_user ON aiuserquotabean (\"userId\")");
+    }
+
+    /**
+     * 本地 RAG 的全文检索索引。
+     *
+     * <p>混合检索的关键词路用 PostgreSQL 全文检索做候选召回
+     * （{@code to_tsvector('simple', content) @@ plainto_tsquery(...)}）。
+     * 没有这个表达式索引，每次检索都会对 content 列做全表顺序扫描——
+     * 分块数上来以后这一路会比向量路还慢，混合检索就失去意义。</p>
+     *
+     * <p>用 {@code 'simple'} 配置而不是语言特定的 {@code 'english'} / {@code 'chinese'}：
+     * simple 不做词干化、不依赖语言词典，对中英混合的企业文档更稳，
+     * 也不会因为缺中文分词器而退化。</p>
+     */
+    private void ensureKbChunkFullTextIndex() {
+        execute("CREATE INDEX IF NOT EXISTS idx_kbchunk_content_fts ON kbchunkbean "
+                + "USING gin (to_tsvector('simple', \"content\"))");
+    }
+
+    /**
+     * AI 治理看板的成本核算与全链路追踪列。
+     *
+     * <p>{@code aicalllogbean.costCents}——调用折算成本（分）。
+     * {@code aicalllogbean.requestId}——全链路请求 ID。
+     * {@code modelsconfigbean} 的两个价格列——token 单价（分/百万）。</p>
+     *
+     * <p>全部用 ADD COLUMN IF NOT EXISTS，可重复执行、不影响存量数据：
+     * 新增列默认 NULL，语义上就是「未配置」，与代码里的判空一致。</p>
+     */
+    private void ensureCostAndTracingColumns() {
+        execute("ALTER TABLE aicalllogbean ADD COLUMN IF NOT EXISTS \"costCents\" int8");
+        execute("ALTER TABLE aicalllogbean ADD COLUMN IF NOT EXISTS \"requestId\" varchar(64)");
+        execute("ALTER TABLE aicalllogbean ADD COLUMN IF NOT EXISTS \"firstTokenMs\" int8");
+
+        // 云端会话：直连模型会话的多端同步（JSON 快照按 (userId, convId) upsert）
+        execute("CREATE TABLE IF NOT EXISTS chatconversationbean (\"convId\" varchar(64), \"userId\" varchar(255), \"title\" varchar(255), \"modelName\" varchar(255), \"pinned\" boolean, \"payload\" text, \"iid\" bigserial NOT NULL PRIMARY KEY, \"lastuser\" varchar(255), \"createtime\" timestamp DEFAULT now(), \"clientUpdatedAt\" int8, \"updatetime\" timestamp, \"enable\" boolean DEFAULT true, \"app\" varchar(255))");
+        execute("CREATE INDEX IF NOT EXISTS idx_chatconv_uid ON chatconversationbean (\"userId\", \"convId\")");
+
+        // 对话分享：快照 + 随机 token 访问
+        execute("CREATE TABLE IF NOT EXISTS chatsharebean (\"shareToken\" varchar(64), \"title\" varchar(255), \"payload\" text, \"userId\" varchar(255), \"authorName\" varchar(255), \"iid\" bigserial NOT NULL PRIMARY KEY, \"lastuser\" varchar(255), \"createtime\" timestamp DEFAULT now(), \"updatetime\" timestamp, \"enable\" boolean DEFAULT true, \"app\" varchar(255))");
+        execute("CREATE INDEX IF NOT EXISTS idx_chatshare_token ON chatsharebean (\"shareToken\")");
+
+        // AI 调用周报：一周一行的治理快照
+        execute("CREATE TABLE IF NOT EXISTS aiweeklyreportbean (\"weekStart\" varchar(16), \"weekEnd\" varchar(16), \"totalCalls\" int8, \"successCalls\" int8, \"failedCalls\" int8, \"totalTokens\" int8, \"costCents\" int8, \"avgLatencyMs\" int8, \"avgFirstTokenMs\" int8, \"topUser\" varchar(255), \"topModel\" varchar(255), \"iid\" bigserial NOT NULL PRIMARY KEY, \"lastuser\" varchar(255), \"createtime\" timestamp DEFAULT now(), \"updatetime\" timestamp, \"enable\" boolean DEFAULT true, \"app\" varchar(255))");
+
+        execute("CREATE INDEX IF NOT EXISTS idx_aicalllog_requestid ON aicalllogbean (\"requestId\")");
+        execute("ALTER TABLE modelsconfigbean ADD COLUMN IF NOT EXISTS \"priceInputPerMillion\" int8");
+        execute("ALTER TABLE modelsconfigbean ADD COLUMN IF NOT EXISTS \"priceOutputPerMillion\" int8");
     }
 
     /**
