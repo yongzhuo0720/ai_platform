@@ -67,6 +67,7 @@ const goBack = () => {
         :src="iframeSrc"
         class="preview-frame"
         title="预览页面"
+        sandbox="allow-scripts allow-same-origin allow-forms allow-popups"
       />
     </div>
   </div>
@@ -112,8 +113,8 @@ const goBack = () => {
 }
 
 .preview-back:hover {
-  border-color: #0066ff;
-  color: #0066ff;
+  border-color: #3d5bf5;
+  color: #3d5bf5;
   background: rgba(0, 102, 255, 0.06);
 }
 

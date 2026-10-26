@@ -520,12 +520,28 @@ export const streamingRequest = (
                 if (msgId) {
                   onMessageId?.(msgId);
                 }
-                // 提取思考块，并只把剥离后的正文推给 UI
-                const { thinking, answer } = splitThinking(parsed.answer);
-                if (thinking) {
-                  onThinking?.(thinking);
-                }
-                if (answer) {
+                // 思考块剥离必须走与 text_chunk 相同的缓冲逻辑：
+                // <think> 标签可能被 SSE 分片从中间切开（如 "…<th" + "ink>"），
+                // 逐 chunk 直接 splitThinking 会漏判开头，把思考内容和
+                // </think> 字面量一起泄漏进正文。
+                const answer = parsed.answer;
+                if (answer.includes('<think>') || answer.includes('</think>') || thinkingBuffer.length > 0) {
+                  thinkingBuffer += answer;
+                  const result = splitThinking(thinkingBuffer);
+                  if (result.closed) {
+                    if (result.thinking) {
+                      onThinking?.(result.thinking);
+                    }
+                    if (result.answer) {
+                      onChunk(result.answer);
+                    }
+                    thinkingBuffer = '';
+                  } else if (result.thinking) {
+                    // 思考块未闭合：把已累积的思考增量推给 UI 实时展示
+                    onThinking?.(result.thinking);
+                  }
+                } else {
+                  // 正常文本，直接输出
                   onChunk(answer);
                 }
               }
@@ -569,6 +585,18 @@ export const streamingRequest = (
               // message_end 事件：消息结束，包含会话 ID 和检索资源
               // 通常在所有流式输出完成后触发
               else if (parsed.event === 'message_end') {
+                // flush：缓冲里可能还有未闭合的思考块（流在 </think> 前被截断），
+                // 不 flush 的话这段内容会永远留在 buffer 里丢掉
+                if (thinkingBuffer.length > 0) {
+                  const flushed = splitThinking(thinkingBuffer);
+                  if (flushed.thinking) {
+                    onThinking?.(flushed.thinking);
+                  }
+                  if (flushed.answer) {
+                    onChunk(flushed.answer);
+                  }
+                  thinkingBuffer = '';
+                }
                 debug.log('[message_end full]', parsed);
                 const msgId = parsed.message_id || parsed.id;
                 debug.log('[message_end] captured message_id:', msgId);
@@ -578,8 +606,22 @@ export const streamingRequest = (
                 if (parsed.conversation_id) {
                   safeComplete(parsed.conversation_id);
                 }
-                if (parsed.retriever_resources) {
-                  onRetrieverResources?.(parsed.retriever_resources);
+                /*
+                 * 检索引用（知识库命中片段）。
+                 *
+                 * 修复前只读 parsed.retriever_resources。但不同 Dify 版本
+                 * 放的位置不一样：有的在事件根级，有的包在 metadata 里
+                 * （parsed.metadata.retriever_resources）。只读一处会导致
+                 * 另一种版本的引用完全不展示——用户看不到答案依据，
+                 * 而这正是知识库问答最需要的能力。
+                 *
+                 * 三个位置都试，取到第一个非空的。
+                 */
+                const retrieverResources = parsed.retriever_resources
+                  || parsed.metadata?.retriever_resources
+                  || parsed.data?.retriever_resources;
+                if (retrieverResources) {
+                  onRetrieverResources?.(retrieverResources);
                 }
               }
               // workflow_started 事件：工作流开始执行
@@ -617,6 +659,30 @@ export const streamingRequest = (
                 debug.log('[workflow_finished FULL]', parsed);
                 const dataOutputs = parsed.data?.outputs || parsed.outputs;
                 debug.log('[workflow_finished outputs]', dataOutputs);
+
+                /*
+                 * 工作流终态判定。
+                 *
+                 * 修复前这里完全不看 data.status / data.error，一律走 onComplete。
+                 * 于是工作流失败（模型不可用、节点超时、被中止）时，用户看到的是
+                 * 一个空回答加上「生成完毕」——比直接报错更难排查。
+                 *
+                 * Dify 的 workflow_finished 约定：
+                 *   data.status = 'succeeded' | 'failed' | 'stopped'
+                 *   data.error  = 失败时的错误信息（字符串或对象）
+                 * 只有明确 succeeded（或老版本不返回 status）时才允许走成功分支。
+                 */
+                const wfStatus = String(parsed.data?.status || parsed.status || '').toLowerCase();
+                const wfError = parsed.data?.error || parsed.error;
+                if (wfStatus === 'failed' || wfStatus === 'stopped' || (wfStatus === '' && wfError)) {
+                  const msg = (typeof wfError === 'string' && wfError)
+                    || wfError?.message
+                    || (wfStatus === 'stopped' ? '工作流已停止' : '工作流执行失败');
+                  debug.warn('[workflow_finished] 工作流未成功完成, status=%s, error=%o', wfStatus, wfError);
+                  errorCalled = true;
+                  onError?.(new Error(msg));
+                  continue;
+                }
 
                 // 捕获 message_id 用于推荐消息
                 // 注意：parsed.data?.id 是 workflow run ID，不能作为 message_id 回退

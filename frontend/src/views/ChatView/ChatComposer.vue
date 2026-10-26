@@ -33,6 +33,8 @@ interface Props {
   kbOptions?: string[];
   /** 当前选中的知识库名，空串 = 不引用知识库 */
   activeKbName?: string;
+  /** 文件选择器过滤；直连模式只收图片 */
+  fileAccept?: string;
 }
 
 const props = withDefaults(defineProps<Props>(), {
@@ -97,6 +99,9 @@ const handleSubmit = () => {
 
 const handleKeydown = (event: Event | KeyboardEvent) => {
   if (!(event instanceof KeyboardEvent)) return;
+  // 中文/日文等输入法组词过程中按回车是「确认候选词」，不应直接发送消息。
+  // 修复前漏了这道判断：用拼音打字时每次选词都会误发一条消息。
+  if (event.isComposing) return;
   if (event.key === "Enter" && !event.shiftKey) {
     event.preventDefault();
     handleSubmit();
@@ -161,36 +166,31 @@ const updateMenuPosition = () => {
   const scrollX = window.scrollX || document.documentElement.scrollLeft;
   const scrollY = window.scrollY || document.documentElement.scrollTop;
   const menuWidth = Math.min(224, window.innerWidth - 16);
+  const menuMaxHeight = Math.min(420, window.innerHeight * 0.6);
 
-  // 向下展开：菜单位于触发按钮正下方（文档坐标）
   let left = rect.right - menuWidth + scrollX;
   if (left < 8) left = 8;
   if (left + menuWidth > window.innerWidth + scrollX - 8) {
     left = window.innerWidth + scrollX - menuWidth - 8;
   }
 
+  // 输入区贴近视口底部，向下空间不足时向上展开（不再撑开 body 出滚动条——
+  // 那会让视口外的选项既看不见也点不到）
+  const spaceBelow = window.innerHeight - rect.bottom - 8;
+  let top: number;
+  if (spaceBelow < Math.min(menuMaxHeight, props.modelOptions.length * 44 + 12) && rect.top > 8) {
+    const height = Math.min(menuMaxHeight, rect.top - 8);
+    top = rect.top - 8 - height + scrollY;
+  } else {
+    top = rect.bottom + 8 + scrollY;
+  }
+
   modelMenuStyle.value = {
     position: 'absolute',
-    top: `${rect.bottom + 8 + scrollY}px`,
+    top: `${top}px`,
     left: `${left}px`,
     width: `${menuWidth}px`,
   };
-};
-
-/** 菜单渲染后测量实际高度，若超出视口底部，撑开 body 让浏览器出现滚动条 */
-const expandBodyForMenu = () => {
-  const menu = modelMenuRef.value;
-  const shell = modelShellRef.value;
-  if (!menu || !shell) return;
-  const menuHeight = menu.offsetHeight;
-  const shellRect = shell.getBoundingClientRect();
-  const overflow = shellRect.bottom + 8 + menuHeight - window.innerHeight;
-  if (overflow > 0) {
-    const body = document.body;
-    body.style.height = 'auto';
-    body.style.overflowY = 'auto';
-    body.style.paddingBottom = `${overflow + 24}px`;
-  }
 };
 
 const closeModelMenu = () => {
@@ -207,9 +207,6 @@ const toggleModelMenu = () => {
   modelMenuOpen.value = !modelMenuOpen.value;
   if (modelMenuOpen.value) {
     updateMenuPosition();
-    nextTick(() => {
-      expandBodyForMenu();
-    });
     window.addEventListener('scroll', updateMenuPosition);
     window.addEventListener('resize', updateMenuPosition);
   } else {
@@ -264,6 +261,7 @@ onUnmounted(() => {
       ref="fileInputRef"
       type="file"
       multiple
+      :accept="fileAccept"
       class="chat-composer-file-input"
       @change="handleFileChange"
     />
@@ -908,8 +906,11 @@ onUnmounted(() => {
   -webkit-backdrop-filter: blur(16px);
   z-index: 9999;
   box-sizing: border-box;
-  /* 菜单向下完整展开，不做内部裁剪；超出视口部分由浏览器滚动条承载 */
-  max-height: none;
+  /* 高度上限 + 内部滚动：菜单挂在输入区上方/下方时都不越出视口，
+     条目多时靠自身滚动浏览（此前 max-height:none 会延伸出视口，
+     视口外的选项既看不见也点不到） */
+  max-height: min(420px, 60vh);
+  overflow-y: auto;
 }
 
 .chat-model-menu-item {
