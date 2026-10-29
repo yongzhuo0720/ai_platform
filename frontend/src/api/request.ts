@@ -11,7 +11,22 @@ export interface RequestConfig {
   headers?: Record<string, string>;
   body?: unknown;
   params?: Record<string, string | number | boolean | undefined>;
+  /**
+   * 外部传入的取消信号。
+   * 2026-10-29 新增：此前 request() 完全无法取消，组件卸载后请求仍在飞行，
+   * 回调会去写已经销毁的响应式状态。传入 signal 后调用方可主动中止。
+   */
+  signal?: AbortSignal;
+  /**
+   * 超时时间（毫秒），默认 30000。
+   * 2026-10-29 新增：此前 request() 没有超时，网络悬挂时 Promise 会永久 pending，
+   * 页面一直卡在 loading，且没有任何报错。
+   */
+  timeoutMs?: number;
 }
+
+/** 非流式请求的默认超时（与 streamingRequest 的首字节超时保持一致） */
+const DEFAULT_REQUEST_TIMEOUT_MS = 30000;
 
 /**
  * 获取默认请求头（包含 Authorization）
@@ -138,7 +153,7 @@ export const request = async <T>(
     throw new Error('Dify 配置未加载：请检查后端「Dify 配置」是否已填写，或本地 .env.local 是否配置');
   }
 
-  const { method = 'GET', headers = {}, body, params } = config;
+  const { method = 'GET', headers = {}, body, params, signal, timeoutMs } = config;
 
   // 合并默认请求头和自定义请求头
   const defaultHeaders = getDefaultHeaders(body !== undefined);
@@ -147,10 +162,28 @@ export const request = async <T>(
   // 构建完整 URL（处理查询参数）
   const fullUrl = params ? buildUrl('', url, params) : url;
 
+  // 2026-10-29：补超时与取消。
+  // 自己建一个 controller 负责超时；如果调用方也传了 signal，
+  // 就在它 abort 时连带把内部的 controller 也 abort 掉
+  // （AbortSignal.any 兼容性还不够，这里手动桥接）。
+  const controller = new AbortController();
+  const timeout = timeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS;
+  const timer = setTimeout(() => controller.abort(), timeout);
+  let onOuterAbort: (() => void) | undefined;
+  if (signal) {
+    if (signal.aborted) {
+      controller.abort();
+    } else {
+      onOuterAbort = () => controller.abort();
+      signal.addEventListener('abort', onOuterAbort);
+    }
+  }
+
   // 构建 fetch 配置
   const fetchConfig: RequestInit = {
     method,
     headers: mergedHeaders,
+    signal: controller.signal,
   };
 
   if (body !== undefined) {
@@ -158,17 +191,41 @@ export const request = async <T>(
   }
 
   // 发送请求
-  const response = await fetch(fullUrl, fetchConfig);
+  let response: Response;
+  try {
+    response = await fetch(fullUrl, fetchConfig);
+  } catch (e) {
+    // 超时或外部取消时，fetch 会以 AbortError 抛出；
+    // 区分两者，避免把「用户主动取消」报成「请求超时」
+    if (controller.signal.aborted && signal?.aborted) {
+      throw new Error('请求已取消');
+    }
+    if (controller.signal.aborted) {
+      throw new Error(`请求超时：${timeout} 毫秒内未收到响应`);
+    }
+    throw e;
+  } finally {
+    clearTimeout(timer);
+    if (signal && onOuterAbort) {
+      signal.removeEventListener('abort', onOuterAbort);
+    }
+  }
 
   // 统一错误处理
   if (!response.ok) {
     const errorMessage = await response.text().catch(() => '未知错误');
+    if (response.status === 401 || response.status === 403) {
+      // 这里只抛明确错误，不做自动跳转：
+      // request() 被聊天、知识库等多处复用，贸然 redirect 会打断正常流程，
+      // 由调用方决定是提示还是跳登录页（axios.js 那边已经有 401 跳转逻辑）。
+      throw new Error(`登录状态已失效，请重新登录 (${response.status})`);
+    }
     throw new Error(`请求失败 (${response.status}): ${errorMessage || response.statusText}`);
   }
 
-  // 处理空响应
+  // 处理空响应（补括号：原写法 || 与 && 混用，语义虽碰巧正确但极易被误改）
   const contentType = response.headers.get('content-type');
-  if (response.status === 204 || response.status === 200 && !contentType) {
+  if (response.status === 204 || (response.status === 200 && !contentType)) {
     return {} as T;
   }
   if (contentType && contentType.includes('application/json')) {

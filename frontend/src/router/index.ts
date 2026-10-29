@@ -140,10 +140,21 @@ const router = createRouter({
         },
       ],
     },
+    // 2026-10-29：404 兜底。修复前访问不存在的路径会白屏且无任何提示。
+    // 必须放在最后——Vue Router 按顺序匹配，放前面会吞掉其它路由。
+    {
+      path: "/:pathMatch(.*)*",
+      name: "not-found",
+      component: () => import("@/views/NotFoundView/index.vue"),
+      meta: { title: "页面不存在" },
+    },
   ],
 });
 
 router.beforeEach((to, _from, next) => {
+  // 404 页对所有人可见，不需要登录，否则未登录用户访问错链接会被踢到登录页，
+  // 反而更看不出问题出在哪
+  if (to.name === 'not-found') return next()
   if (to.path === '/login') return next()
   if (to.path.startsWith('/share/')) return next()
   if (to.path === '/admin/login') return next()

@@ -7,6 +7,7 @@ import { userApi } from '@/api/user'
 import { roleApi } from '@/api/role'
 import { ADMIN_ACCESS_KEY } from '@/data/adminPlatform'
 import { ensureLoaded } from '@/stores/difyConfig'
+import { clearAdminSession } from '@/utils/session'
 
 export function useIndex() {
   const router = useRouter()
@@ -45,12 +46,10 @@ export function useIndex() {
     return true
   }
 
+  // 2026-10-29：改用统一实现。原来这里漏删了 admin_access，
+  // 而路由守卫正是靠它判断能否进入后台，残留会让守卫误判。
   const clearAdminCookies = () => {
-    Cookies.remove('admin_loginToken', { path: '/' })
-    Cookies.remove('admin_rid', { path: '/' })
-    Cookies.remove('admin_uaccess', { path: '/' })
-    Cookies.remove('admin_uname', { path: '/' })
-    Cookies.remove('admin_uid', { path: '/' })
+    clearAdminSession()
   }
 
   /** 统一请求包装：失败时结束 loading 并返回 null，错误提示由拦截器统一处理。 */

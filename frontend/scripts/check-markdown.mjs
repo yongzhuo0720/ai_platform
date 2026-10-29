@@ -1,5 +1,30 @@
 import assert from 'node:assert/strict';
 import { build } from 'esbuild';
+import { JSDOM } from 'jsdom';
+
+// ---------------------------------------------------------------------------
+// 2026-10-29：给 Node 补一个 DOM 环境。
+//
+// 这个脚本原本一直是失败的（"purify_default.sanitize is not a function"）：
+// markdown.ts 用 DOMPurify 做 XSS 消毒，而 DOMPurify 在**导入时**就要读 window，
+// Node 里没有 window，于是拿到一个未初始化的实例，调用 sanitize 直接抛错。
+//
+// 这意味着：这 10 条 XSS 断言从来没真正跑起来过——"防住了 javascript: 链接"
+// 这类结论其实是没有验证的。修的不是断言，是让它真的能运行。
+//
+// 必须在 import markdown 之前注入，因为 DOMPurify 是在模块初始化时取 window 的。
+// ---------------------------------------------------------------------------
+const dom = new JSDOM('<!doctype html><html><body></body></html>', {
+  url: 'http://localhost/',
+});
+globalThis.window = dom.window;
+globalThis.document = dom.window.document;
+globalThis.Node = dom.window.Node;
+globalThis.Element = dom.window.Element;
+globalThis.HTMLElement = dom.window.HTMLElement;
+globalThis.DocumentFragment = dom.window.DocumentFragment;
+globalThis.NodeFilter = dom.window.NodeFilter;
+globalThis.trustedTypes = undefined;
 
 const result = await build({
   entryPoints: ['src/utils/markdown.ts'],
