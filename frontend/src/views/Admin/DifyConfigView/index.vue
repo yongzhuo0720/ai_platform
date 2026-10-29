@@ -23,9 +23,9 @@
                         <span v-else style="color: var(--text-secondary)">未配置</span>
                     </template>
                 </el-table-column>
-                <el-table-column prop="lasttime" label="更新时间" align="center" width="180">
+                <el-table-column prop="updatetime" label="更新时间" align="center" width="180">
                     <template #default="scope">
-                        <span>{{ formatTime(scope.row.lasttime || scope.row.lastTime) }}</span>
+                        <span>{{ formatTime(scope.row.updatetime) }}</span>
                     </template>
                 </el-table-column>
                 <el-table-column label="操作" align="center" width="120" fixed="right">
