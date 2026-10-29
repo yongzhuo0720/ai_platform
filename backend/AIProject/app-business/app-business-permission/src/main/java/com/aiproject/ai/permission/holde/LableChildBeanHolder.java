@@ -39,17 +39,31 @@ public class LableChildBeanHolder {
     MyUserBaseDbHolder myUserBaseDbHolder = null;
 
     /**
-     * 标签子项与标签组同属全平台共享基础数据，写操作限管理员。
-     *
-     * <p>2026-10-29 补充：此前 install / delete / update 三个写方法完全没有鉴权。
-     * 返回 null 表示校验通过，非 null 表示被拒绝（与 ModelsConfigBeanHolder 一致）。</p>
+     * 本表是「资源 ←→ 标签组」的绑定表，不是标签管理数据：
+     * hash = 被引用资源主键，type = 模块（applications / models / knowledge_base ...），
+     * lableiid = 标签组 iid。普通用户给自己名下的知识库打/取消标签走的正是
+     * install / delete，因此这两个方法只校验登录，不能收紧成管理员，
+     * 否则会打断知识库详情页与知识库广场的标签功能。
+     * 标签组本身的增删改（LableBeanHolder）才是管理员专属。
      */
-    private Result<Boolean> checkAdmin(String uid) {
+    private Result<Boolean> checkLogin(String uid) {
         if (uid == null || uid.trim().isEmpty()) {
             return Result.failed(false, "请先登录");
         }
+        return null;
+    }
+
+    /**
+     * 绑定关系的整行修改没有合法前端调用方，保持管理员校验作为兜底。
+     * 返回 null 表示校验通过，非 null 表示被拒绝（与 ModelsConfigBeanHolder 一致）。
+     */
+    private Result<Boolean> checkAdmin(String uid) {
+        Result<Boolean> login = checkLogin(uid);
+        if (login != null) {
+            return login;
+        }
         if (!myUserBaseDbHolder.isAdmin(uid)) {
-            return Result.failed(false, "仅管理员可维护标签子项");
+            return Result.failed(false, "仅管理员可维护标签绑定");
         }
         return null;
     }
@@ -65,7 +79,7 @@ public class LableChildBeanHolder {
      **/
 
     public Result<Boolean> install(String uid, LableChildBean data) {
-        Result<Boolean> check = checkAdmin(uid);
+        Result<Boolean> check = checkLogin(uid);
         if (check != null) {
             return check;
         }
@@ -86,7 +100,7 @@ public class LableChildBeanHolder {
      **/
 
     public Result<Boolean> delete(String uid, LableChildBean data) {
-        Result<Boolean> check = checkAdmin(uid);
+        Result<Boolean> check = checkLogin(uid);
         if (check != null) {
             return check;
         }
