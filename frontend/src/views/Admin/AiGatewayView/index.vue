@@ -8,7 +8,10 @@
       <div class="gw-status">
         <span class="gw-status-item">
           <i :class="['status-dot', state.config?.enabled ? 'on' : 'off']"></i>
-          {{ state.config?.enabled ? '网关运行中' : '网关已关闭' }}
+          {{ !state.config ? '网关状态未知' : state.config.enabled ? '网关运行中' : '网关已关闭' }}
+          <el-button v-if="!state.config" link type="primary" size="small" @click="retryOverview">
+            重试
+          </el-button>
         </span>
         <span class="gw-status-item" v-if="state.config">
           限流 {{ state.config.rateLimitPerMinute }} 次/分钟
@@ -46,6 +49,9 @@
           </button>
           <span v-if="state.summary?.truncated" class="gw-warn">
             数据量较大，仅统计最近 10 万条调用
+          </span>
+          <span v-if="!state.summary && !state.summaryLoading" class="gw-warn">
+            用量数据加载失败，请点击「查询」重试
           </span>
         </div>
 
@@ -470,6 +476,7 @@ import { useIndex } from './index'
 const {
   state,
   loadSummary,
+  retryOverview,
   loadLogs,
   loadQuotas,
   exportLoading,

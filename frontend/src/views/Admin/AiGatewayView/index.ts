@@ -102,10 +102,18 @@ export function useIndex() {
       const { data: res } = await aiGatewayAdminApi.getConfig()
       if (res.resp_code === 0) {
         state.config = res.datas
+      } else {
+        ElMessage.error(res.resp_msg || '获取 AI 网关配置失败')
       }
     } catch (err) {
       debug.error('获取 AI 网关配置失败', err)
+      ElMessage.error('获取 AI 网关配置失败，请稍后重试')
     }
+  }
+
+  function retryOverview() {
+    loadConfig()
+    loadSummary()
   }
 
   function dateParams() {
@@ -452,6 +460,7 @@ export function useIndex() {
     trendMax,
     loadConfig,
     loadSummary,
+    retryOverview,
     loadLogs,
     loadQuotas,
     exportLoading,

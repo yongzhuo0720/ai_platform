@@ -6,7 +6,12 @@ import type {
   RetrievalResult,
   DifyDatasetListResponse,
 } from '@/types/knowledge';
-import { getKnowledgeFileConfig, gatewayAuthHeaders } from '@/stores/difyConfig'
+import {
+  getKnowledgeFileConfig,
+  gatewayAuthHeaders,
+  isGatewayMode,
+  isGatewayModuleConfigured,
+} from '@/stores/difyConfig'
 
 const getBase = () => {
   const { apiUrl } = getKnowledgeFileConfig()
@@ -29,7 +34,20 @@ const getHeaders = (isJson = true) => {
   return headers;
 };
 
-const isApiEnabled = () => Boolean(getKey())
+/**
+ * 知识库文件接口是否可用。
+ * <p>网关模式下占位 Key 恒存在，真实可用性取决于服务端「知识库文件」模块是否已配置；
+ * 未配置时直接短路，避免每次进页面都向网关发一轮必然失败的请求。</p>
+ */
+const isApiEnabled = async (): Promise<boolean> => {
+  if (!isGatewayMode()) {
+    return Boolean(getKey())
+  }
+  const configured = await isGatewayModuleConfigured('file')
+  return configured !== false
+}
+
+const MODULE_MISSING_MESSAGE = '知识库文件模块未配置，请管理员在后台「Dify 配置管理」中填写地址与密钥'
 
 export interface DatasetListParams {
   page?: number;
@@ -80,7 +98,7 @@ export interface EmbeddingModelsResponse {
 
 export const datasetApi = {
   getDatasets: async (page = 1, limit = 20, throwOnError = false): Promise<DatasetListResponse> => {
-    if (!isApiEnabled()) {
+    if (!(await isApiEnabled())) {
       if (throwOnError) throw new Error('Dify API 未配置');
       return { data: [], has_more: false, limit, total: 0, page };
     }
@@ -114,7 +132,7 @@ export const datasetApi = {
   },
 
   getDataset: async (datasetId: string): Promise<KnowledgeBase | null> => {
-    if (!isApiEnabled()) {
+    if (!(await isApiEnabled())) {
       return null;
     }
     try {
@@ -138,6 +156,9 @@ export const datasetApi = {
   },
 
   createDataset: async (params: CreateDatasetParams): Promise<KnowledgeBase> => {
+    if (!(await isApiEnabled())) {
+      throw new Error(MODULE_MISSING_MESSAGE);
+    }
     const response = await fetch(`${getBase()}/datasets`, {
       method: 'POST',
       headers: getHeaders(),
@@ -154,6 +175,9 @@ export const datasetApi = {
     datasetId: string,
     params: UpdateDatasetParams
   ): Promise<KnowledgeBase> => {
+    if (!(await isApiEnabled())) {
+      throw new Error(MODULE_MISSING_MESSAGE);
+    }
     const response = await fetch(`${getBase()}/datasets/${datasetId}`, {
       method: 'PATCH',
       headers: getHeaders(),
@@ -167,6 +191,9 @@ export const datasetApi = {
   },
 
   deleteDataset: async (datasetId: string): Promise<void> => {
+    if (!(await isApiEnabled())) {
+      throw new Error(MODULE_MISSING_MESSAGE);
+    }
     const response = await fetch(`${getBase()}/datasets/${datasetId}`, {
       method: 'DELETE',
       headers: getHeaders(),
@@ -177,7 +204,7 @@ export const datasetApi = {
   },
 
   getEmbeddingModels: async (): Promise<EmbeddingModelOption[]> => {
-    if (!isApiEnabled()) {
+    if (!(await isApiEnabled())) {
       return [];
     }
     try {
@@ -214,6 +241,9 @@ export const datasetApi = {
     datasetId: string,
     params: RetrieveParams
   ): Promise<RetrievalResult> => {
+    if (!(await isApiEnabled())) {
+      throw new Error(MODULE_MISSING_MESSAGE);
+    }
     const response = await fetch(
       `${getBase()}/datasets/${datasetId}/retrieve`,
       {
