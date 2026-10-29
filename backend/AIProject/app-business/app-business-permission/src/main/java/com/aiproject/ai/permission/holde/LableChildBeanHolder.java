@@ -7,6 +7,7 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 
+import com.aiproject.ai.permission.spi.LableBindingResourceGuard;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import com.heneng.hnsp.common.db.utils.PageResult;
@@ -38,14 +39,42 @@ public class LableChildBeanHolder {
     @Autowired
     MyUserBaseDbHolder myUserBaseDbHolder = null;
 
+    /** 资源归属校验实现（由业务模块提供，如 knowledge_base 的所有者判定） */
+    @Autowired(required = false)
+    LableBindingResourceGuard resourceGuard = null;
+
     /**
      * 本表是「资源 ←→ 标签组」的绑定表，不是标签管理数据：
      * hash = 被引用资源主键，type = 模块（applications / models / knowledge_base ...），
-     * lableiid = 标签组 iid。普通用户给自己名下的知识库打/取消标签走的正是
-     * install / delete，因此这两个方法只校验登录，不能收紧成管理员，
-     * 否则会打断知识库详情页与知识库广场的标签功能。
+     * lableiid = 标签组 iid。
+     * <p>
+     * 写操作按资源归属收紧：超级管理员可维护全部绑定；普通用户只能维护
+     * 自己名下知识库的标签（知识库详情页/广场依赖此能力），其余类型
+     * 前端本就只对超管开放，后端同样按管理员限制。
      * 标签组本身的增删改（LableBeanHolder）才是管理员专属。
      */
+    private Result<Boolean> checkManageBinding(String uid, LableChildBean data) {
+        Result<Boolean> login = checkLogin(uid);
+        if (login != null) {
+            return login;
+        }
+        if (myUserBaseDbHolder.isAdmin(uid)) {
+            return null;
+        }
+        if (data == null || isEmpty(data.getType()) || isEmpty(data.getHash())) {
+            return Result.failed(false, "缺少资源类型或主键");
+        }
+        if (resourceGuard != null && data.getType().equals(resourceGuard.type())
+                && resourceGuard.canManage(uid, data.getHash())) {
+            return null;
+        }
+        return Result.failed(false, "仅资源所有者或管理员可维护标签绑定");
+    }
+
+    private static boolean isEmpty(String value) {
+        return value == null || value.trim().isEmpty();
+    }
+
     private Result<Boolean> checkLogin(String uid) {
         if (uid == null || uid.trim().isEmpty()) {
             return Result.failed(false, "请先登录");
@@ -79,7 +108,7 @@ public class LableChildBeanHolder {
      **/
 
     public Result<Boolean> install(String uid, LableChildBean data) {
-        Result<Boolean> check = checkLogin(uid);
+        Result<Boolean> check = checkManageBinding(uid, data);
         if (check != null) {
             return check;
         }
@@ -100,7 +129,7 @@ public class LableChildBeanHolder {
      **/
 
     public Result<Boolean> delete(String uid, LableChildBean data) {
-        Result<Boolean> check = checkLogin(uid);
+        Result<Boolean> check = checkManageBinding(uid, data);
         if (check != null) {
             return check;
         }
