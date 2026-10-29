@@ -35,16 +35,40 @@ public class LableChildBeanHolder {
     @Autowired
     LableChildBeanMapper<LableChildBean> lableChildBeanMapper = null;
 
+    @Autowired
+    MyUserBaseDbHolder myUserBaseDbHolder = null;
+
+    /**
+     * 标签子项与标签组同属全平台共享基础数据，写操作限管理员。
+     *
+     * <p>2026-10-29 补充：此前 install / delete / update 三个写方法完全没有鉴权。
+     * 返回 null 表示校验通过，非 null 表示被拒绝（与 ModelsConfigBeanHolder 一致）。</p>
+     */
+    private Result<Boolean> checkAdmin(String uid) {
+        if (uid == null || uid.trim().isEmpty()) {
+            return Result.failed(false, "请先登录");
+        }
+        if (!myUserBaseDbHolder.isAdmin(uid)) {
+            return Result.failed(false, "仅管理员可维护标签子项");
+        }
+        return null;
+    }
+
     /**
      * 功能描述: 增加.
      *
+     * @param uid  用户id
      * @param data 数据
      * @return Boolean
      * @author heneng
      * @date 2026/05/11 14:03:59
      **/
 
-    public Result<Boolean> install(LableChildBean data) {
+    public Result<Boolean> install(String uid, LableChildBean data) {
+        Result<Boolean> check = checkAdmin(uid);
+        if (check != null) {
+            return check;
+        }
 
         if (lableChildBeanMapper.install(data) <= 0) {
             return Result.failed(false, "增加失败");
@@ -61,7 +85,11 @@ public class LableChildBeanHolder {
      * @date 2026/05/11 14:03:59
      **/
 
-    public Result<Boolean> delete(LableChildBean data) {
+    public Result<Boolean> delete(String uid, LableChildBean data) {
+        Result<Boolean> check = checkAdmin(uid);
+        if (check != null) {
+            return check;
+        }
 
         if (lableChildBeanMapper.delete(data) <= 0) {
             return Result.failed(false, "删除失败");
@@ -81,6 +109,10 @@ public class LableChildBeanHolder {
      **/
 
     public Result<Boolean> update(String uid, LableChildBean data, LableChildBean where) {
+        Result<Boolean> check = checkAdmin(uid);
+        if (check != null) {
+            return check;
+        }
 
         data.setLastuser(uid);
         if (lableChildBeanMapper.update(data, where) <= 0) {

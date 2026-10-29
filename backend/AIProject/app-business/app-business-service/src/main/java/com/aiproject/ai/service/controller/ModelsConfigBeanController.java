@@ -118,9 +118,9 @@ public class ModelsConfigBeanController {
 
         CheckUtils.objectCheckNull(uid, "请先登录", CodeEnum.FAILED_USER_LOGIN.getCode(), "");
         CheckUtils.objectCheckNull(data, "数据不能空", CodeEnum.NULL.getCode(), null);
-        Result<PageResult<ModelsConfigBean>> result = modelsConfigBeanHolder.queryPage(data, pageRequest);
-        maskApiKeys(result == null || result.getDatas() == null ? null : result.getDatas().getContent());
-        return result;
+        // 2026-10-29：改用 Holder 的对外查询方法，脱敏下沉到 Holder，
+        // 避免「新增接口忘了调 maskApiKeys 就泄露密钥」。
+        return modelsConfigBeanHolder.queryPageForCaller(uid, data, pageRequest);
     }
 
     /**
@@ -139,24 +139,13 @@ public class ModelsConfigBeanController {
 
         CheckUtils.objectCheckNull(uid, "请先登录", CodeEnum.FAILED_USER_LOGIN.getCode(), "");
         CheckUtils.objectCheckNull(data, "数据不能空", CodeEnum.NULL.getCode(), null);
-        List<ModelsConfigBean> datas = modelsConfigBeanHolder.queryList(data, null);
-        maskApiKeys(datas);
+        // 2026-10-29：同上，脱敏在 Holder 内完成
+        List<ModelsConfigBean> datas = modelsConfigBeanHolder.queryListForCaller(uid, data, null);
         return Result.succeed(datas);
     }
 
-    /**
-     * 服务端密钥不下发浏览器：直连模型配置的 apiKey 只在后端使用，
-     * 查询结果一律置空，前端以「是否已配置」展示。
-     */
-    private void maskApiKeys(List<ModelsConfigBean> datas) {
-        if (datas == null) {
-            return;
-        }
-        for (ModelsConfigBean item : datas) {
-            if (item != null && item.getApiKey() != null && !item.getApiKey().isEmpty()) {
-                item.setApiKey("");
-            }
-        }
-    }
+    // 2026-10-29：原 maskApiKeys 私有方法已删除。
+    // 脱敏逻辑下沉到 ModelsConfigBeanHolder.queryListForCaller / queryPageForCaller，
+    // 这样任何新增的调用方都不会漏掉脱敏。
 
 }

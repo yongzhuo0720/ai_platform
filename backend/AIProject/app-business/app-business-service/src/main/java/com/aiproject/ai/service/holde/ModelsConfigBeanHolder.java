@@ -163,9 +163,65 @@ public  class ModelsConfigBeanHolder  {
      **/ 
 
     public Result<PageResult<ModelsConfigBean>> queryPage(ModelsConfigBean data,PageRequest pageRequest){
-        
-        return modelsConfigBeanMapper.selectPageLike(pageRequest, data); 
+
+        return modelsConfigBeanMapper.selectPageLike(pageRequest, data);
     }
 
- 
+    /**
+     * 面向「外部调用方（浏览器）」的查询：返回前统一脱敏（2026-10-29 新增）。
+     *
+     * <p><b>为什么是新增方法，而不是直接改 queryList。</b>
+     * EmbeddingClient、ModelGatewayResolver、RerankResolver 这三个网关内部组件
+     * 依赖 {@code queryList} 拿到<b>真实</b> apiKey 去调向量服务 / 直连模型 / 精排服务。
+     * 一旦在 queryList 里脱敏，向量化、直连对话、Rerank 会全部失效——
+     * 属于「为了安全把功能搞挂」的典型错误。所以内部调用保持原样，
+     * 只给对外的入口脱敏。</p>
+     *
+     * <p><b>另外为什么要把脱敏下沉到 Holder。</b>
+     * 原来脱敏写在 Controller 的私有方法里（ModelsConfigBeanController.maskApiKeys）。
+     * 那意味着「安不安全」取决于每个调用点记不记得调它——
+     * 将来任何人新增一个接口直接复用 Holder 就会把密钥漏出去。
+     * 放到 Holder 里，调用方想漏也漏不掉。</p>
+     *
+     * <p>脱敏规则：apiKey 一律不下发（管理员也一样，编辑时用「留空表示不修改」的语义）；
+     * baseUrl 属于内网拓扑信息，仅管理员可见。</p>
+     */
+    public List<ModelsConfigBean> queryListForCaller(String uid, ModelsConfigBean data, PageRequest pageRequest) {
+        List<ModelsConfigBean> list = queryList(data, pageRequest);
+        maskSecrets(list, isAdminCaller(uid));
+        return list;
+    }
+
+    /**
+     * 同 {@link #queryListForCaller(String, ModelsConfigBean, PageRequest)}，分页版本。
+     */
+    public Result<PageResult<ModelsConfigBean>> queryPageForCaller(String uid, ModelsConfigBean data, PageRequest pageRequest) {
+        Result<PageResult<ModelsConfigBean>> result = queryPage(data, pageRequest);
+        if (result != null && result.getDatas() != null) {
+            maskSecrets(result.getDatas().getContent(), isAdminCaller(uid));
+        }
+        return result;
+    }
+
+    private boolean isAdminCaller(String uid) {
+        return uid != null && !uid.trim().isEmpty() && myUserBaseDbHolder.isAdmin(uid);
+    }
+
+    private void maskSecrets(List<ModelsConfigBean> list, boolean admin) {
+        if (list == null) {
+            return;
+        }
+        for (ModelsConfigBean item : list) {
+            if (item == null) {
+                continue;
+            }
+            if (item.getApiKey() != null && !item.getApiKey().isEmpty()) {
+                item.setApiKey("");
+            }
+            if (!admin && item.getBaseUrl() != null && !item.getBaseUrl().isEmpty()) {
+                item.setBaseUrl("");
+            }
+        }
+    }
+
 }

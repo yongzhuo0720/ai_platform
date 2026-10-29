@@ -63,7 +63,7 @@ public class UnitBeanController {
 
         CheckUtils.objectCheckNull(uid, "请先登录", CodeEnum.FAILED_USER_LOGIN.getCode(), "");
         CheckUtils.objectCheckNull(data, "数据不能空", CodeEnum.NULL.getCode(), null);
-        return unitBeanHolder.delete(data);
+        return unitBeanHolder.delete(uid, data);
     }
 
     /**
