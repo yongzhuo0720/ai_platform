@@ -11,7 +11,7 @@ AI 能力有两条路径：Dify 提供对话、工作流与托管知识库；Ope
 | 层 | 选型 |
 |---|---|
 | 前端 | Vue 3 · TypeScript · Vite 5 · Element Plus · Pinia · vue-router（hash 模式） |
-| 后端 | Spring Boot 2.6.8（Java 8）· MyBatis-Plus · Druid · Sa-Token |
+| 后端 | Spring Boot 2.6.8（Java 8）· Druid · HNSP 快速开发框架（`@HnMapper` 运行时生成 SQL） |
 | 存储 | PostgreSQL（库 `ai`，schema `public`）· Redis |
 | AI 能力 | Dify（对话 / 工作流 / 知识库）· OpenAI 兼容直连模型 |
 | 构建部署 | Maven 多模块 · Nginx |
@@ -25,7 +25,7 @@ AI 请求默认统一收口到业务后端，浏览器不再持有 Dify API Key 
 | 通道 | 前缀 | 路径 | 特征 |
 |---|---|---|---|
 | A · AI 网关（默认） | `/ai/api/aiGateway/{chat\|knowledgeChat\|file\|models}/...` | 浏览器 → Spring Boot → Dify / OpenAI 兼容模型 | 凭据只存服务端；SSE 逐块透传；按用户限流、用户与部门每日 Token 配额、审计日志 |
-| B · 平台接口 | `/ai/api/...` | 浏览器 → Spring Boot → PostgreSQL | Sa-Token 鉴权，业务读写与操作日志 |
+| B · 平台接口 | `/ai/api/...` | 浏览器 → Spring Boot → PostgreSQL | `@LoginUserId` 注入登录态 + Holder 内权限校验，业务读写与操作日志 |
 | C · 直连（兼容） | `/v1/...` | 浏览器 → Dify | 设置 `VITE_AI_GATEWAY=0` 后启用；凭据下发浏览器，无治理能力 |
 
 网关核心在 `AiGatewayService`：转发请求/响应、过滤逐跳响应头、SSE 边读边写、解析上游 usage 并记录请求 ID、首块响应耗时与成本；`AiGatewayGuard` 用 Redis 做每分钟限流与每日 Token 配额（配额适用于 `chat` / `knowledgeChat` / `models`，`0` 表示不限制）；`AiGatewayAdminHolder` 提供用量看板、调用日志与配额管理接口，后台页面为「AI 调用治理」。Dify 对话模块的查询、JSON 与文件上传中的 `user` 统一使用后端认证身份。
@@ -159,6 +159,10 @@ frontend/src/
 
 ### 运行测试
 
+完整的、可重复执行的命令清单见 **`docs/测试说明.md`**。下面是最常用的两条。
+
+**后端**（必须用 JDK 8，且必须指定项目自带的离线 settings）：
+
 ```powershell
 $repo     = (Resolve-Path hd_redis/ai-maven/pro).Path
 $settings = (Resolve-Path hd_redis/ai-maven/conf/settings.xml).Path
@@ -168,14 +172,40 @@ Set-Location backend/AIProject
 mvn -s $settings "-Dmaven.repo.local=$repo" test
 ```
 
-本地验证使用 `scripts/verify.ps1 -JavaHome '<你的 JDK 8 路径>'`，依次运行后端测试、前端类型检查、流式回归、生产构建与 RAG 评估集自检。2026-10-27 验证：后端 **138** 个用例通过，本次新增 **34** 个网关、向量响应、模型状态与会话同步回归用例；前端流式检查 **14** 项通过。
+> **为什么一定要带 `-s`**：默认的 `~/.m2/settings.xml` 里是 `<mirrorOf>*</mirrorOf>`，
+> 会把所有仓库请求（含私有框架仓库）转到阿里云，导致 `com.heneng.hnsp` 解析不到。
+> 项目自带的 settings 用的是 `<mirrorOf>central</mirrorOf>`，私有仓库不会被镜像拦截。
 
-| 本次新增测试类 | 数量 | 覆盖内容 |
+**前端**：
+
+```bash
+cd frontend
+npm run typecheck      # TypeScript 类型检查
+npm run check:streaming # 流式超时/取消回归，14 项
+npm run check:markdown  # Markdown 与 XSS 消毒回归，10 项
+npm run build           # 生产构建
+```
+
+本地一键验证使用 `scripts/verify.ps1 -JavaHome '<你的 JDK 8 路径>'`。
+
+### 当前测试结果（2026-10-29 实测）
+
+| 项目 | 结果 |
+|---|---|
+| 后端单元测试 | **165 项通过，0 失败** |
+| 前端 TypeScript 检查 | 通过 |
+| 前端流式回归 | 14 项通过 |
+| 前端 Markdown / XSS 回归 | 10 项通过（**本次修复前该脚本一直是失败的，见下**） |
+| 前端生产构建 | 通过（仍有 element-plus 1.05MB 分包警告） |
+
+2026-10-29 补充的测试类：
+
+| 新增测试类 | 数量 | 覆盖内容 |
 |---|---|---|
-| `AiGatewayServiceTest` | 13 | 身份覆盖、上传转发、畸形 / 超大请求拒绝、保留精排顺序 |
-| `EmbeddingClientTest` | 8 | 按响应 index 对齐输入、拒绝重复 / 越界索引与无效向量 |
-| `ModelRoutingTest` | 7 | 忽略禁用配置、异常精排索引降级 |
-| `ChatConversationHolderTest` | 6 | 拦截旧快照、带版本条件更新、保存失败不报成功 |
+| `UnitBeanAuthTest` | 7 | 部门写接口的管理员校验（RBAC 支柱，越权可撬动资源可见性） |
+| `LableBeanAuthTest` | 7 | 标签组写接口的管理员校验 |
+| `LableChildBeanAuthTest` | 6 | 标签子项写接口的管理员校验 |
+| `MyRoleQueryScopeTest` | 7 | 角色查询按调用者收敛（不能越权读他人角色权限组） |
 
 > 首次运行需联网下载 `surefire-junit-platform`（JUnit 5 的运行器），之后即可加 `-o` 离线执行。
 
@@ -186,7 +216,8 @@ mvn -s $settings "-Dmaven.repo.local=$repo" test
 - **AI 能力依赖外部服务**：Dify 与直连模型各自依赖对应上游；本地 RAG 的向量化仍需可用的向量模型接口。
 - **网关需先配置上游**：Dify 需在数据库 `difyconfigbean`（后台「Dify 配置管理」）或服务端 `DIFY_*` 环境变量配置；直连模型需在「模型配置」里配齐地址与密钥。未配置时对应模块返回 503；前端 `.env.local` 的 `VITE_DIFY_*` 在默认网关模式下不生效。
 - **流式治理的边界**：Token 统计依赖上游返回 usage（Dify 聊天在 `message_end`，工作流在 `data.total_tokens`）；上游不返回时只统计调用次数与耗时，配额无法按 Token 精确扣减。
-- **验证边界**：自动测试不等于真实上游与数据库验收；Markdown 检查脚本尚缺 Node 下的 DOM 环境，当前不能独立通过。其余待改进项见本次检查记录。
+- **验证边界**：自动测试不等于真实上游与数据库验收；网关与模型协议测试使用本机临时 HTTP 服务，数据库写入使用 Mapper mock，未连接真实 Dify / 向量服务 / 生产数据库。其余待改进项见本次检查记录。
+- **依赖版本需锁定**：私有框架 `hnsp-public-common-croe` 把 `mybatis` 声明为 `<version>LATEST</version>`。2026-10-29 实测当天 16:55 构建正常、16:57 拉到 `mybatis 3.6.0`（Java 11 编译）后 JDK 8 直接编译失败。已在根 `pom.xml` 用 `dependencyManagement` 锁定 `3.5.19`（离线仓库中最高的 Java 8 兼容版本）。**不要移除这个锁定。**
 - **SSO** 依赖外部 OpenID 服务（默认关闭），本地请使用账号密码登录。
 
 ---

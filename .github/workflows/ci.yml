@@ -26,6 +26,11 @@ jobs:
         run: npm run typecheck
       - name: 流式回归检查
         run: npm run check:streaming
+      # 2026-10-29 新增：这条此前一直没进 CI，而它在本地其实是失败的
+      # （DOMPurify 需要 DOM 环境），也就是说这 10 条 XSS 断言从未真正跑过。
+      # 现在用 jsdom 补上环境后可以跑通，接进 CI 防止再退化。
+      - name: Markdown / XSS 消毒回归检查
+        run: npm run check:markdown
       - name: 构建
         run: npm run build
 
