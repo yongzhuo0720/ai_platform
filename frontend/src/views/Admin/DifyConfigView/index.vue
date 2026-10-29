@@ -16,13 +16,9 @@
                 </el-table-column>
                 <el-table-column prop="apiKey" label="API Key" align="center" min-width="280">
                     <template #default="scope">
-                        <template v-if="scope.row.apiKey">
-                            <span v-if="scope.row._showKey" style="word-break: break-all">{{ scope.row.apiKey }}</span>
-                            <span v-else>●●●●●●●●●●</span>
-                            <el-button link type="primary" size="small" style="margin-left: 8px"
-                                @click="scope.row._showKey = !scope.row._showKey">
-                                {{ scope.row._showKey ? '隐藏' : '显示' }}
-                            </el-button>
+                        <template v-if="scope.row.apiKeyConfigured">
+                            <span>●●●●●●●●●●</span>
+                            <span class="key-configured-hint">已配置，密钥不下发到前端</span>
                         </template>
                         <span v-else style="color: var(--text-secondary)">未配置</span>
                     </template>
@@ -60,8 +56,9 @@
                     <el-input v-model="state.params.form.apiUrl" placeholder="请输入 Dify API URL" clearable />
                 </el-form-item>
                 <el-form-item label="API Key">
-                    <el-input v-model="state.params.form.apiKey" placeholder="请输入 API Key" clearable
-                        show-password />
+                    <el-input v-model="state.params.form.apiKey"
+                        :placeholder="state.params.form.apiKeyConfigured ? '已配置，留空表示不修改' : '请输入 API Key'"
+                        clearable show-password />
                 </el-form-item>
             </el-form>
             <template #footer>

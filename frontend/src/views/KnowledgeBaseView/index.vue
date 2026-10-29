@@ -835,6 +835,11 @@ let chatStopFn: (() => void) | null = null
 const kbRetrieveRecords = ref('')
 /** 消息回答完成后推荐的后续问题 */
 const postAnswerSuggestions = ref<string[]>([])
+/**
+ * 应用是否开启「回答后推荐问题」。
+ * <p>Dify 未开启时 /messages/{id}/suggested 固定返回 400，前端不再发起该请求。</p>
+ */
+const suggestedAfterAnswerEnabled = ref(false)
 /** 当前消息的 message_id，用于调用推荐消息接口 */
 const lastMessageId = ref('')
 
@@ -925,6 +930,7 @@ async function loadAppParameters() {
   try {
     const params = (await getAppParameters()) as AppParametersResponse
     appParameters.value = params
+    suggestedAfterAnswerEnabled.value = params.suggested_questions_after_answer?.enabled === true
     const normalizedFields = normalizeUserInputFields(params.user_input_form || [])
     const nextUserInput: Record<string, unknown> = {}
     normalizedFields.forEach((field) => {
@@ -945,6 +951,7 @@ async function loadAppParameters() {
   } catch (e) {
     console.warn('获取应用参数失败:', e)
     appParameters.value = null
+    suggestedAfterAnswerEnabled.value = false
     promptInputVariable.value = 'user_prompt'
     modelNameVariable.value = 'model_name'
     userInput.value = {}
@@ -958,6 +965,32 @@ const syncModelInput = () => {
   userInput.value = {
     ...userInput.value,
     [modelNameVariable.value]: activeChatModelId.value,
+  }
+}
+
+/** 回答完成后拉取推荐问题；应用未开启该功能时不请求（Dify 会固定返回 400） */
+async function fetchPostAnswerSuggestions() {
+  if (!suggestedAfterAnswerEnabled.value) {
+    postAnswerSuggestions.value = []
+    return
+  }
+  try {
+    let msgId = lastMessageId.value
+    // 兜底：如果 SSE 事件没有 message_id，从会话历史获取最新消息
+    if (!msgId && activeConversationId.value) {
+      const historyRes = await getConversationHistory(activeConversationId.value, getCurrentUserId(), 1)
+      const msgs = (historyRes as any)?.data || []
+      if (msgs.length > 0) {
+        msgId = msgs[0].id
+      }
+    }
+    if (!msgId) {
+      console.warn('[推荐消息] 无法获取 message_id，跳过推荐问题')
+      return
+    }
+    postAnswerSuggestions.value = await getSuggestedMessages(msgId, getCurrentUserId())
+  } catch (e: any) {
+    console.warn('[推荐消息] 获取失败:', e?.message || e)
   }
 }
 
@@ -1324,28 +1357,7 @@ async function sendChatMessage() {
           await loadConversations()
         }
         // 消息完成后获取推荐问题
-        try {
-          let msgId = lastMessageId.value
-          // 兜底：如果 SSE 事件没有 message_id，从会话历史获取最新消息
-          if (!msgId && activeConversationId.value) {
-            debug.log('[推荐消息] SSE 未捕获 message_id，从会话历史兜底获取')
-            const historyRes = await getConversationHistory(activeConversationId.value, getCurrentUserId(), 1)
-            const msgs = (historyRes as any)?.data || []
-            if (msgs.length > 0) {
-              msgId = msgs[0].id
-            }
-          }
-          debug.log('[推荐消息] message_id:', msgId, 'conversation_id:', activeConversationId.value)
-          if (msgId) {
-            const suggestions = await getSuggestedMessages(msgId, getCurrentUserId())
-            debug.log('[推荐消息] 获取成功:', suggestions)
-            postAnswerSuggestions.value = suggestions
-          } else {
-            console.warn('[推荐消息] 无法获取 message_id，跳过推荐问题')
-          }
-        } catch (e: any) {
-          console.warn('[推荐消息] 获取失败:', e?.message || e)
-        }
+        await fetchPostAnswerSuggestions()
       },
       onError: (err) => {
         console.error('Chat error:', err)
@@ -1458,27 +1470,7 @@ async function regenerateMessage(assistantMsgId: string) {
           await loadConversations()
         }
         // 消息完成后获取推荐问题
-        try {
-          let msgId = lastMessageId.value
-          if (!msgId && activeConversationId.value) {
-            debug.log('[推荐消息] SSE 未捕获 message_id，从会话历史兜底获取')
-            const historyRes = await getConversationHistory(activeConversationId.value, getCurrentUserId(), 1)
-            const msgs = (historyRes as any)?.data || []
-            if (msgs.length > 0) {
-              msgId = msgs[0].id
-            }
-          }
-          debug.log('[推荐消息] message_id:', msgId, 'conversation_id:', activeConversationId.value)
-          if (msgId) {
-            const suggestions = await getSuggestedMessages(msgId, getCurrentUserId())
-            debug.log('[推荐消息] 获取成功:', suggestions)
-            postAnswerSuggestions.value = suggestions
-          } else {
-            console.warn('[推荐消息] 无法获取 message_id，跳过推荐问题')
-          }
-        } catch (e: any) {
-          console.warn('[推荐消息] 获取失败:', e?.message || e)
-        }
+        await fetchPostAnswerSuggestions()
       },
       onError: (err) => {
         console.error('Chat error:', err)
