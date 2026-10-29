@@ -442,11 +442,6 @@ export const streamingRequest = (
       });
     })
     .then(async (response) => {
-      // 已收到响应首字节：取消首字节超时
-      if (firstByteTimer) {
-        clearTimeout(firstByteTimer);
-        firstByteTimer = null;
-      }
       if (!response.ok) {
         const errorText = await response.text();
         throw new Error(`请求失败 (${response.status}): ${errorText}`);
@@ -461,9 +456,14 @@ export const streamingRequest = (
       let buffer = '';
 
       // 持续读取 SSE 流
-      while (true) {
+      while (!completeCalled && !errorCalled) {
         const { done, value } = await reader.read();
         if (done) break;
+        if (!value?.byteLength) continue;
+        if (firstByteTimer) {
+          clearTimeout(firstByteTimer);
+          firstByteTimer = null;
+        }
 
         // 每次收到数据都重置空闲超时（流停滞时触发中止，避免 UI 卡在"生成中"）
         resetIdleTimer();
@@ -477,6 +477,7 @@ export const streamingRequest = (
         // 当前 data 行所属的事件类型（由紧邻的 event: 行声明，已提升到函数作用域跨 chunk 保留）
 
         for (const line of lines) {
+          if (errorCalled) break;
           if (line.startsWith('event: ')) {
             eventType = line.slice(7).trim();
             continue;
@@ -506,8 +507,7 @@ export const streamingRequest = (
                 const errMsg = parsed.message || parsed.error || '模型调用失败，请稍后重试';
                 const errCode = parsed.code ? ` (${parsed.code})` : '';
                 console.error('[Dify SSE error event]', parsed);
-                errorCalled = true;
-                onError?.(new Error(`${errMsg}${errCode}`));
+                safeError(new Error(`${errMsg}${errCode}`));
                 continue;
               }
 
@@ -679,8 +679,7 @@ export const streamingRequest = (
                     || wfError?.message
                     || (wfStatus === 'stopped' ? '工作流已停止' : '工作流执行失败');
                   debug.warn('[workflow_finished] 工作流未成功完成, status=%s, error=%o', wfStatus, wfError);
-                  errorCalled = true;
-                  onError?.(new Error(msg));
+                  safeError(new Error(msg));
                   continue;
                 }
 
@@ -744,7 +743,10 @@ export const streamingRequest = (
     });
 
   // 返回取消函数，供调用者中止请求
-  return () => controller.abort();
+  return () => {
+    controller.abort();
+    clearStreamTimers();
+  };
 };
 
 export default request;

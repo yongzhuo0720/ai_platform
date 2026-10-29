@@ -275,7 +275,6 @@ public class SsoTokenBeanHolder {
 
         try (Response response = httpClient.newCall(request).execute()) {
             String respBody = response.body() != null ? response.body().string() : null;
-            log.info("返回结果: {}", respBody);
             if (respBody == null) {
                 throw new RuntimeException("换取 Token 响应为空");
             }
@@ -377,7 +376,6 @@ public class SsoTokenBeanHolder {
 
             try (Response response = httpClient.newCall(request).execute()) {
                 String respBody = response.body() != null ? response.body().string() : null;
-                log.info("返回结果: {}", respBody);
                 if (respBody == null) {
                     log.warn("SSO Token 续期响应为空, uid={}", uid);
                     return false;

@@ -44,7 +44,7 @@ export function useIndex() {
         data: state.formInline,
         pageRequest: state.pagination,
       }
-      const { data: res } = await modelsConfigApi.getList(reqdata)
+      const { data: res } = await modelsConfigApi.getPageList(reqdata)
       if (res.resp_code == 0) {
         if (res.datas && Array.isArray(res.datas)) {
           state.tableData = res.datas

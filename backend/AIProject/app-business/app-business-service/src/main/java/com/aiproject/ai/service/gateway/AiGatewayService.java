@@ -5,6 +5,7 @@ import com.aiproject.ai.service.gateway.dto.KbSearchItem;
 import com.aiproject.ai.service.gateway.dto.KbSearchResult;
 import com.aiproject.ai.service.holde.AiCallLogHolder;
 import com.aiproject.ai.service.holde.KbRagHolder;
+import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
@@ -12,7 +13,9 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.heneng.hnsp.common.croe.model.Result;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
+import org.springframework.web.server.ResponseStatusException;
 
 import javax.servlet.http.HttpServletRequest;
 import javax.servlet.http.HttpServletResponse;
@@ -24,12 +27,12 @@ import java.io.OutputStream;
 import java.net.HttpURLConnection;
 import java.net.SocketTimeoutException;
 import java.net.URL;
+import java.net.URLDecoder;
+import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
-import java.util.Collections;
-import java.util.Comparator;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -55,6 +58,9 @@ public class AiGatewayService {
 
     /** 小于该大小的 JSON 响应会被完整读入，用于提取 usage；超过则直接透传 */
     private static final int MAX_JSON_BUFFER = 2 * 1024 * 1024;
+
+    /** 响应 usage 解析缓冲上限：在此以内的完整 JSON 可精确提取 token；超出则对头部做 best-effort 嗅探 */
+    private static final int MAX_JSON_PARSE = 8 * 1024 * 1024;
 
     /** SSE 行缓冲上限，防止异常上游把内存撑爆 */
     private static final int MAX_SSE_LINE = 1024 * 1024;
@@ -346,8 +352,8 @@ public class AiGatewayService {
      * <b>注入策略</b>（两条都是生产环境踩出来的）：
      * <ul>
      *   <li><b>最相关的片段放最前</b>。LLM 对长上下文中段信息的利用度显著低于
-     *       首尾（lost-in-the-middle），所以按 RRF 融合分降序注入，
-     *       高分片段优先占位。</li>
+     *       首尾（lost-in-the-middle），所以沿用检索层最终排序，
+     *       保留可选 Rerank 精排的优先级。</li>
      *   <li><b>按字符预算截断</b>而不是固定条数。检索片段是变长的，
      *       固定 8 条可能只有 2K 字符，也可能塞进 20K——后者会挤占对话历史
      *       与生成空间，甚至直接超窗口。</li>
@@ -383,22 +389,13 @@ public class AiGatewayService {
                 return 0;
             }
 
-            // 按融合分降序：RRF 分越高越相关，必须排在上下文前部
-            List<KbSearchItem> sorted = new ArrayList<KbSearchItem>(items);
-            Collections.sort(sorted, new Comparator<KbSearchItem>() {
-                @Override
-                public int compare(KbSearchItem a, KbSearchItem b) {
-                    return Double.compare(b.getScore(), a.getScore());
-                }
-            });
-
             StringBuilder prompt = new StringBuilder()
                     .append("以下是知识库「").append(kbName)
                     .append("」中与用户问题最相关的检索片段（已按相关度排序）。回答时请优先依据片段内容，并在用到的地方标注「来源：文档名」；")
                     .append("若片段与问题无关，请忽略它们并按你自己的知识回答。\n");
             int used = 0;
             int injected = 0;
-            for (KbSearchItem item : sorted) {
+            for (KbSearchItem item : items) {
                 if (injected >= KB_MAX_PIECES) {
                     break;
                 }
@@ -494,6 +491,9 @@ public class AiGatewayService {
         try {
             String target = config.getApiUrl() + "/" + upstreamEndpoint;
             String query = request.getQueryString();
+            if (isDifyChatModule(module)) {
+                query = withDifyUser(query, userId);
+            }
             if (query != null && !query.isEmpty()) {
                 target = target + "?" + query;
             }
@@ -528,7 +528,7 @@ public class AiGatewayService {
                 bodyOut.flush();
                 bodyOut.close();
             } else {
-                relayRequestBody(request, conn, method);
+                relayRequestBody(request, conn, method, module, userId);
             }
 
             int upstreamStatus = conn.getResponseCode();
@@ -564,8 +564,13 @@ public class AiGatewayService {
             record(userId, module, auditEndpoint, method, status, upstreamStatus, parser,
                     start, error, clientIp);
             if (parser.getTotalTokens() != null) {
-                guard.addTokens(userId, parser.getTotalTokens());
+                guard.addTokens(userId, module, parser.getTotalTokens());
             }
+        } catch (ResponseStatusException e) {
+            int status = e.getStatus().value();
+            writeError(response, status, "invalid_request", e.getReason());
+            record(userId, module, auditEndpoint, method, "failed", status,
+                    null, start, e.getReason(), clientIp);
         } catch (Exception e) {
             String message = rootMessage(e);
             boolean aborted = isClientAbort(e);
@@ -595,20 +600,48 @@ public class AiGatewayService {
     }
 
     private void relayRequestBody(HttpServletRequest request, HttpURLConnection conn,
-                                  String method) throws Exception {
+                                  String method, String module, String userId) throws Exception {
         if ("GET".equalsIgnoreCase(method) || "HEAD".equalsIgnoreCase(method)) {
             return;
         }
         String contentType = request.getContentType();
         if (contentType != null && contentType.toLowerCase().startsWith("multipart/form-data")) {
-            relayMultipart(request, conn);
+            relayMultipart(request, conn, isDifyChatModule(module) ? userId : null);
             return;
         }
         long contentLength = request.getContentLengthLong();
         boolean chunked = "chunked".equalsIgnoreCase(request.getHeader("Transfer-Encoding"));
+        // 仅对 Dify 对话类模块注入 user=uid：Dify 的 /chat-messages 依赖请求体里的 user
+        // 做会话隔离，网关若不注入，所有平台用户共享同一应用密钥，会话仅靠客户端自报的
+        // conversation_id 隔离，存在越权读取/续写他人对话的风险。注入后以服务端登录身份
+        // 强制隔离。models 直连为无状态 OpenAI 协议，不在此处理（由 readModelRequestBody 收敛）。
+        if (isDifyChatModule(module)) {
+            if (contentType != null && !contentType.toLowerCase().startsWith("application/json")) {
+                throw new ResponseStatusException(HttpStatus.UNSUPPORTED_MEDIA_TYPE, "对话请求体必须是 JSON");
+            }
+            ByteArrayOutputStream buffer = new ByteArrayOutputStream(8192);
+            byte[] chunk = new byte[8192];
+            int read;
+            try (InputStream in = request.getInputStream()) {
+                while ((read = in.read(chunk)) != -1) {
+                    if (buffer.size() + read > MAX_JSON_BUFFER) {
+                        throw new ResponseStatusException(HttpStatus.PAYLOAD_TOO_LARGE, "请求体超过 2MB");
+                    }
+                    buffer.write(chunk, 0, read);
+                }
+            }
+            byte[] body = injectUserField(buffer.toByteArray(), userId);
+            conn.setDoOutput(true);
+            conn.setFixedLengthStreamingMode(body.length);
+            try (OutputStream out = conn.getOutputStream()) {
+                out.write(body);
+            }
+            return;
+        }
         if (contentLength <= 0 && !chunked) {
             return;
         }
+        // 其他模块（file 等）或非 Dify 对话模块：原样流式透传
         conn.setDoOutput(true);
         if (contentLength > 0 && !chunked) {
             conn.setFixedLengthStreamingMode(contentLength);
@@ -621,6 +654,45 @@ public class AiGatewayService {
         }
     }
 
+    /** 是否需要对请求体注入 user 的 Dify 对话模块 */
+    private static boolean isDifyChatModule(String module) {
+        return AiGatewayConfigResolver.MODULE_CHAT.equals(module)
+                || AiGatewayConfigResolver.MODULE_KNOWLEDGE_CHAT.equals(module);
+    }
+
+    private String withDifyUser(String query, String userId) throws IOException {
+        List<String> parameters = new ArrayList<String>();
+        if (query != null && !query.isEmpty()) {
+            for (String parameter : query.split("&")) {
+                int separator = parameter.indexOf('=');
+                String key = separator < 0 ? parameter : parameter.substring(0, separator);
+                try {
+                    if (!"user".equals(URLDecoder.decode(key, StandardCharsets.UTF_8.name()))) {
+                        parameters.add(parameter);
+                    }
+                } catch (IllegalArgumentException e) {
+                    throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "查询参数编码无效");
+                }
+            }
+        }
+        parameters.add("user=" + URLEncoder.encode(userId, StandardCharsets.UTF_8.name()));
+        return String.join("&", parameters);
+    }
+
+    private byte[] injectUserField(byte[] body, String userId) {
+        try {
+            JsonNode root = body.length == 0 ? MAPPER.createObjectNode()
+                    : MAPPER.reader().with(DeserializationFeature.FAIL_ON_TRAILING_TOKENS).readTree(body);
+            if (root == null || !root.isObject()) {
+                throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "请求体必须是 JSON 对象");
+            }
+            ((ObjectNode) root).put("user", userId);
+            return MAPPER.writeValueAsBytes(root);
+        } catch (IOException e) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "请求体必须是有效的 JSON 对象");
+        }
+    }
+
     /**
      * 重建 multipart 请求体。
      * <p>
@@ -629,7 +701,7 @@ public class AiGatewayService {
      * 因此改为从已解析的 Part 重新拼一份 multipart（新的 boundary）发给上游，
      * 语义等价且不依赖请求体是否已被读取。
      */
-    private void relayMultipart(HttpServletRequest request, HttpURLConnection conn) throws Exception {
+    private void relayMultipart(HttpServletRequest request, HttpURLConnection conn, String userId) throws Exception {
         String boundary = "----AiGatewayBoundary"
                 + UUID.randomUUID().toString().replace("-", "");
         conn.setDoOutput(true);
@@ -639,6 +711,9 @@ public class AiGatewayService {
         Collection<Part> parts = request.getParts();
         try (OutputStream out = conn.getOutputStream()) {
             for (Part part : parts) {
+                if (userId != null && "user".equals(part.getName())) {
+                    continue;
+                }
                 StringBuilder header = new StringBuilder();
                 header.append("--").append(boundary).append("\r\n");
                 header.append("Content-Disposition: form-data; name=\"")
@@ -657,6 +732,10 @@ public class AiGatewayService {
                     copy(in, out);
                 }
                 out.write("\r\n".getBytes(StandardCharsets.UTF_8));
+            }
+            if (userId != null) {
+                out.write(("--" + boundary + "\r\nContent-Disposition: form-data; name=\"user\"\r\n\r\n"
+                        + userId + "\r\n").getBytes(StandardCharsets.UTF_8));
             }
             out.write(("--" + boundary + "--\r\n").getBytes(StandardCharsets.UTF_8));
         }
@@ -701,35 +780,31 @@ public class AiGatewayService {
     }
 
     /**
-     * 非 SSE 响应：小响应完整缓冲后写入并解析 usage；大响应直接透传。
+     * 非 SSE 响应：边读边写给浏览器（不缓冲整包，保证大响应也能正常透传），
+     * 同时把响应体累积到解析缓冲（上限 MAX_JSON_PARSE）用于提取 usage。
+     * <p>
+     * 旧实现在大响应（>2MB）时直接放弃解析 usage，导致该次调用完全不计入每日配额、
+     * 可被单条大响应绕过限额。这里改为：无论响应多大，都对已读取的字节做 usage 嗅探；
+     * 在 MAX_JSON_PARSE 以内的响应可精确解析，超出则对头部 best-effort（仍优于完全漏记）。
      */
     private void relayBody(InputStream in, OutputStream out, AiGatewayUsageParser parser)
             throws IOException {
-        ByteArrayOutputStream buffer = new ByteArrayOutputStream(8192);
+        ByteArrayOutputStream parseBuf = new ByteArrayOutputStream(8192);
         byte[] chunk = new byte[8192];
-        boolean spilled = false;
+        boolean parseSpilled = false;
         int read;
         while ((read = in.read(chunk)) != -1) {
-            if (!spilled) {
-                if (buffer.size() + read > MAX_JSON_BUFFER) {
-                    out.write(buffer.toByteArray());
-                    buffer = null;
-                    spilled = true;
+            out.write(chunk, 0, read);
+            out.flush();
+            if (!parseSpilled) {
+                if (parseBuf.size() + read > MAX_JSON_PARSE) {
+                    parseSpilled = true;
                 } else {
-                    buffer.write(chunk, 0, read);
+                    parseBuf.write(chunk, 0, read);
                 }
             }
-            if (spilled) {
-                out.write(chunk, 0, read);
-                out.flush();
-            }
         }
-        if (!spilled) {
-            byte[] body = buffer.toByteArray();
-            out.write(body);
-            out.flush();
-            parser.acceptJson(new String(body, StandardCharsets.UTF_8));
-        }
+        parser.acceptJson(new String(parseBuf.toByteArray(), StandardCharsets.UTF_8));
     }
 
     private void copyResponseHeaders(HttpURLConnection conn, HttpServletResponse response) {

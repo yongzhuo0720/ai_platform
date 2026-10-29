@@ -49,6 +49,9 @@ public class AiWeeklyReportController {
         if (uid == null || uid.trim().isEmpty()) {
             return Result.failed(null, "请先登录");
         }
+        if (!userBaseDbHolder.isAdmin(uid)) {
+            return Result.failed(null, "仅管理员可查看 AI 调用周报");
+        }
         return holder.list();
     }
 }

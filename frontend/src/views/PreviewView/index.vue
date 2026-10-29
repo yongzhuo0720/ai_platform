@@ -67,7 +67,7 @@ const goBack = () => {
         :src="iframeSrc"
         class="preview-frame"
         title="预览页面"
-        sandbox="allow-scripts allow-same-origin allow-forms allow-popups"
+        sandbox="allow-scripts allow-forms allow-popups allow-downloads"
       />
     </div>
   </div>

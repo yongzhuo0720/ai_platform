@@ -24,6 +24,8 @@ jobs:
         run: npm ci
       - name: 类型检查
         run: npm run typecheck
+      - name: 流式回归检查
+        run: npm run check:streaming
       - name: 构建
         run: npm run build
 
