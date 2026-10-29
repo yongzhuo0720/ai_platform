@@ -132,8 +132,13 @@ public class AiGatewayGuard {
 
     public static final String UNIT_PREFIX = "unit:";
 
-    public void addTokens(String userId, long tokens) {
+    public void addTokens(String userId, String module, long tokens) {
         if (userId == null || tokens <= 0) {
+            return;
+        }
+        // 仅对配额生效的模块计数，与 checkQuota 口径一致；
+        // 否则 file 等非配额模块的 token 会污染「我的用量」统计。
+        if (!tokenQuotaApplies(module)) {
             return;
         }
         try {

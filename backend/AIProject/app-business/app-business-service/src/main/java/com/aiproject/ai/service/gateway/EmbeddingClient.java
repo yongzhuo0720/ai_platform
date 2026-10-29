@@ -17,6 +17,7 @@ import java.net.HttpURLConnection;
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 import java.util.Scanner;
 
@@ -114,20 +115,32 @@ public class EmbeddingClient {
 
             JsonNode root = objectMapper.readTree(response);
             JsonNode data = root.get("data");
-            if (data == null || !data.isArray() || data.size() < inputs.size()) {
+            if (data == null || !data.isArray() || data.size() != inputs.size()) {
                 throw new IllegalStateException("向量化接口返回格式异常：" + snippet(response));
             }
-            List<double[]> vectors = new ArrayList<double[]>(inputs.size());
+            List<double[]> vectors = new ArrayList<double[]>(Collections.<double[]>nCopies(inputs.size(), null));
+            int dimensions = -1;
             for (JsonNode item : data) {
+                JsonNode indexNode = item.get("index");
+                if (indexNode == null || !indexNode.isInt() || indexNode.asInt() < 0
+                        || indexNode.asInt() >= inputs.size() || vectors.get(indexNode.asInt()) != null) {
+                    throw new IllegalStateException("向量化接口返回的 index 缺失、重复或越界");
+                }
                 JsonNode embedding = item.get("embedding");
-                if (embedding == null || !embedding.isArray()) {
-                    throw new IllegalStateException("向量化接口返回缺少 embedding 字段");
+                if (embedding == null || !embedding.isArray() || embedding.size() == 0
+                        || (dimensions >= 0 && dimensions != embedding.size())) {
+                    throw new IllegalStateException("向量化接口返回的 embedding 为空或维度不一致");
                 }
+                dimensions = embedding.size();
                 double[] vector = new double[embedding.size()];
-                for (int i = 0; i < embedding.size(); i++) {
-                    vector[i] = embedding.get(i).asDouble();
+                for (int dimension = 0; dimension < embedding.size(); dimension++) {
+                    JsonNode value = embedding.get(dimension);
+                    if (!value.isNumber() || !Double.isFinite(value.asDouble())) {
+                        throw new IllegalStateException("向量化接口返回了无效的向量数值");
+                    }
+                    vector[dimension] = value.asDouble();
                 }
-                vectors.add(vector);
+                vectors.set(indexNode.asInt(), vector);
             }
             return vectors;
         } finally {

@@ -56,7 +56,7 @@ const rateMessage = (messageId: string, rating: 'like' | 'dislike') => {
 const handleShareConversation = async (item: { id: string; name: string }) => {
   try {
     const conv = directConversations.value.find((c) => c.id === item.id)
-    let source: Array<{ role: string; content: string }> = conv ? conv.messages : messages.value
+    let source: Array<{ role: string; content: string }> = conv ? conv.messages : []
     // Dify 会话：当前页可能没加载它的消息，分享时按需拉取历史
     if (!conv) {
       try {
@@ -69,6 +69,8 @@ const handleShareConversation = async (item: { id: string; name: string }) => {
         source = history
       } catch (e) {
         console.warn('[分享] 拉取会话历史失败:', e)
+        ElMessage.error('获取该会话内容失败，请重试')
+        return
       }
     }
     const shareMessages = source
@@ -761,7 +763,7 @@ onUnmounted(() => {
             class="chat-assistant-dialog chat-assistant-confirm-dialog"
             role="alertdialog"
             aria-modal="true"
-            ::aria-label="isAssistantEditing ? '更新助手' : '新建助手'"
+            :aria-label="isAssistantEditing ? '更新助手' : '新建助手'"
           >
             <header class="chat-assistant-dialog-header">
               <div class="chat-assistant-dialog-title">

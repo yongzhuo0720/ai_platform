@@ -72,11 +72,29 @@ public class DifyConfigBeanHolder {
         if (check != null) {
             return check;
         }
+        /*
+         * 前端编辑时密钥框留空表示「不修改」：queryList 已脱敏不下发密钥，
+         * 若直接以空值覆盖会把已配置的 apiKey 清掉，这里按 where.iid 回读补齐。
+         */
+        if ((data.getApiKey() == null || data.getApiKey().trim().isEmpty())
+                && where != null && where.getIid() != null) {
+            DifyConfigBean existing = queryByIid(where.getIid());
+            if (existing != null && existing.getApiKey() != null) {
+                data.setApiKey(existing.getApiKey());
+            }
+        }
         data.setLastuser(uid);
         if (difyConfigBeanMapper.update(data, where) <= 0) {
             return Result.failed(false, "修改失败");
         }
         return Result.succeed(true, "修改成功");
+    }
+
+    private DifyConfigBean queryByIid(Long iid) {
+        DifyConfigBean where = new DifyConfigBean();
+        where.setIid(iid);
+        List<DifyConfigBean> list = difyConfigBeanMapper.select(null, where);
+        return list == null || list.isEmpty() ? null : list.get(0);
     }
 
     /**
@@ -97,6 +115,13 @@ public class DifyConfigBeanHolder {
         pageRequest.setOrder("iid");
         pageRequest.setDesc("asc");
         List<DifyConfigBean> list = difyConfigBeanMapper.select(pageRequest, data);
+        // 脱敏：apiKey 属平台级密钥，HTTP 响应一律置空，前端以「是否已配置」展示。
+        // 注意：网关运行时通过内部 query() 读取真实密钥，此处不影响 AI 调用。
+        if (list != null) {
+            for (DifyConfigBean item : list) {
+                item.setApiKey("");
+            }
+        }
         return Result.succeed(list, "查询成功");
     }
 }

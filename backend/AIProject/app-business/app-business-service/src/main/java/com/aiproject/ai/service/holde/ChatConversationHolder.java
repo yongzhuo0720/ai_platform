@@ -54,8 +54,14 @@ public class ChatConversationHolder {
 
     /** upsert 单个会话；超过数量上限时拒绝并提示清理 */
     public Result<Boolean> save(String uid, ChatConversationBean data) {
+        if (uid == null || uid.trim().isEmpty()) {
+            return Result.failed(false, "请先登录");
+        }
         if (data == null || data.getConvId() == null || data.getConvId().trim().isEmpty()) {
             return Result.failed(false, "会话 ID 不能为空");
+        }
+        if (data.getClientUpdatedAt() == null || data.getClientUpdatedAt() <= 0) {
+            return Result.failed(false, "缺少有效的会话更新时间");
         }
         if (data.getPayload() != null && data.getPayload().length() > MAX_PAYLOAD_CHARS) {
             return Result.failed(false, "会话内容过大（超过 512KB），请精简后重试");
@@ -66,13 +72,20 @@ public class ChatConversationHolder {
         List<ChatConversationBean> existing = mapper.select(null, where);
         if (existing != null && !existing.isEmpty()) {
             ChatConversationBean row = existing.get(0);
+            if (row.getClientUpdatedAt() != null && row.getClientUpdatedAt() > data.getClientUpdatedAt()) {
+                return Result.failed(false, "云端已有更新的会话，请重新拉取后合并");
+            }
+            where.setIid(row.getIid());
+            where.setClientUpdatedAt(row.getClientUpdatedAt());
             row.setTitle(truncate(data.getTitle(), 200));
             row.setModelName(truncate(data.getModelName(), 120));
             row.setPinned(Boolean.TRUE.equals(data.getPinned()));
             row.setPayload(data.getPayload());
             row.setClientUpdatedAt(data.getClientUpdatedAt());
             row.setLastuser(uid);
-            mapper.update(row, where);
+            if (mapper.update(row, where) <= 0) {
+                return Result.failed(false, "会话已变更或同步失败，请重新拉取后重试");
+            }
             return Result.succeed(true, "已同步");
         }
         ChatConversationBean owned = new ChatConversationBean();
@@ -89,7 +102,9 @@ public class ChatConversationHolder {
         if (all != null && all.size() >= MAX_CONVERSATIONS_PER_USER) {
             return Result.failed(false, "云端会话数量已达上限（" + MAX_CONVERSATIONS_PER_USER + "），请删除部分会话后重试");
         }
-        mapper.install(owned);
+        if (mapper.install(owned) <= 0) {
+            return Result.failed(false, "保存会话失败，请稍后重试");
+        }
         return Result.succeed(true, "已同步");
     }
 

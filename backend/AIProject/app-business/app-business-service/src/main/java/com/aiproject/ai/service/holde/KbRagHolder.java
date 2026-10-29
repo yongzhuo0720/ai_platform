@@ -530,12 +530,14 @@ public class KbRagHolder {
         }
     }
 
-    /** SQL 字面量转义：单引号加倍，去掉 NUL */
+    /** SQL 字面量转义：先去 NUL，再转义反斜杠、最后单引号加倍。
+     *  顺序不能反——必须先处理反斜杠，否则转义后的单引号可被 \' 绕过
+     *  （在 standard_conforming_strings=off 的旧配置下即为注入漏洞）。 */
     static String escapeSqlLiteral(String value) {
         if (value == null) {
             return "";
         }
-        return value.replace("\0", "").replace("'", "''");
+        return value.replace("\0", "").replace("\\", "\\\\").replace("'", "''");
     }
 
     private Long findDocIid(String kbName, String name, String uid) {

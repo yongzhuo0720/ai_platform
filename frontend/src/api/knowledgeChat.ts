@@ -98,7 +98,7 @@ export const retrieveFromDataset = async (
   }
 
   const data = await response.json()
-  return data.records || ''
+  return data.records ?? []
 }
 
 /**

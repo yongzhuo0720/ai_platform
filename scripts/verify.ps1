@@ -72,6 +72,16 @@ Step "前端类型检查" {
     }
 }
 
+Step "流式回归检查" {
+    Push-Location "$root/frontend"
+    try {
+        npm run check:streaming
+        if ($LASTEXITCODE -ne 0) { throw "streaming 检查退出码 $LASTEXITCODE" }
+    } finally {
+        Pop-Location
+    }
+}
+
 if (-not $SkipBuild) {
     Step "前端生产构建" {
         Push-Location "$root/frontend"

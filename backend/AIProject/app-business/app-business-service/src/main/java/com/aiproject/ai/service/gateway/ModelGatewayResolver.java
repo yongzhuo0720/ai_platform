@@ -65,7 +65,8 @@ public class ModelGatewayResolver {
     }
 
     private ResolvedModel build(ModelsConfigBean bean) {
-        if (bean == null || !PROTOCOL_OPENAI.equalsIgnoreCase(bean.getProtocol())) {
+        if (bean == null || Boolean.FALSE.equals(bean.getEnable())
+                || !PROTOCOL_OPENAI.equalsIgnoreCase(bean.getProtocol())) {
             return null;
         }
         String baseUrl = trimUrl(bean.getBaseUrl());

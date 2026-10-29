@@ -293,13 +293,15 @@ interface DirectConversation {
   /** 置顶的会话排在列表最前（本地持久化） */
   pinned?: boolean;
 }
-const DIRECT_CONVERSATIONS_KEY = "ai-direct-conversations";
+let chatOwnerUserId = getCurrentUser();
+const directConversationsKey = (uid: string) => `ai-direct-conversations-${uid}`;
 const DIRECT_MODEL_KEY_PREFIX = "direct-";
 const directConversations = ref<DirectConversation[]>(
-  readStorage<DirectConversation[]>(DIRECT_CONVERSATIONS_KEY, [])
+  readStorage<DirectConversation[]>(directConversationsKey(chatOwnerUserId), [])
 );
 const activeDirectConversationId = ref("");
-const persistDirectConversations = () => writeStorage(DIRECT_CONVERSATIONS_KEY, directConversations.value);
+const persistDirectConversations = () =>
+  writeStorage(directConversationsKey(chatOwnerUserId), directConversations.value);
 
 /**
  * 云端同步（直连会话多端持久化）。
@@ -308,10 +310,21 @@ const persistDirectConversations = () => writeStorage(DIRECT_CONVERSATIONS_KEY, 
  * 异步 upsert 云端，登录后拉取合并。网络失败静默——同步是增强能力，
  * 绝不能阻塞对话本身。</p>
  */
-let cloudSyncTimer: number | undefined;
+const cloudSyncTimers = new Map<string, number>();
+const cloudSyncRequests = new Map<string, Promise<unknown>>();
+const cancelConversationSync = (conversationId: string) => {
+  const timer = cloudSyncTimers.get(conversationId);
+  if (timer !== undefined) window.clearTimeout(timer);
+  cloudSyncTimers.delete(conversationId);
+};
 const syncConversationToCloud = (conv: DirectConversation) => {
-  if (cloudSyncTimer) window.clearTimeout(cloudSyncTimer);
-  cloudSyncTimer = window.setTimeout(() => {
+  const owner = chatOwnerUserId;
+  if (owner !== getCurrentUser() || owner === "guest") return;
+  cancelConversationSync(conv.id);
+  const timer = window.setTimeout(() => {
+    cloudSyncTimers.delete(conv.id);
+    if (owner !== chatOwnerUserId || owner !== getCurrentUser() ||
+        !directConversations.value.includes(conv)) return;
     const payload: CloudConversation = {
       convId: conv.id,
       title: conv.name,
@@ -320,16 +333,24 @@ const syncConversationToCloud = (conv: DirectConversation) => {
       clientUpdatedAt: conv.updatedAt,
       payload: JSON.stringify(conv),
     };
-    chatConversationApi.save(payload).catch((e) =>
+    const request = chatConversationApi.save(payload).catch((e) =>
       console.warn('[云端会话] 同步失败（不影响本地）:', (e as Error)?.message || e)
     );
+    cloudSyncRequests.set(conv.id, request);
+    void request.finally(() => {
+      if (cloudSyncRequests.get(conv.id) === request) cloudSyncRequests.delete(conv.id);
+    });
   }, 800);
+  cloudSyncTimers.set(conv.id, timer);
 };
 
 /** 登录后从云端拉取并与本地合并：同 id 取 clientUpdatedAt 较新者 */
 const mergeCloudConversations = async () => {
+  const owner = chatOwnerUserId;
+  if (owner !== getCurrentUser() || owner === "guest") return;
   try {
     const { data: res } = await chatConversationApi.list();
+    if (owner !== chatOwnerUserId || owner !== getCurrentUser()) return;
     if (res.resp_code !== 0 || !Array.isArray(res.datas)) return;
     const localById = new Map(directConversations.value.map((c) => [c.id, c]));
     let changed = false;
@@ -732,6 +753,7 @@ const attachedFiles = ref<UploadedChatFile[]>([]);
  */
 const isDragging = ref(false);
 let currentStopFn: (() => void) | null = null;
+let currentPartialSaveFn: (() => void) | null = null;
 let currentRequestToken = 0;
 syncAssistantList();
 
@@ -999,6 +1021,36 @@ const syncModelBoundInput = (modelId: string) => {
 };
 
 export function useChat(): UseChatReturn {
+  const userId = getCurrentUser();
+  if (chatOwnerUserId !== userId) {
+    currentRequestToken += 1;
+    currentPartialSaveFn?.();
+    currentPartialSaveFn = null;
+    currentStopFn?.();
+    currentStopFn = null;
+    cloudSyncTimers.forEach((timer) => window.clearTimeout(timer));
+    cloudSyncTimers.clear();
+    chatOwnerUserId = userId;
+    currentUserId.value = userId;
+    directConversations.value = readStorage<DirectConversation[]>(directConversationsKey(userId), []);
+    activeDirectConversationId.value = "";
+    activeConversationId.value = "";
+    messages.value = [];
+    conversations.value = [];
+    inputValue.value = "";
+    attachedFiles.value = [];
+    loading.value = false;
+    thinking.value = "";
+    directKbName.value = "";
+    directKbOptions.value = [];
+    defaultModels.value = [];
+    customAssistants.value = [];
+    builtinAssistants.value = [];
+    hiddenAssistantIds.value = readStorage<string[]>(getHiddenAssistantStorageKey(), []);
+    activeAssistantId.value = readStorage<string>(getActiveAssistantStorageKey(), "");
+    activeModelId.value = readStorage<string>(getActiveModelStorageKey(), "");
+    syncAssistantList();
+  }
   const focusEmptyTextarea = () => {
     nextTick(() => {
       if (messages.value.length > 0 || parametersLoading.value || loading.value) {
@@ -1206,7 +1258,9 @@ export function useChat(): UseChatReturn {
       const target = directConversations.value.find((c) => c.id === conversationId);
       if (!target) return;
       target.pinned = !target.pinned;
+      target.updatedAt = Date.now();
       persistDirectConversations();
+      syncConversationToCloud(target);
       return;
     }
     const pinnedIds = readDifyPinned();
@@ -1226,7 +1280,9 @@ export function useChat(): UseChatReturn {
       const target = directConversations.value.find((c) => c.id === conversationId);
       if (!target) return;
       target.name = name;
+      target.updatedAt = Date.now();
       persistDirectConversations();
+      syncConversationToCloud(target);
       return;
     }
     try {
@@ -1405,11 +1461,13 @@ export function useChat(): UseChatReturn {
   };
 
   const cancelCurrentRequest = () => {
+    currentRequestToken += 1;
+    currentPartialSaveFn?.();
+    currentPartialSaveFn = null;
     if (currentStopFn) {
       currentStopFn();
       currentStopFn = null;
     }
-    currentRequestToken += 1;
     loading.value = false;
     thinking.value = "";
   };
@@ -1693,7 +1751,7 @@ export function useChat(): UseChatReturn {
       : '[文件]');
 
     if (isDirectMode.value) {
-      sendDirectMessage(queryContent);
+      sendDirectMessage(queryContent, files);
       return;
     }
 
@@ -1726,9 +1784,12 @@ export function useChat(): UseChatReturn {
           cancelButtonText: "取消",
           type: "warning",
         });
+        if (activeDirectConversationId.value === itemId) cancelCurrentRequest();
+        cancelConversationSync(itemId);
         directConversations.value = directConversations.value.filter((c) => c.id !== itemId);
         persistDirectConversations();
-        chatConversationApi.delete(itemId).catch(() => undefined);
+        await cloudSyncRequests.get(itemId);
+        await chatConversationApi.delete(itemId);
         if (activeDirectConversationId.value === itemId) {
           activeDirectConversationId.value = "";
           messages.value = [];
@@ -1834,6 +1895,13 @@ export function useChat(): UseChatReturn {
     loading.value = true;
 
     let assistantContent = "";
+    const owner = chatOwnerUserId;
+    currentPartialSaveFn = () => {
+      const msg = messages.value.find((item) => item.id === assistantMessageId);
+      if (owner === chatOwnerUserId) {
+        persistPartialDirectReply(conversation, assistantContent, msg?.thinking, msg?.kbSources);
+      }
+    };
     const existingAssistantMessage = messages.value.find((m) => m.id === assistantMessageId);
     if (existingAssistantMessage) {
       existingAssistantMessage.content = "";
@@ -1954,6 +2022,7 @@ export function useChat(): UseChatReturn {
         conversation.updatedAt = Date.now();
         persistDirectConversations();
         syncConversationToCloud(conversation);
+        currentPartialSaveFn = null;
         currentStopFn = null;
       },
       onError: (error) => {
@@ -1968,13 +2037,14 @@ export function useChat(): UseChatReturn {
         }
         // 已生成的部分内容保留到本地会话，切换/刷新后不丢
         persistPartialDirectReply(conversation, assistantContent, msg?.thinking, msg?.kbSources);
+        currentPartialSaveFn = null;
         loading.value = false;
         currentStopFn = null;
       },
     }, directKbName.value ? { kbName: directKbName.value } : undefined);
   };
 
-  const sendDirectMessage = (queryContent: string) => {
+  const sendDirectMessage = (queryContent: string, files: UploadedChatFile[]) => {
     const model = activeDirectModel.value;
     if (!model || model.iid == null) {
       ElMessage.error("直连模型不可用，请检查模型直连配置或重新选择模型");
@@ -1991,11 +2061,13 @@ export function useChat(): UseChatReturn {
     });
     // 直连图片：取本地 dataUrl 附件随本次请求发送（多模态数组仅在请求体中构造，
     // 本地历史存纯文本——旧图在后续轮次没有再利用的价值，还占存储）
-    const images = attachedFiles.value
+    const images = files
       .filter((f) => f.dataUrl)
       .map((f) => ({ url: f.dataUrl as string, name: f.name }));
     conversation.messages.push({ role: "user", content: queryContent });
-    attachedFiles.value = attachedFiles.value.filter((f) => !f.dataUrl);
+    conversation.updatedAt = Date.now();
+    persistDirectConversations();
+    syncConversationToCloud(conversation);
     runDirectStream(conversation, `assistant-${Date.now()}`, userMessageId, queryContent, images);
   };
 
@@ -2551,10 +2623,7 @@ export function useChat(): UseChatReturn {
   );
 
   onUnmounted(() => {
-    if (currentStopFn) {
-      currentStopFn();
-      currentStopFn = null;
-    }
+    cancelCurrentRequest();
     if (typeof document !== "undefined") {
       document.removeEventListener("click", closeAssistantMenu);
     }

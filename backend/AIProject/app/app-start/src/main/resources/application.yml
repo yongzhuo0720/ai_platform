@@ -23,12 +23,27 @@ hnsp:
 
 
 
+# 2026-10-29 安全收敛（原为 include: "*"）。
+# 原配置会把 /actuator/env、/actuator/heapdump、/actuator/threaddump 等全部端点
+# 无鉴权暴露出去：env 可能回显自定义配置键的明文值，heapdump 可直接 dump 堆内存。
+# 现仅保留健康检查，并强制关闭三个高危端点（即使将来有人改回 "*" 也不生效）。
+# 注意：原配置里的 "security: false" 是 Spring Boot 1.x 的写法，2.x 已移除该属性，
+# 也就是说它从来没起过保护作用——真正起作用的是下面这两段。
 management:
   endpoints:
     web:
       exposure:
-        include: "*"
-  security: false
+        include: "health,info"
+  endpoint:
+    env:
+      enabled: false
+    heapdump:
+      enabled: false
+    threaddump:
+      enabled: false
+  health:
+    # 不对外展示数据源、Redis 等组件的连接细节
+    show-details: never
 
 
 # spring配置

@@ -76,6 +76,9 @@ public class RerankResolver {
             List<ModelsConfigBean> list = modelsConfigBeanHolder.queryList(where, null);
             if (list != null) {
                 for (ModelsConfigBean item : list) {
+                    if (item == null || Boolean.FALSE.equals(item.getEnable())) {
+                        continue;
+                    }
                     String baseUrl = trimTail(item.getBaseUrl());
                     String apiKey = trim(item.getApiKey());
                     String model = trim(item.getUpstreamModel());
@@ -134,11 +137,15 @@ public class RerankResolver {
                 return null;
             }
             List<Integer> order = new ArrayList<Integer>();
-            for (JsonNode r : results) {
-                JsonNode idx = r.get("index");
-                if (idx != null && idx.isInt()) {
-                    order.add(idx.asInt());
+            boolean[] seen = new boolean[docs.size()];
+            for (JsonNode result : results) {
+                JsonNode index = result.get("index");
+                if (index == null || !index.isInt() || index.asInt() < 0
+                        || index.asInt() >= docs.size() || seen[index.asInt()]) {
+                    return null;
                 }
+                seen[index.asInt()] = true;
+                order.add(index.asInt());
             }
             // 防御：上游返回的下标不完整时降级
             return order.size() == docs.size() ? order : null;

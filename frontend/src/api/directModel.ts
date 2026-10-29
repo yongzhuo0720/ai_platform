@@ -128,10 +128,6 @@ export const streamDirectChat = (
       signal: controller.signal,
     })
 
-    if (firstByteTimer) {
-      clearTimeout(firstByteTimer)
-      firstByteTimer = null
-    }
     if (!response.ok) {
       throw await parseGatewayError(response)
     }
@@ -157,6 +153,11 @@ export const streamDirectChat = (
     while (true) {
       const { done, value } = await reader.read()
       if (done) break
+      if (!value?.byteLength) continue
+      if (firstByteTimer) {
+        clearTimeout(firstByteTimer)
+        firstByteTimer = null
+      }
       resetIdleTimer()
 
       buffer += decoder.decode(value, { stream: true })
@@ -175,6 +176,7 @@ export const streamDirectChat = (
         if (!payload || payload === '[DONE]') {
           if (payload === '[DONE]') {
             complete()
+            return
           }
           continue
         }

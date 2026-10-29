@@ -2,7 +2,7 @@
 
 面向企业内部的一站式 AI 能力门户：把**智能对话、知识库问答、应用构建、模型与数据集仓库**整合进同一个平台，并按**角色 / 部门**做细粒度的可见性控制。
 
-AI 的向量化、检索与编排由 Dify 承担，本平台负责**用户体系、权限模型、多模块聚合与前端交互体验**。
+AI 能力有两条路径：Dify 提供对话、工作流与托管知识库；OpenAI 兼容模型通过后端网关调用，搭配本平台的**文档分块、向量化、混合检索与可选 Rerank 精排**。平台同时管理用户、权限、会话同步与调用治理。
 
 ---
 
@@ -24,17 +24,17 @@ AI 请求默认统一收口到业务后端，浏览器不再持有 Dify API Key 
 
 | 通道 | 前缀 | 路径 | 特征 |
 |---|---|---|---|
-| A · AI 网关（默认） | `/ai/api/aiGateway/{chat\|knowledgeChat\|file\|agent}/...` | 浏览器 → Spring Boot → Dify / 智能体服务 | 凭据只存服务端；SSE 逐块透传；按用户限流、每日 Token 配额（仅 Dify）、审计日志 |
+| A · AI 网关（默认） | `/ai/api/aiGateway/{chat\|knowledgeChat\|file\|models}/...` | 浏览器 → Spring Boot → Dify / OpenAI 兼容模型 | 凭据只存服务端；SSE 逐块透传；按用户限流、用户与部门每日 Token 配额、审计日志 |
 | B · 平台接口 | `/ai/api/...` | 浏览器 → Spring Boot → PostgreSQL | Sa-Token 鉴权，业务读写与操作日志 |
 | C · 直连（兼容） | `/v1/...` | 浏览器 → Dify | 设置 `VITE_AI_GATEWAY=0` 后启用；凭据下发浏览器，无治理能力 |
 
-网关核心在 `AiGatewayService`：转发请求/响应、过滤逐跳响应头、SSE 边读边写（不破坏逐字输出）、解析上游 usage 并落审计；`AiGatewayGuard` 用 Redis 做每分钟限流与每日 Token 配额（配额只对 `chat` / `knowledgeChat` 生效，`0` 表示不限制）；`AiGatewayAdminHolder` 提供用量看板、调用日志与配额管理接口，后台页面为「AI 调用治理」。
+网关核心在 `AiGatewayService`：转发请求/响应、过滤逐跳响应头、SSE 边读边写、解析上游 usage 并记录请求 ID、首块响应耗时与成本；`AiGatewayGuard` 用 Redis 做每分钟限流与每日 Token 配额（配额适用于 `chat` / `knowledgeChat` / `models`，`0` 表示不限制）；`AiGatewayAdminHolder` 提供用量看板、调用日志与配额管理接口，后台页面为「AI 调用治理」。Dify 对话模块的查询、JSON 与文件上传中的 `user` 统一使用后端认证身份。
 
 **取舍**：换来凭据不出服务端、可计量可治理；代价是多一跳网关延迟与 SSE 代理复杂度，且 Dify 超时与断流需要在网关侧兜底。
 
-### 数据归属：kbId 弱引用
+### 数据归属：Dify 知识库与本地 RAG
 
-文档原文、分块与向量**全部存放在 Dify**，本平台数据库里一个字节的文档内容都没有。
+Dify 托管知识库通过 `knowledgebasebean.kbId` 引用上游数据集；这一路的原文、分块与向量保存在 Dify。
 
 ```
 Dify                              本平台 PostgreSQL
@@ -45,7 +45,7 @@ Dify                              本平台 PostgreSQL
                           .id      └─ unitsnos/roleiids  部门/角色黑名单
 ```
 
-本平台只回答一个问题：**谁能看**。
+本地 RAG 是另一条链路：浏览器提取 TXT / Markdown / PDF / Word 文本，后端分块并调用向量模型，把文档元数据写入 `kbdocbean`，把文本分块与向量 JSON 写入 `kbchunkbean`。检索限定当前用户，结合余弦相似度、PostgreSQL 全文候选与 RRF 融合；可选 Rerank 后，将最终顺序的片段注入直连模型请求。它需要同时考虑**数据归属、检索质量与存储一致性**。
 
 ---
 
@@ -152,9 +152,9 @@ frontend/src/
 |---|---|
 | 越权防护 | 平台级目录（能力/数据集/模型/应用/Dify 配置）的写操作限超管；用户归属资源逐条校验所有者 |
 | 文件下载 | 路径需落在已登记的数据集根目录内，规范化后前缀比对，越界返回 403 |
-| 密钥治理 | Dify Key 与智能体 Token 只存服务端（数据库或环境变量），浏览器不持有；网关覆盖客户端传入的认证头；源码中历史遗留的硬编码密钥已全部移除 |
-| AI 调用治理 | Dify 与智能体共用网关：按用户每分钟限流、完整审计（模块 / 状态 / tokens / 耗时 / 会话 ID / 客户端 IP）；每日 Token 配额仅对 Dify 模块生效；后台可视化与配额管理 |
-| SSRF 防护 | 智能体上游地址只取服务端配置，忽略 `assistantbean.apiUrl`，避免把任意 URL 写进请求 |
+| 密钥治理 | 默认网关模式下，Dify / 直连模型密钥仅由服务端使用；网关覆盖客户端传入的认证头 |
+| AI 调用治理 | Dify 与 OpenAI 兼容模型共用网关：按用户限流，记录 tokens、耗时、请求 ID 与成本；支持用户与部门 Token 配额 |
+| 上游地址 | Dify 与直连模型的目标地址取服务端配置，由管理员维护 |
 | XSS | 助手回答中的原始 HTML 做转义，图片 URL 做协议校验 |
 
 ### 运行测试
@@ -168,14 +168,14 @@ Set-Location backend/AIProject
 mvn -s $settings "-Dmaven.repo.local=$repo" test
 ```
 
-现有用例共 **30 个，全部通过**：
+本地验证使用 `scripts/verify.ps1 -JavaHome '<你的 JDK 8 路径>'`，依次运行后端测试、前端类型检查、流式回归、生产构建与 RAG 评估集自检。2026-10-27 验证：后端 **138** 个用例通过，本次新增 **34** 个网关、向量响应、模型状态与会话同步回归用例；前端流式检查 **14** 项通过。
 
-| 测试类 | 数量 | 覆盖内容 |
+| 本次新增测试类 | 数量 | 覆盖内容 |
 |---|---|---|
-| `MyUserBaseDbHolderTest` | 5 | 超管判定边界：超管 / 普通角色 / rid 为空 / 账号不存在 / 未登录 |
-| `KnowledgeBaseBeanHolderTest` | 11 | 知识库可见性：public / only_me / 部门与角色黑名单、**权限配置解析失败的 fail-closed**、账号缺失与 rid 为空不 NPE、超管放行 |
-| `SsoStateSigningTest` | 6 | SSO state 签名：正常往返、伪造签名、篡改 uid、错误密钥、畸形 state、签名稳定性 |
-| `AiGatewayUsageParserTest` | 8 | 网关 usage 解析：`message_end`、工作流 `data.total_tokens`、input/output 别名、SSE error、阻断错误、畸形行，以及智能体的 `response.status=failed` 与 `session_id` / `message.id` 提取 |
+| `AiGatewayServiceTest` | 13 | 身份覆盖、上传转发、畸形 / 超大请求拒绝、保留精排顺序 |
+| `EmbeddingClientTest` | 8 | 按响应 index 对齐输入、拒绝重复 / 越界索引与无效向量 |
+| `ModelRoutingTest` | 7 | 忽略禁用配置、异常精排索引降级 |
+| `ChatConversationHolderTest` | 6 | 拦截旧快照、带版本条件更新、保存失败不报成功 |
 
 > 首次运行需联网下载 `surefire-junit-platform`（JUnit 5 的运行器），之后即可加 `-o` 离线执行。
 
@@ -183,15 +183,17 @@ mvn -s $settings "-Dmaven.repo.local=$repo" test
 
 ## 已知限制
 
-- **AI 能力依赖外部服务**：Dify 不可达时，对话、知识库检索、文档预览等功能不可用（业务模块不受影响）。
+- **AI 能力依赖外部服务**：Dify 与直连模型各自依赖对应上游；本地 RAG 的向量化仍需可用的向量模型接口。
 - **网关需先配置上游**：Dify 需在数据库 `difyconfigbean`（后台「Dify 配置管理」）或服务端 `DIFY_*` 环境变量配置；直连模型需在「模型配置」里配齐地址与密钥。未配置时对应模块返回 503；前端 `.env.local` 的 `VITE_DIFY_*` 在默认网关模式下不生效。
 - **流式治理的边界**：Token 统计依赖上游返回 usage（Dify 聊天在 `message_end`，工作流在 `data.total_tokens`）；上游不返回时只统计调用次数与耗时，配额无法按 Token 精确扣减。
-- **测试覆盖有限**：已补上核心鉴权、权限模型、SSO state 与网关 usage 解析的单元测试（30 个用例），其余模块尚无覆盖。离线跑测试前需先联网一次下载 `surefire-junit-platform`。
+- **验证边界**：自动测试不等于真实上游与数据库验收；Markdown 检查脚本尚缺 Node 下的 DOM 环境，当前不能独立通过。其余待改进项见本次检查记录。
 - **SSO** 依赖外部 OpenID 服务（默认关闭），本地请使用账号密码登录。
 
 ---
 
 ## 文档
+
+- `docs/改进检查与学习计划-2026-10-27.md` — 本次修复、验证证据、后续改进优先级与项目学习顺序
 
 - `docs/启动检查清单.md` — **先把项目跑起来**：环境核对、前后端启动、逐页验收、故障排查
 - `docs/学习地图.md` — 分阶段学习路线与进度记录
