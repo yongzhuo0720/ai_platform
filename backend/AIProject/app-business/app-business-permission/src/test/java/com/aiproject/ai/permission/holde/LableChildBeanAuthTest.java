@@ -17,10 +17,12 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 /**
- * 标签子项写接口的管理员校验测试（报告 P0-3）。
+ * 标签绑定表（lableChildBean）的权限测试。
  *
- * <p>与标签组同属全平台共享基础数据，写操作必须限管理员。
- * 2026-10-29 修复前 install / delete / update 完全没有鉴权。</p>
+ * <p>这张表不是「标签子项」而是「资源 ←→ 标签组」的绑定：
+ * hash = 资源主键，type = 模块，lableiid = 标签组。
+ * 普通用户给自己名下的知识库打/取消标签走的正是 install / delete，
+ * 因此这两个方法只能要求登录；只有整行 update 保持管理员兜底。</p>
  */
 @ExtendWith(MockitoExtension.class)
 class LableChildBeanAuthTest {
@@ -36,59 +38,56 @@ class LableChildBeanAuthTest {
 
     private LableChildBean data() {
         LableChildBean bean = new LableChildBean();
-        bean.setName("测试子项");
+        bean.setName("测试绑定");
         return bean;
     }
 
-    private void assertRejected(Result<Boolean> r) {
-        assertFalse(Boolean.TRUE.equals(r.getDatas()), "非管理员的写操作必须被拒绝");
-    }
-
     @Test
-    void install_nonAdmin_shouldBeRejected_andNotTouchDb() {
-        when(myUserBaseDbHolder.isAdmin("u1")).thenReturn(false);
-
-        assertRejected(holder.install("u1", data()));
-        verify(lableChildBeanMapper, never()).install(any(LableChildBean.class));
-    }
-
-    @Test
-    void install_nullUid_shouldBeRejected() {
-        assertRejected(holder.install(null, data()));
-        verify(lableChildBeanMapper, never()).install(any(LableChildBean.class));
-    }
-
-    @Test
-    void install_admin_shouldSucceed() {
-        when(myUserBaseDbHolder.isAdmin("admin")).thenReturn(true);
+    void install_loggedInUser_shouldSucceed() {
         when(lableChildBeanMapper.install(any(LableChildBean.class))).thenReturn(1);
 
-        assertTrue(Boolean.TRUE.equals(holder.install("admin", data()).getDatas()),
-                "管理员建标签子项应当成功");
+        assertTrue(Boolean.TRUE.equals(holder.install("u1", data()).getDatas()),
+                "普通用户给自己名下的资源打标签必须可用（知识库详情页/广场依赖此接口）");
+        verify(myUserBaseDbHolder, never()).isAdmin(any());
     }
 
     @Test
-    void delete_nonAdmin_shouldBeRejected_andNotTouchDb() {
-        when(myUserBaseDbHolder.isAdmin("u1")).thenReturn(false);
-
-        assertRejected(holder.delete("u1", data()));
-        verify(lableChildBeanMapper, never()).delete(any(LableChildBean.class));
+    void install_nullUid_shouldBeRejected_andNotTouchDb() {
+        Result<Boolean> r = holder.install(null, data());
+        assertFalse(Boolean.TRUE.equals(r.getDatas()), "未登录的写操作必须被拒绝");
+        verify(lableChildBeanMapper, never()).install(any(LableChildBean.class));
     }
 
     @Test
-    void delete_admin_shouldSucceed() {
-        when(myUserBaseDbHolder.isAdmin("admin")).thenReturn(true);
+    void delete_loggedInUser_shouldSucceed() {
         when(lableChildBeanMapper.delete(any(LableChildBean.class))).thenReturn(1);
 
-        assertTrue(Boolean.TRUE.equals(holder.delete("admin", data()).getDatas()),
-                "管理员删标签子项应当成功");
+        assertTrue(Boolean.TRUE.equals(holder.delete("u1", data()).getDatas()),
+                "普通用户取消自己资源的标签必须可用");
+        verify(myUserBaseDbHolder, never()).isAdmin(any());
+    }
+
+    @Test
+    void delete_nullUid_shouldBeRejected_andNotTouchDb() {
+        Result<Boolean> r = holder.delete("", data());
+        assertFalse(Boolean.TRUE.equals(r.getDatas()), "未登录的删除必须被拒绝");
+        verify(lableChildBeanMapper, never()).delete(any(LableChildBean.class));
     }
 
     @Test
     void update_nonAdmin_shouldBeRejected_andNotTouchDb() {
         when(myUserBaseDbHolder.isAdmin("u1")).thenReturn(false);
 
-        assertRejected(holder.update("u1", data(), new LableChildBean()));
+        Result<Boolean> r = holder.update("u1", data(), new LableChildBean());
+        assertFalse(Boolean.TRUE.equals(r.getDatas()), "整行修改没有合法用户调用方，非管理员必须被拒绝");
         verify(lableChildBeanMapper, never()).update(any(LableChildBean.class), any(LableChildBean.class));
+    }
+
+    @Test
+    void update_admin_shouldSucceed() {
+        when(myUserBaseDbHolder.isAdmin("admin")).thenReturn(true);
+        when(lableChildBeanMapper.update(any(LableChildBean.class), any(LableChildBean.class))).thenReturn(1);
+
+        assertTrue(Boolean.TRUE.equals(holder.update("admin", data(), new LableChildBean()).getDatas()));
     }
 }
