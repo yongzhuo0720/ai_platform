@@ -18,6 +18,7 @@ import { navigationSections } from "@/data/platform";
 import { useThemeStore } from "@/stores/theme";
 import Cookies from "js-cookie";
 import { SUPER_ADMIN_RID } from '@/config/constants'
+import { clearUserSession } from '@/utils/session'
 
 const themeStore = useThemeStore();
 
@@ -137,17 +138,9 @@ const handlePasswordCancel = () => {
 const handleLogout = () => {
   showAccountMenu.value = false;
   // 清除当前用户的聊天本地状态，避免切换账号后仍看到上一个用户的记录
-  const uid = Cookies.get("uid");
-  if (uid) {
-    localStorage.removeItem(`chat-hidden-assistants-${uid}`);
-    localStorage.removeItem(`chat-active-assistant-${uid}`);
-    localStorage.removeItem(`chat-active-model-${uid}`);
-  }
-  Cookies.remove("uname");
-  Cookies.remove("rid");
-  Cookies.remove("uaccess");
-  Cookies.remove("loginToken");
-  Cookies.remove("uid");
+  // 2026-10-29：改用统一实现。原来这里没传 { path: '/' }，
+  // 而这些 Cookie 是用 { path: '/' } 写入的，不带同样的 path 删除不掉。
+  clearUserSession();
   // 直接刷新到首页，由路由守卫根据登录状态重定向到登录页，同时清空应用内存状态
   window.location.href = "./";
 };

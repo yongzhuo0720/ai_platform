@@ -14,6 +14,7 @@ import { userApi } from '@/api/user'
 import { adminMenus } from '@/data/adminPlatform'
 import { useThemeStore } from '@/stores/theme'
 import Cookies from 'js-cookie'
+import { clearAdminSession } from '@/utils/session'
 
 const themeStore = useThemeStore()
 
@@ -109,12 +110,8 @@ const handlePasswordCancel = () => {
 
 const handleLogout = () => {
   showAccountMenu.value = false
-  Cookies.remove('admin_uname', { path: '/' })
-  Cookies.remove('admin_rid', { path: '/' })
-  Cookies.remove('admin_uaccess', { path: '/' })
-  Cookies.remove('admin_loginToken', { path: '/' })
-  Cookies.remove('admin_uid', { path: '/' })
-  Cookies.remove('admin_access', { path: '/' })
+  // 2026-10-29：改用统一实现，行为不变（这里原本就是唯一完整的那份）
+  clearAdminSession()
   // 直接刷新到首页，由路由守卫根据登录状态重定向到登录页，同时清空应用内存状态
   window.location.href = './'
 }
