@@ -738,6 +738,12 @@ const displaySuggestedQuestions = computed(() => {
 });
 /** 消息回答完成后推荐的后续问题 */
 const postAnswerSuggestions = ref<string[]>([]);
+/**
+ * 应用是否开启了「回答后推荐问题」。
+ * <p>Dify 的 /messages/{id}/suggested 在未开启该功能时固定返回 400，
+ * 前端若仍然请求，既拿不到数据又会制造失败调用；参数未加载成功时同样跳过。</p>
+ */
+const suggestedAfterAnswerEnabled = ref(false);
 /** 当前消息的 message_id，用于调用推荐消息接口 */
 const lastMessageId = ref('');
 const userInput = ref<Record<string, unknown>>({});
@@ -1384,6 +1390,7 @@ export function useChat(): UseChatReturn {
       const params = await chatApi.getAppParameters();
       appParameters.value = params;
       suggestedQuestions.value = params.suggested_questions || [];
+      suggestedAfterAnswerEnabled.value = params.suggested_questions_after_answer?.enabled === true;
 
       debug.log('[加载参数] user_input_form 原始数据:', JSON.stringify(params.user_input_form));
 
@@ -1676,28 +1683,32 @@ export function useChat(): UseChatReturn {
               sideTab.value = "topic";
             }
           }
-          // 消息完成后获取推荐问题
-          try {
-            let msgId = lastMessageId.value;
-            // 兜底：如果 SSE 事件没有 message_id，从会话历史获取最新消息
-            if (!msgId && receivedConversationId) {
-              debug.log('[推荐消息] SSE 未捕获 message_id，从会话历史兜底获取');
-              const historyRes = await chatApi.getConversationHistory(receivedConversationId, getCurrentUser(), undefined, 1);
-              const msgs = historyRes?.data || [];
-              if (msgs.length > 0) {
-                msgId = msgs[0].id;
+          // 消息完成后获取推荐问题（应用未开启该功能时不请求，Dify 会固定返回 400）
+          if (suggestedAfterAnswerEnabled.value) {
+            try {
+              let msgId = lastMessageId.value;
+              // 兜底：如果 SSE 事件没有 message_id，从会话历史获取最新消息
+              if (!msgId && receivedConversationId) {
+                debug.log('[推荐消息] SSE 未捕获 message_id，从会话历史兜底获取');
+                const historyRes = await chatApi.getConversationHistory(receivedConversationId, getCurrentUser(), undefined, 1);
+                const msgs = historyRes?.data || [];
+                if (msgs.length > 0) {
+                  msgId = msgs[0].id;
+                }
               }
+              debug.log('[推荐消息] message_id:', msgId, 'conversation_id:', receivedConversationId);
+              if (msgId) {
+                const suggestions = await chatApi.getSuggestedMessages(msgId, getCurrentUser());
+                debug.log('[推荐消息] 获取成功:', suggestions);
+                postAnswerSuggestions.value = suggestions;
+              } else {
+                console.warn('[推荐消息] 无法获取 message_id，跳过推荐问题');
+              }
+            } catch (e: any) {
+              console.warn('[推荐消息] 获取失败:', e?.message || e);
             }
-            debug.log('[推荐消息] message_id:', msgId, 'conversation_id:', receivedConversationId);
-            if (msgId) {
-              const suggestions = await chatApi.getSuggestedMessages(msgId, getCurrentUser());
-              debug.log('[推荐消息] 获取成功:', suggestions);
-              postAnswerSuggestions.value = suggestions;
-            } else {
-              console.warn('[推荐消息] 无法获取 message_id，跳过推荐问题');
-            }
-          } catch (e: any) {
-            console.warn('[推荐消息] 获取失败:', e?.message || e);
+          } else {
+            postAnswerSuggestions.value = [];
           }
         },
         onError: (error) => {

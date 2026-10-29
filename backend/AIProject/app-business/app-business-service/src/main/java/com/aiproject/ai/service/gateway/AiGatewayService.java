@@ -670,6 +670,29 @@ public class AiGatewayService {
                 || AiGatewayConfigResolver.MODULE_KNOWLEDGE_CHAT.equals(module);
     }
 
+    /**
+     * 对话应用的元数据接口是否属于「辅助接口」。
+     * <p>
+     * parameters / conversations / messages/{id}/suggested / feedbacks 只做配置与会话
+     * 管理，不触发模型推理、不消耗 token。把它们写进 aicalllogbean 会把看板的
+     * 「调用次数」「成功率」算歪：一次正常对话会连带 2~3 条辅助记录，
+     * 而 suggested 在应用未开启「推荐问题」时固定返回 400，还会被统计成失败调用。
+     * <p>
+     * 因此辅助接口不写审计、不计入统计；失败只走 warn 日志，排查时按 requestId 检索。
+     */
+    private static boolean isAuxiliaryEndpoint(String module, String endpoint) {
+        if (!isDifyChatModule(module) || endpoint == null) {
+            return false;
+        }
+        String path = endpoint.startsWith("/") ? endpoint.substring(1) : endpoint;
+        if ("parameters".equals(path) || "conversations".equals(path)
+                || path.startsWith("conversations/")) {
+            return true;
+        }
+        return path.startsWith("messages/")
+                && (path.endsWith("/suggested") || path.endsWith("/feedbacks"));
+    }
+
     private String withDifyUser(String query, String userId) throws IOException {
         List<String> parameters = new ArrayList<String>();
         if (query != null && !query.isEmpty()) {
@@ -865,6 +888,13 @@ public class AiGatewayService {
     private void record(String userId, String module, String endpoint, String method,
                         String status, Integer httpStatus, AiGatewayUsageParser parser,
                         long start, String error, String clientIp) {
+        if (isAuxiliaryEndpoint(module, endpoint)) {
+            if (!"success".equals(status)) {
+                log.warn("[AiGateway] 辅助接口调用失败(未计入审计): uid={}, endpoint={}, status={}, requestId={}, error={}",
+                        userId, endpoint, status, currentRequestId.get(), error);
+            }
+            return;
+        }
         AiCallLogBean entry = new AiCallLogBean();
         entry.setUserId(userId);
         entry.setModule(module);

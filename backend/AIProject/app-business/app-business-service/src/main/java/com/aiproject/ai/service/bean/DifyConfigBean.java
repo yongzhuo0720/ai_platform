@@ -24,6 +24,14 @@ public class DifyConfigBean extends DbEntityBase {
     @ApiModelProperty(value = "Dify API Key")
     String apiKey;
 
+    /**
+     * 仅用于列表响应：该模块是否已配置密钥。
+     * <p>查询接口会把 apiKey 脱敏为空，前端据此展示「已配置 / 未配置」。
+     * 不加 @SqlColumn，SQL 读写与建表都会忽略该字段。</p>
+     */
+    @ApiModelProperty(value = "是否已配置 API Key（密钥本身不下发）")
+    Boolean apiKeyConfigured;
+
     @SqlColumn()
     @ApiModelProperty(value = "描述")
     String description;

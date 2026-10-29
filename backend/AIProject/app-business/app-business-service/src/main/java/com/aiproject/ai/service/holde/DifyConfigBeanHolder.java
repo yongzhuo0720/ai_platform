@@ -119,6 +119,8 @@ public class DifyConfigBeanHolder {
         // 注意：网关运行时通过内部 query() 读取真实密钥，此处不影响 AI 调用。
         if (list != null) {
             for (DifyConfigBean item : list) {
+                item.setApiKeyConfigured(item.getApiKey() != null
+                        && !item.getApiKey().trim().isEmpty());
                 item.setApiKey("");
             }
         }
