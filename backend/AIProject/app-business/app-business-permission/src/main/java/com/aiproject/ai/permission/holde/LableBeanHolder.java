@@ -36,16 +36,41 @@ public class LableBeanHolder {
     @Autowired
     LableChildBeanMapper<LableChildBean> lableChildBeanMapper = null;
 
+    @Autowired
+    MyUserBaseDbHolder myUserBaseDbHolder = null;
+
+    /**
+     * 标签组是全平台共享的基础数据（各业务资源都通过它打标签），写操作限管理员。
+     *
+     * <p>2026-10-29 补充：此前 install / delete / update 三个写方法完全没有鉴权，
+     * 任意已登录用户都能增删改全平台标签组。这里按项目既有约定补齐——
+     * 返回 null 表示校验通过，返回非 null 表示被拒绝（与 ModelsConfigBeanHolder 一致）。</p>
+     */
+    private Result<Boolean> checkAdmin(String uid) {
+        if (uid == null || uid.trim().isEmpty()) {
+            return Result.failed(false, "请先登录");
+        }
+        if (!myUserBaseDbHolder.isAdmin(uid)) {
+            return Result.failed(false, "仅管理员可维护标签组");
+        }
+        return null;
+    }
+
     /**
      * 功能描述: 增加.
      *
+     * @param uid  用户id
      * @param data 数据
      * @return Boolean
      * @author heneng
      * @date 2026/05/11 11:59:59
      **/
 
-    public Result<Boolean> install(LableBean data) {
+    public Result<Boolean> install(String uid, LableBean data) {
+        Result<Boolean> check = checkAdmin(uid);
+        if (check != null) {
+            return check;
+        }
         //查询名称是否存在
         LableBean bean = new LableBean();
         bean.setType(data.getType());
@@ -69,7 +94,11 @@ public class LableBeanHolder {
      * @date 2026/05/11 11:59:59
      **/
 
-    public Result<Boolean> delete(LableBean data) {
+    public Result<Boolean> delete(String uid, LableBean data) {
+        Result<Boolean> check = checkAdmin(uid);
+        if (check != null) {
+            return check;
+        }
 
         if (lableBeanMapper.delete(data) <= 0) {
             return Result.failed(false, "删除失败");
@@ -93,6 +122,10 @@ public class LableBeanHolder {
      **/
 
     public Result<Boolean> update(String uid, LableBean data, LableBean where) {
+        Result<Boolean> check = checkAdmin(uid);
+        if (check != null) {
+            return check;
+        }
 
         data.setLastuser(uid);
         if (lableBeanMapper.update(data, where) <= 0) {

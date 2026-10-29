@@ -37,11 +37,37 @@ public class UnitBeanHolder {
     @Autowired
     UserBaseHolder userBaseHolder;
 
+    @Autowired
+    MyUserBaseDbHolder myUserBaseDbHolder;
+
+    /**
+     * 部门（unit）是 RBAC 的支柱：用户表的 gid 指向 unit.unitsno，
+     * 资源可见性过滤（ResourceVisibility）与各部门数据范围都依赖它。
+     * 一旦被任意已登录用户篡改，就等于可以撬动全平台资源可见性，因此写操作必须限管理员。
+     *
+     * <p>2026-10-29 补充：此前 install / delete / update 三个写方法完全没有鉴权，
+     * 任意已登录用户都能新建、删除、篡改平台部门树。这里补齐校验。
+     * 返回 null 表示校验通过，非 null 表示被拒绝（与 ModelsConfigBeanHolder 一致）。</p>
+     */
+    private Result<Boolean> checkAdmin(String uid) {
+        if (uid == null || uid.trim().isEmpty()) {
+            return Result.failed(false, "请先登录");
+        }
+        if (!myUserBaseDbHolder.isAdmin(uid)) {
+            return Result.failed(false, "仅管理员可维护部门");
+        }
+        return null;
+    }
+
     /**
      * 增加
      */
 
     public Result<Boolean> install(String uid, UnitBean data) {
+        Result<Boolean> check = checkAdmin(uid);
+        if (check != null) {
+            return check;
+        }
         String sno = createUnitSno(data.getParentsno());
         data.setUnitsno(sno);
         data.setLastuser(uid);
@@ -100,7 +126,11 @@ public class UnitBeanHolder {
      * 删除
      */
 
-    public Result<Boolean> delete(UnitBean data) {
+    public Result<Boolean> delete(String uid, UnitBean data) {
+        Result<Boolean> check = checkAdmin(uid);
+        if (check != null) {
+            return check;
+        }
         //查询是否由下级部门
         boolean reulst = queryChild(data);
         if (!reulst) {
@@ -131,6 +161,10 @@ public class UnitBeanHolder {
      */
 
     public Result<Boolean> update(String uid, UnitBean data, UnitBean where) {
+        Result<Boolean> check = checkAdmin(uid);
+        if (check != null) {
+            return check;
+        }
 
         data.setLastuser(uid);
         if (unitBeanMapper.update(data, where) <= 0) {

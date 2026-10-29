@@ -1,6 +1,7 @@
 package com.aiproject.ai.permission.holde;
 
 import com.aiproject.ai.permission.bean.MyRoleBean;
+import com.aiproject.ai.permission.bean.MyUserBaseDb;
 import com.aiproject.ai.permission.mapper.MyRoleBeanMapper;
 import com.heneng.hnsp.business.account.model.SecurityConstants;
 import com.heneng.hnsp.common.croe.model.Result;
@@ -145,6 +146,50 @@ public class MyRoleBeanHolder {
 
     public Result<PageResult<MyRoleBean>> query(MyRoleBean bean, PageRequest pageRequest) {
         return roleBeanMapper.selectPageLike(pageRequest, bean);
+    }
+
+    /**
+     * 按调用者身份查询角色（2026-10-29 新增）。
+     *
+     * <p><b>为什么不能直接要求管理员。</b> MainLayout（普通用户的主布局）会调这个接口，
+     * 按自己的 rid 查 viewjson 来决定左侧菜单显示哪些项——这是正常业务。
+     * 如果这里加 checkAdmin，所有普通用户的菜单会直接打不开。</p>
+     *
+     * <p><b>那原来的问题是什么。</b> 原实现 {@code query(bean, pageRequest)} 完全不校验身份：
+     * 任意登录用户可以传任意 iid、或者干脆不传条件，把整张角色表读走，
+     * 其中就包含 urlgroupids —— 也就是「这个角色能访问哪些接口」的完整清单。
+     * 拿到它等于拿到平台的权限地图，配合其他接口可以更精准地找攻击面。</p>
+     *
+     * <p><b>修法。</b>管理员照旧查全部；非管理员强制把查询范围收敛到「自己所属的角色」：
+     * 没传 iid 就替他填上自己的，传了别人的 iid 直接拒绝。</p>
+     *
+     * @param uid 调用者（来自 @LoginUserId，服务端注入，不信任前端传参）
+     */
+    public Result<PageResult<MyRoleBean>> queryForCaller(String uid, MyRoleBean bean, PageRequest pageRequest) {
+        if (uid == null || uid.trim().isEmpty()) {
+            return Result.failed(null, "请先登录");
+        }
+        if (bean == null) {
+            return Result.failed(null, "查询条件不能为空");
+        }
+        if (myUserBaseDbHolder.isAdmin(uid)) {
+            return query(bean, pageRequest);
+        }
+
+        MyUserBaseDb self = myUserBaseDbHolder.queryUserByUid(uid);
+        if (self == null || self.getRid() == null) {
+            return Result.failed(null, "当前用户未分配角色");
+        }
+        Long ownRoleId = self.getRid();
+
+        Long requested = bean.getIid();
+        if (requested != null && !ownRoleId.equals(requested)) {
+            return Result.failed(null, "只能查询自己所属的角色");
+        }
+        if (requested == null) {
+            bean.setIid(ownRoleId);
+        }
+        return query(bean, pageRequest);
     }
 
     public List<MyRoleBean> queryList(MyRoleBean bean, PageRequest pageRequest) {

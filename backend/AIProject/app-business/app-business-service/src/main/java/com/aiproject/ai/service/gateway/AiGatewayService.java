@@ -563,8 +563,18 @@ public class AiGatewayService {
             }
             record(userId, module, auditEndpoint, method, status, upstreamStatus, parser,
                     start, error, clientIp);
-            if (parser.getTotalTokens() != null) {
+
+            // 2026-10-29：失败请求不再计入配额。
+            // 修复前这里完全没看 failed——只要上游响应里出现过 usage 字段就照扣，
+            // 于是上游报错（限流、上下文超长、模型不可用）时用户额度照样被吃掉，
+            // 而用户什么结果都没拿到。
+            // 注意：正常响应里若带了 error 字段（部分模型会在 200 里塞错误信息），
+            // 同样按失败处理，不计费。
+            if (!failed && parser.getTotalTokens() != null) {
                 guard.addTokens(userId, module, parser.getTotalTokens());
+            } else if (failed && parser.getTotalTokens() != null) {
+                log.warn("[AiGateway] 上游失败，本次用量不计入配额: uid={}, module={}, tokens={}, httpStatus={}",
+                        userId, module, parser.getTotalTokens(), upstreamStatus);
             }
         } catch (ResponseStatusException e) {
             int status = e.getStatus().value();

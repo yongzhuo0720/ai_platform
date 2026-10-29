@@ -32,7 +32,29 @@
         <hnsp.version>1.2.3-SNAPSHOT</hnsp.version>
         <qjava.version>1.0.1-SNAPSHOT</qjava.version>
         <Log4j.Core>2.18.0</Log4j.Core>
+        <!--
+          2026-10-29 新增：锁定 mybatis 版本。
+          私有框架 hnsp-public-common-croe 在它自己的 pom 里把 mybatis 声明为
+          <version>LATEST</version>，Maven 会去拉「当前最新」版本。
+          2026-10-29 实测：当天 16:55 构建还正常，16:57 元数据刷新后拉到了
+          mybatis 3.6.0（Java 11 编译，class 版本 55.0），而本项目是 Java 8，
+          于是编译直接失败：class file has wrong version 55.0, should be 52.0。
+          即：不锁版本的话，这个项目的构建会在任意时刻自己坏掉，且和当天改了什么代码无关。
+          3.5.19 是离线仓库里最高的 Java 8 兼容版本（class 版本 52.0，已实测）。
+        -->
+        <mybatis.version>3.5.19</mybatis.version>
     </properties>
+
+    <dependencyManagement>
+        <dependencies>
+            <dependency>
+                <groupId>org.mybatis</groupId>
+                <artifactId>mybatis</artifactId>
+                <version>${mybatis.version}</version>
+            </dependency>
+        </dependencies>
+    </dependencyManagement>
+
     <dependencies>
         <dependency>
             <groupId>com.heneng.hnsp</groupId>

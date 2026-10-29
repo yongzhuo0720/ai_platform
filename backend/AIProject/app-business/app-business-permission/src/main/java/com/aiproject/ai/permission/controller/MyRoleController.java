@@ -79,7 +79,9 @@ public class MyRoleController extends ProtectedController {
         CheckUtils.objectCheckNull(uid, "请先登录", CodeEnum.FAILED_USER_TOKEN_PAST.getCode(), null);
         CheckUtils.objectCheckNull(bean, "数据不能空", CodeEnum.NULL.getCode(), null);
 
-        Result<PageResult<MyRoleBean>> result= roleService.query(bean, pageRequest);
+        // 2026-10-29：改用按调用者身份收敛的查询，避免任意登录用户读走整张角色表
+        // （角色表含 urlgroupids，即「该角色能访问哪些接口」的完整清单）。
+        Result<PageResult<MyRoleBean>> result= roleService.queryForCaller(uid, bean, pageRequest);
         result.setResp_msg("查询成功");
         return  result;
     }
