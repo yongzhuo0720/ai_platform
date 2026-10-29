@@ -10,6 +10,7 @@ import Cookies from 'js-cookie'
 import { isSuperAdmin, SUPER_ADMIN_RID } from '@/config/constants'
 
 import { useTagBinding } from '@/composables/useTagBinding'
+import { isGatewayMode, isGatewayModuleConfigured } from '@/stores/difyConfig'
 import type { KnowledgeBase, CreateDatasetParams } from '@/types/knowledge'
 import type { EmbeddingModelOption } from '@/api/dataset'
 import { tagsApi } from '@/api/tags'
@@ -22,6 +23,15 @@ export function useIndex() {
   const knowledgeBases = ref<KnowledgeBase[]>([])
   const isLoading = ref(true)
   const error = ref<string | null>(null)
+  // 网关模式下「知识库文件」模块未配置：整页给引导，不发任何数据集请求
+  const knowledgeFileUnavailable = ref(false)
+
+  const ensureKnowledgeFileReady = async (): Promise<boolean> => {
+    if (!isGatewayMode()) return true
+    const configured = await isGatewayModuleConfigured('file')
+    knowledgeFileUnavailable.value = configured === false
+    return configured !== false
+  }
   const searchQuery = ref('')
   const selectedCategories = ref<string[]>([])
   const allTags = ref<any[]>([])
@@ -367,7 +377,12 @@ export function useIndex() {
     }
   }
 
-  onMounted(() => {
+  onMounted(async () => {
+    // 模块未配置时整页只展示引导，避免每个进入页面的用户都触发一轮必然失败的网关调用
+    if (!(await ensureKnowledgeFileReady())) {
+      isLoading.value = false
+      return
+    }
     fetchKnowledgeBases()
     fetchSharedKnowledgeBases()
     fetchJoinedKnowledgeBases()
@@ -768,6 +783,7 @@ export function useIndex() {
   return {
     isLoading,
     error,
+    knowledgeFileUnavailable,
     searchQuery,
     selectedCategories,
     allTags,

@@ -67,6 +67,8 @@ export interface ChatModel {
    * 仅供本地 RAG 做 embedding，不能出现在对话模型下拉里。</p>
    */
   upstreamModel?: string;
+  /** 配置是否启用；false 表示已停用，不应出现在对话模型下拉里 */
+  enable?: boolean;
 }
 
 export interface ChatSelectOption {
@@ -420,7 +422,10 @@ const loadDirectKbOptions = async () => {
  * 模型下拉里，用户选中后网关拿不到 upstreamModel，直接调用失败。</p>
  */
 const isChatCapableDirectModel = (m: ChatModel) =>
-  m.protocol === "openai" && m.iid != null && !!m.upstreamModel?.trim();
+  m.enable !== false &&
+  m.protocol === "openai" &&
+  m.iid != null &&
+  !!m.upstreamModel?.trim();
 
 const directModels = computed<ChatModel[]>(() =>
   defaultModels.value.filter(isChatCapableDirectModel)
@@ -904,8 +909,10 @@ const modelOptions = computed<ChatSelectOption[]>(() =>
       label: `${model.name} · 直连`,
       value: directModelKey(model),
     })),
+    // 仅保留绑定 Dify 应用的模型：带 protocol 的行是直连/向量/重排配置，
+    // 直连已在上面按能力过滤，向量与重排（rerank 等）不能作为对话模型。
     ...defaultModels.value
-      .filter((m) => !(m.protocol === "openai" && m.iid != null))
+      .filter((m) => !m.protocol && m.enable !== false)
       .map((model) => ({
         title: model.name,
         subtitle: model.provider || "系统模型",
@@ -1346,7 +1353,7 @@ export function useChat(): UseChatReturn {
       });
       if (res.resp_code === 0 && res.datas?.length > 0) {
         defaultModels.value = res.datas.map(
-          (item: { id: string; name: string; provider: string; iid?: number; protocol?: string; upstreamModel?: string }) => ({
+          (item: { id: string; name: string; provider: string; iid?: number; protocol?: string; upstreamModel?: string; enable?: boolean }) => ({
             id: item.id,
             name: item.name,
             provider: item.provider,
@@ -1354,6 +1361,8 @@ export function useChat(): UseChatReturn {
             protocol: item.protocol,
             // 直连模型判断依赖 upstreamModel：丢了它，所有 OpenAI 兼容配置都会被过滤出对话下拉
             upstreamModel: item.upstreamModel,
+            // 停用状态同样要保留，否则已停用的模型仍会出现在对话下拉里
+            enable: item.enable,
           })
         );
       }

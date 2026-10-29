@@ -50,6 +50,48 @@ export function isGatewayMode(): boolean {
   return GATEWAY_MODE
 }
 
+export type GatewayModule = 'chat' | 'knowledgeChat' | 'file' | 'models'
+
+let moduleStatusPromise: Promise<Set<GatewayModule> | null> | null = null
+
+/**
+ * 网关模式下各模块是否已配置。
+ * <p>状态接口失败时返回 null，调用方按「未知」处理，不阻断功能。</p>
+ */
+export function getGatewayModuleStatus(): Promise<Set<GatewayModule> | null> {
+  if (!GATEWAY_MODE) {
+    return Promise.resolve(null)
+  }
+  if (!moduleStatusPromise) {
+    moduleStatusPromise = axios
+      .post('/ai/api/aiGatewayStatus/config')
+      .then(({ data: res }) => {
+        if (res.resp_code !== 0 || !Array.isArray(res.datas?.modules)) {
+          return null
+        }
+        return new Set<GatewayModule>(
+          res.datas.modules
+            .filter((item: { configured?: boolean }) => item.configured)
+            .map((item: { module: GatewayModule }) => item.module)
+        )
+      })
+      .catch((err) => {
+        debug.error('[difyConfig] 获取网关模块状态失败:', err)
+        moduleStatusPromise = null
+        return null
+      })
+  }
+  return moduleStatusPromise
+}
+
+/** 模块未配置返回 false；状态未知返回 null（调用方不应因此阻断功能） */
+export async function isGatewayModuleConfigured(
+  module: GatewayModule
+): Promise<boolean | null> {
+  const status = await getGatewayModuleStatus()
+  return status ? status.has(module) : null
+}
+
 /**
  * 网关模式下附加到原生 fetch 的鉴权头。
  * axios 请求由拦截器统一处理，但知识库模块用了多处原生 fetch，需要手动补上。
@@ -180,6 +222,8 @@ export function invalidate(): void {
   cache.chat = null
   cache.knowledgeChat = null
   cache.knowledgeFile = null
+  // 管理员保存配置后重新探测模块状态，否则页面会继续按旧的「未配置」处理
+  moduleStatusPromise = null
 }
 
 /** 问答聊天对话 配置 */

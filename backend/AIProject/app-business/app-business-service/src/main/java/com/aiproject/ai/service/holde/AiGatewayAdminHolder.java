@@ -87,6 +87,18 @@ public class AiGatewayAdminHolder {
         if (!isAdmin(adminUid)) {
             return Result.failed(null, "仅管理员可访问 AI 用量看板");
         }
+        return Result.succeed(buildConfigStatus(), "查询成功");
+    }
+
+    /**
+     * 普通登录用户查询各模块是否已配置。
+     * <p>业务页面据此在模块未配置时直接给出引导，避免反复请求网关产生失败审计。</p>
+     */
+    public Result<AiGatewayConfigStatus> moduleStatus() {
+        return Result.succeed(buildConfigStatus(), "查询成功");
+    }
+
+    private AiGatewayConfigStatus buildConfigStatus() {
         AiGatewayConfigStatus status = new AiGatewayConfigStatus();
         status.setEnabled(properties.isEnabled());
         status.setRateLimitPerMinute(properties.getRateLimitPerMinute());
@@ -104,7 +116,7 @@ public class AiGatewayAdminHolder {
                 ModelGatewayResolver.MODULE_MODELS,
                 ModelGatewayResolver.MODULE_NAME,
                 modelGatewayResolver.hasDirectModels()));
-        return Result.succeed(status, "查询成功");
+        return status;
     }
 
     public Result<AiGatewaySummary> summary(String adminUid, AiGatewayLogQuery query) {

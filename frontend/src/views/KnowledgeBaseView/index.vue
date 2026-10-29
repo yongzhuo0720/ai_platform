@@ -58,6 +58,7 @@ import KnowledgeBaseSquareView from '@/views/KnowledgeBaseSquareView/index.vue'
 import KbChatPanel from '@/components/KbChatPanel/index.vue'
 
 const {
+  knowledgeFileUnavailable,
   selectedCategories,
   allTags,
   filteredKnowledgeBases,
@@ -1578,7 +1579,12 @@ function clearChatMessages() {
             <ArrowRight v-else />
           </el-icon>
           <span>个人知识库</span>
-          <button class="kb-add-btn" @click.stop="openMngCreateDialog" title="新建知识库">
+          <button
+            v-if="!knowledgeFileUnavailable"
+            class="kb-add-btn"
+            @click.stop="openMngCreateDialog"
+            title="新建知识库"
+          >
             <Plus />
           </button>
         </div>
@@ -1721,6 +1727,12 @@ function clearChatMessages() {
 
     <!-- Main Content Area -->
     <main class="kb-main">
+      <div v-if="knowledgeFileUnavailable" class="kb-config-alert">
+        <div class="kb-config-alert-title">知识库文件模块未配置</div>
+        <div class="kb-config-alert-hint">
+          管理员需在「后台管理 → Dify 配置」中为「知识库文件」模块填写地址与密钥，知识库列表与文档管理才可使用。
+        </div>
+      </div>
       <!-- ========== 知识库广场详情视图（与共享知识库相同的布局） ========== -->
       <div v-if="squareDetailKbId && squareDetailKbData" class="kb-content-shared">
         <!-- 左侧：知识库详情与内容 -->
@@ -2197,10 +2209,18 @@ function clearChatMessages() {
 
       <div v-else-if="activeMenu === 'personal'" class="kb-empty">
         <img src="@/assets/images/brand-logo.svg" alt="" class="kb-empty-logo" />
-        <p class="kb-empty-title">从左侧选择一个知识库，开始检索与问答</p>
-        <p class="kb-empty-hint">
-          还没有知识库？点击左侧「新建知识库」，上传文档后即可在聊天中引用。
-        </p>
+        <template v-if="knowledgeFileUnavailable">
+          <p class="kb-empty-title">知识库文件模块未配置</p>
+          <p class="kb-empty-hint">
+            管理员配置完成后刷新页面，即可创建知识库并上传文档。
+          </p>
+        </template>
+        <template v-else>
+          <p class="kb-empty-title">从左侧选择一个知识库，开始检索与问答</p>
+          <p class="kb-empty-hint">
+            还没有知识库？点击左侧「新建知识库」，上传文档后即可在聊天中引用。
+          </p>
+        </template>
       </div>
 
       <!-- ========== 共享知识库视图：左侧详情 + 右侧对话 ========== -->
