@@ -227,17 +227,8 @@ public class KbRagHolder {
             return Result.failed(null, "尚未配置向量模型：请在模型配置中启用 OpenAI 直连并填写向量模型（embedModel）");
         }
 
-        List<double[]> queryVectors;
-        try {
-            queryVectors = embeddingClient.embed(embedding, Collections.singletonList(query.trim()));
-        } catch (IllegalStateException e) {
-            return Result.failed(null, e.getMessage());
-        } catch (Exception e) {
-            log.warn("[KbRag] 检索向量化失败: {}", e.getMessage());
-            return Result.failed(null, "检索失败：" + e.getMessage());
-        }
-        double[] queryVector = queryVectors.get(0);
-
+        // 先确认有没有分块，再向量化问题：空知识库时省掉一次付费的 embedding 调用，
+        // 也让「知识库为空」不被向量服务故障掩盖成「检索失败」
         KbChunkBean where = new KbChunkBean();
         if (kbName != null && !kbName.trim().isEmpty()) {
             where.setKbName(kbName.trim());
@@ -252,8 +243,20 @@ public class KbRagHolder {
             return Result.succeed(empty, "知识库为空，请先上传文档");
         }
 
+        List<double[]> queryVectors;
+        try {
+            queryVectors = embeddingClient.embed(embedding, Collections.singletonList(query.trim()));
+        } catch (IllegalStateException e) {
+            return Result.failed(null, e.getMessage());
+        } catch (Exception e) {
+            log.warn("[KbRag] 检索向量化失败: {}", e.getMessage());
+            return Result.failed(null, "检索失败：" + e.getMessage());
+        }
+        double[] queryVector = queryVectors.get(0);
+
         Set<Long> lexicalHits = lexicalCandidates(uid, kbName, query.trim());
-        List<KbSearchItem> fused = hybridRank(query.trim(), chunks, queryVector, lexicalHits);
+        RankDiagnostics diagnostics = new RankDiagnostics();
+        List<KbSearchItem> fused = hybridRank(query.trim(), chunks, queryVector, lexicalHits, diagnostics);
 
         int limit = topK == null ? 5 : Math.max(1, Math.min(MAX_TOP_K, topK));
         fused = applyRerank(query.trim(), fused, limit);
@@ -268,7 +271,16 @@ public class KbRagHolder {
         result.setQuery(query.trim());
         result.setModel(embedding.getEmbedModel());
         result.setScanned(chunks.size());
+        result.setSkipped(diagnostics.skipped());
         result.setItems(items);
+        if (diagnostics.skipped() > 0) {
+            log.warn("[KbRag] 向量路跳过 {} 块（维度不一致 {} / 解析失败 {}），当前模型 {}({} 维)",
+                    diagnostics.skipped(), diagnostics.dimensionMismatch,
+                    diagnostics.unparsable, embedding.getEmbedModel(), queryVector.length);
+            result.setWarning("有 " + diagnostics.skipped()
+                    + " 个分块的向量与当前向量模型 " + embedding.getEmbedModel()
+                    + " 不匹配，已跳过语义比对，检索结果可能不完整；如更换过向量模型，请重新上传相关文档");
+        }
         return Result.succeed(result, "检索成功");
     }
 
@@ -333,12 +345,26 @@ public class KbRagHolder {
      */
     public List<KbSearchItem> hybridRank(String query, List<KbChunkBean> chunks,
                                          double[] queryVector, Set<Long> lexicalHits) {
+        return hybridRank(query, chunks, queryVector, lexicalHits, new RankDiagnostics());
+    }
+
+    /**
+     * 同 {@link #hybridRank(String, List, double[], Set)}，额外统计向量路被跳过的块。
+     * 跳过原因对用户有意义（切换向量模型后旧文档会全部失效），不能只埋在日志里。
+     */
+    List<KbSearchItem> hybridRank(String query, List<KbChunkBean> chunks, double[] queryVector,
+                                  Set<Long> lexicalHits, RankDiagnostics diagnostics) {
         // ---- 向量路：对全部分块算余弦 ----
         Map<Long, KbSearchItem> byChunkIid = new HashMap<Long, KbSearchItem>();
         List<KbSearchItem> denseRanked = new ArrayList<KbSearchItem>();
         for (KbChunkBean chunk : chunks) {
             double[] vector = parseVector(chunk.getEmbedding());
-            if (vector == null || vector.length != queryVector.length) {
+            if (vector == null) {
+                diagnostics.unparsable++;
+                continue;
+            }
+            if (vector.length != queryVector.length) {
+                diagnostics.dimensionMismatch++;
                 continue;
             }
             KbSearchItem item = new KbSearchItem();
@@ -626,6 +652,16 @@ public class KbRagHolder {
             start = end - CHUNK_OVERLAP;
         }
         return pieces;
+    }
+
+    /** 混合排序的降级统计，用于把「向量路被跳过」的原因暴露给调用方 */
+    static class RankDiagnostics {
+        int dimensionMismatch;
+        int unparsable;
+
+        int skipped() {
+            return dimensionMismatch + unparsable;
+        }
     }
 
     private double[] parseVector(String json) {

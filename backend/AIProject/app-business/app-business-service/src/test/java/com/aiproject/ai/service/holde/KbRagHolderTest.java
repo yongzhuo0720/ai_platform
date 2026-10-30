@@ -14,6 +14,7 @@ import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
 
@@ -145,8 +146,6 @@ class KbRagHolderTest {
     @Test
     void search_shouldFilterChunksByCurrentUser() throws Exception {
         when(embeddingClient.resolve()).thenReturn(embeddingConfig());
-        when(embeddingClient.embed(any(EmbeddingClient.ResolvedEmbedding.class), any(List.class)))
-                .thenReturn(Collections.singletonList(new double[]{1.0, 0.0}));
         when(kbChunkBeanMapper.select(isNull(), any(KbChunkBean.class)))
                 .thenReturn(Collections.emptyList());
 
@@ -188,6 +187,62 @@ class KbRagHolderTest {
         verify(kbDocBeanMapper).select(isNull(), captor.capture());
         assertEquals("u1", captor.getValue().getLastuser(),
                 "文档名映射也必须按归属收窄，避免把他人文档名带进响应");
+    }
+
+    /** 空知识库不需要向量化问题：否则每条消息都白调一次付费接口 */
+    @Test
+    void search_shouldNotEmbedQueryWhenKnowledgeBaseEmpty() throws Exception {
+        when(embeddingClient.resolve()).thenReturn(embeddingConfig());
+        when(kbChunkBeanMapper.select(isNull(), any(KbChunkBean.class)))
+                .thenReturn(Collections.<KbChunkBean>emptyList());
+
+        Result<com.aiproject.ai.service.gateway.dto.KbSearchResult> result =
+                holder.search("u1", "报销", null, 5);
+
+        assertEquals("知识库为空，请先上传文档", result.getResp_msg());
+        verify(embeddingClient, never()).embed(any(EmbeddingClient.ResolvedEmbedding.class), any(List.class));
+    }
+
+    /**
+     * 切换向量模型后，旧分块的向量维度对不上，此前是静默跳过：
+     * 语义路整段失效，用户只看到「检索变差了」。现在必须计数并给出提示。
+     */
+    @Test
+    void search_shouldWarnWhenChunkVectorsDoNotMatchCurrentModel() throws Exception {
+        when(embeddingClient.resolve()).thenReturn(embeddingConfig());
+        when(embeddingClient.embed(any(EmbeddingClient.ResolvedEmbedding.class), any(List.class)))
+                .thenReturn(Collections.singletonList(new double[]{1.0, 0.0}));
+        KbChunkBean ok = chunk(1L, "默认知识库", "差旅报销需要审批", "[1.0,0.0]");
+        KbChunkBean wrongDim = chunk(2L, "默认知识库", "报销标准为五百元", "[1.0,0.0,0.0]");
+        KbChunkBean broken = chunk(3L, "默认知识库", "报销流程", "not-json");
+        when(kbChunkBeanMapper.select(isNull(), any(KbChunkBean.class)))
+                .thenReturn(Arrays.asList(ok, wrongDim, broken));
+
+        Result<com.aiproject.ai.service.gateway.dto.KbSearchResult> result =
+                holder.search("u1", "报销", null, 5);
+
+        assertNotNull(result.getDatas());
+        assertEquals(2, result.getDatas().getSkipped());
+        assertNotNull(result.getDatas().getWarning(), "维度不一致必须显式提示，不能静默降级");
+        assertTrue(result.getDatas().getWarning().contains("重新上传"));
+        assertEquals(1, result.getDatas().getItems().size(), "维度正常的块仍应参与排序");
+    }
+
+    /** 归因要分开：维度不一致是模型切换，解析失败是数据损坏，处置方式不同 */
+    @Test
+    void hybridRank_shouldCountSkippedVectorsByReason() {
+        KbChunkBean ok = chunk(1L, "kb", "报销流程", "[1.0,0.0]");
+        KbChunkBean wrongDim = chunk(2L, "kb", "差旅制度", "[1.0,0.0,0.0]");
+        KbChunkBean broken = chunk(3L, "kb", "其他", "not-json");
+        KbRagHolder.RankDiagnostics diagnostics = new KbRagHolder.RankDiagnostics();
+
+        List<KbSearchItem> ranked = holder.hybridRank("报销", Arrays.asList(ok, wrongDim, broken),
+                new double[]{1.0, 0.0}, Collections.<Long>emptySet(), diagnostics);
+
+        assertEquals(1, ranked.size());
+        assertEquals(1, diagnostics.dimensionMismatch);
+        assertEquals(1, diagnostics.unparsable);
+        assertEquals(2, diagnostics.skipped());
     }
 
     /** 未配置向量模型时直接失败，不发任何查询 */
