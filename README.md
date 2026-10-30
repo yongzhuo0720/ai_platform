@@ -182,7 +182,7 @@ mvn -s $settings "-Dmaven.repo.local=$repo" test
 cd frontend
 npm run typecheck      # TypeScript 类型检查
 npm run check:icons    # 图标注册检查（模板图标必须 import 或全局注册）
-npm run test            # 单元测试（Vitest），14 个文件 / 200 项
+npm run test            # 单元测试（Vitest），15 个文件 / 203 项
 npm run test:component  # 组件测试（真实渲染），23 个文件 / 184 项
 npm run test:e2e        # 浏览器冒烟（真实 Chromium + 接口 mock），8 项
 npm run check:streaming # 流式超时/取消回归，14 项
@@ -200,7 +200,7 @@ npm run check:bundle     # 首屏 gzip 体积预算（需先 build）
 | 后端单元测试 | **206 项通过，0 失败** |
 | 前端 TypeScript 检查 | 通过 |
 | 前端图标注册检查 | 通过（56 个在用图标全部可解析） |
-| 前端单元测试 | 14 个文件 / **200 项通过** |
+| 前端单元测试 | 15 个文件 / **203 项通过** |
 | 前端组件测试 | 23 个文件 / **184 项通过**（@vue/test-utils 真实渲染 LoginView / ChatComposer / ChatMessageList / ChatSidebar / KbSearchView / MyUsageView / ShareView / AiGatewayView / UserView / RoleView / UnitView / ModelsConfigView / DifyConfigView / LogView / KnowledgeBaseMngView / ModelsView / ApplicationsView / CapabilitiesView / DatasetView / KnowledgeBaseSquareView / KnowledgeBaseView / PreviewView / NotFoundView） |
 | 浏览器冒烟（Playwright） | **8 项通过**（真实 Chromium：登录守卫与登录跳转、聊天页启动无异常、直连模型 SSE 流式回答、直连图片附件带压缩 dataURL、直连模式隐藏 Dify 应用参数、配额 429 展示服务端原因、知识库模块未配置引导、404 兜底；接口层由 `page.route` 拦截） |
 | 前端流式回归 | 14 项通过 |
@@ -311,6 +311,11 @@ npm run check:bundle     # 首屏 gzip 体积预算（需先 build）
    到的文件变量。新增 4 项单测（表单排除、直连不校验、未附件拦截、已附件放行并
    断言注入内容），两处变异验证；浏览器冒烟的应用参数 mock 同时加入必填文件变量，
    断言它不出现在表单里。
+17. **提示词兜底不再选中文件变量**：应用没声明 prompt 变量时，参数加载会把「第一个
+   非下拉变量」当作提示词变量，若工作流的第一个变量恰是 `file-upload`，助手提示词
+   会被写进文件输入，发消息时 `input_file` 变成字符串而不是文件。现在兜底只认文本
+   类变量。新增 `useChatModels` 单测（文件变量不当提示词、显式 prompt 优先、加载
+   失败降级），提示词选中做了变异验证。
 
 2026-10-30 后端改进：并发请求的配额预扣
 
