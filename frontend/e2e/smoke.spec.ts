@@ -109,6 +109,14 @@ test.describe("浏览器冒烟", () => {
       appParameters: {
         user_input_form: [
           { "text-input": { variable: "topic", label: "主题", required: true } },
+          {
+            "file-upload": {
+              variable: "input_file",
+              label: "资料",
+              required: true,
+              allowed_file_types: ["document"],
+            },
+          },
         ],
         suggested_questions: ["应用专属建议"],
       },
@@ -123,6 +131,10 @@ test.describe("浏览器冒烟", () => {
     await expect(
       page.locator(".chat-composer-form-label", { hasText: "主题" })
     ).toBeVisible();
+    // 文件变量由附件按钮负责，不应渲染成文本输入框
+    await expect(
+      page.locator(".chat-composer-form-label", { hasText: "资料" })
+    ).toHaveCount(0);
 
     await page.locator('label[aria-label="选择模型"] button').first().click();
     await page.locator(".chat-model-menu-item").first().click();

@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ElMessage } from "element-plus";
+import { chatApi } from "@/api/chat";
 import {
   activeConversationId,
   activeDirectConversationId,
@@ -26,6 +27,12 @@ import { runDirectStream, sendDirectMessage } from "../useChatDirect";
 vi.mock("../useChatDirect", () => ({
   sendDirectMessage: vi.fn(),
   runDirectStream: vi.fn(),
+}));
+
+vi.mock("@/api/chat", () => ({
+  chatApi: {
+    sendMessageStreaming: vi.fn(() => () => undefined),
+  },
 }));
 
 const DIRECT_MODEL = {
@@ -192,6 +199,62 @@ describe("useChatSend", () => {
 
       expect(warning).toHaveBeenCalledWith("请先填写：主题");
       expect(inputValue.value).toBe("你好");
+    });
+
+    it("Dify 必填文件变量未附件时提示且不发送", async () => {
+      defaultModels.value = [];
+      activeModelId.value = "";
+      const warning = vi.spyOn(ElMessage, "warning").mockImplementation(() => ({ close: () => undefined }));
+      baseInputFields.value = [
+        {
+          type: "file-upload",
+          variable: "input_file",
+          label: "附件",
+          required: true,
+          defaultValue: "",
+        },
+      ];
+      inputValue.value = "你好";
+
+      await submitMessage();
+
+      expect(warning).toHaveBeenCalledWith("请先上传：附件");
+      expect(chatApi.sendMessageStreaming).not.toHaveBeenCalled();
+      expect(inputValue.value).toBe("你好");
+    });
+
+    it("已附加文件时必填文件变量不再拦截，文件注入对应变量", async () => {
+      defaultModels.value = [];
+      activeModelId.value = "";
+      baseInputFields.value = [
+        {
+          type: "file-upload",
+          variable: "input_file",
+          label: "附件",
+          required: true,
+          defaultValue: "",
+        },
+      ];
+      attachedFiles.value = [
+        {
+          id: "f1",
+          name: "报告.pdf",
+          type: "application/pdf",
+          size: 10,
+        },
+      ];
+      inputValue.value = "你好";
+
+      await submitMessage();
+
+      expect(chatApi.sendMessageStreaming).toHaveBeenCalledTimes(1);
+      const [payload] = vi.mocked(chatApi.sendMessageStreaming).mock.calls[0];
+      expect(payload.inputs).toMatchObject({
+        input_file: [
+          { type: "document", transfer_method: "local_file", upload_file_id: "f1" },
+        ],
+      });
+      expect(loading.value).toBe(true);
     });
 
     it("直连模式不校验 Dify 必填变量，正常发送", async () => {
