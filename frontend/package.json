@@ -9,6 +9,7 @@
     "preview": "vite preview",
     "typecheck": "vue-tsc --noEmit -p tsconfig.json",
     "test": "vitest run",
+    "test:component": "vitest run --config vitest.component.config.ts",
     "test:watch": "vitest",
     "check:markdown": "node scripts/check-markdown.mjs",
     "check:streaming": "node scripts/check-streaming.mjs",
@@ -31,6 +32,7 @@
   "devDependencies": {
     "@types/js-cookie": "^3.0.6",
     "@vitejs/plugin-vue": "^6.0.6",
+    "@vue/test-utils": "^2.5.1",
     "js-cookie": "^3.0.5",
     "jsdom": "^30.1.3",
     "less": "^4.6.4",

@@ -183,6 +183,7 @@ cd frontend
 npm run typecheck      # TypeScript 类型检查
 npm run check:icons    # 图标注册检查（模板图标必须 import 或全局注册）
 npm run test            # 单元测试（Vitest），8 个文件 / 142 项
+npm run test:component  # 组件测试（真实渲染），1 个文件 / 9 项
 npm run check:streaming # 流式超时/取消回归，14 项
 npm run check:markdown  # Markdown 与 XSS 消毒回归，10 项
 npm run build           # 生产构建
@@ -198,6 +199,7 @@ npm run build           # 生产构建
 | 前端 TypeScript 检查 | 通过 |
 | 前端图标注册检查 | 通过（56 个在用图标全部可解析） |
 | 前端单元测试 | 8 个文件 / **142 项通过** |
+| 前端组件测试 | 1 个文件 / **9 项通过**（@vue/test-utils 真实渲染 ChatComposer） |
 | 前端流式回归 | 14 项通过 |
 | 前端 Markdown / XSS 回归 | 10 项通过（**2026-10-29 前该脚本一直是失败的，见文档**） |
 | 前端生产构建 | 通过（element-plus 分块 922.89 kB / gzip 296.83 kB，仍有体积警告） |
@@ -221,6 +223,9 @@ npm run build           # 生产构建
 5. **知识库检索降级可诊断**：空知识库不再先调用一次向量化接口；切换向量模型后，
    旧分块因向量维度不一致会被跳过（此前是静默跳过），现在检索结果返回 `skipped`
    与 `warning`，检索页直接提示重新上传，并分开统计「维度不一致 / 向量数据损坏」。
+6. **组件级测试**：引入 `@vue/test-utils` 与独立的 `vitest.component.config.ts`，
+   直接渲染 ChatComposer，覆盖 Enter / 输入法组词、发送与停止按钮、模型菜单、
+   知识库切换、附件移除（9 项），已接入 CI 与 `scripts/verify.ps1`。
 
 2026-10-29 补充的测试类：
 
