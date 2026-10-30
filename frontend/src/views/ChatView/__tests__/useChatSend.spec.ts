@@ -163,7 +163,10 @@ describe("useChatSend", () => {
       enableDirectMode();
     });
 
-    it("必填变量未填时提示且不发送", async () => {
+    it("Dify 模式下必填变量未填时提示且不发送", async () => {
+      // 必填校验只针对 Dify 应用参数：直连模式不发送 inputs，不应拦截
+      defaultModels.value = [];
+      activeModelId.value = "";
       const warning = vi.spyOn(ElMessage, "warning").mockImplementation(() => ({ close: () => undefined }));
       baseInputFields.value = [
         {
@@ -179,8 +182,25 @@ describe("useChatSend", () => {
       await submitMessage();
 
       expect(warning).toHaveBeenCalledWith("请先填写：主题");
-      expect(vi.mocked(sendDirectMessage)).not.toHaveBeenCalled();
       expect(inputValue.value).toBe("你好");
+    });
+
+    it("直连模式不校验 Dify 必填变量，正常发送", async () => {
+      baseInputFields.value = [
+        {
+          type: "text-input",
+          variable: "topic",
+          label: "主题",
+          required: true,
+          defaultValue: "",
+        },
+      ];
+      inputValue.value = "你好";
+
+      await submitMessage();
+
+      expect(vi.mocked(sendDirectMessage)).toHaveBeenCalledWith("你好", []);
+      expect(inputValue.value).toBe("");
     });
 
     it("没有文本也没有附件时什么都不做", async () => {
