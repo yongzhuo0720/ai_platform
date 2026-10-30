@@ -17,8 +17,8 @@ import {
   canRegenerateMessage,
   getLatestAssistantMessageId,
   getPreviousUserMessage,
-  handleQuickAction,
   handleRegenerateMessage,
+  handleSuggestedClick,
   submitMessage,
 } from "../useChatSend";
 import { runDirectStream, sendDirectMessage } from "../useChatDirect";
@@ -151,10 +151,19 @@ describe("useChatSend", () => {
     });
   });
 
-  describe("handleQuickAction", () => {
-    it("把快捷操作拼成输入内容", () => {
-      handleQuickAction("总结全文");
-      expect(inputValue.value).toBe("请帮我总结全文");
+  describe("handleSuggestedClick", () => {
+    beforeEach(() => {
+      enableDirectMode();
+    });
+
+    it("点击建议问题：原文填入并立即发送", async () => {
+      await handleSuggestedClick("帮我写一封请假邮件");
+
+      expect(vi.mocked(sendDirectMessage)).toHaveBeenCalledWith(
+        "帮我写一封请假邮件",
+        []
+      );
+      expect(inputValue.value).toBe("");
     });
   });
 

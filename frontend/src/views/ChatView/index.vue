@@ -28,7 +28,6 @@ const {
   userInput,
   activeAssistant,
   assistantGreetingName,
-  handleQuickAction,
   submitMessage,
   toggleHistorySidebar,
   attachedFiles,
@@ -224,7 +223,7 @@ onUnmounted(() => {
                     :key="index"
                     type="button"
                     class="suggested-question-btn"
-                    @click="handleQuickAction(question)"
+                    @click="handleSuggestedClick(question)"
                   >
                     {{ question }}
                   </button>

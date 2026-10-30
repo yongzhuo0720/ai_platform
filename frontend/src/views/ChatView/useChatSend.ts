@@ -332,15 +332,11 @@ export const submitMessage = async () => {
   });
 };
 
-export const handleQuickAction = (title: string) => {
-  inputValue.value = `请帮我${title}`;
-};
-
-/** 点击推荐问题：设置输入内容并自动发送 */
+/** 点击建议/推荐问题：原文填入并立即发送 */
 export const handleSuggestedClick = async (question: string) => {
   inputValue.value = question;
   await nextTick();
-  submitMessage();
+  await submitMessage();
 };
 
 export const getPreviousUserMessage = (assistantMessageId: string): MessageItem | null => {
