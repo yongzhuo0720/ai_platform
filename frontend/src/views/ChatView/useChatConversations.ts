@@ -124,6 +124,8 @@ export const startEditUserMessage = (messageId: string) => {
       conversation.messages = conversation.messages.slice(0, keepCount);
       conversation.updatedAt = Date.now();
       persistDirectConversations();
+      // 截断结果也要同步云端，否则其它设备会继续显示被丢弃的轮次
+      syncConversationToCloud(conversation);
     }
     messages.value = messages.value.slice(0, index);
   }
@@ -309,6 +311,11 @@ export const handleDeleteHistory = async (itemId: string) => {
     await chatApi.deleteConversation(itemId, getCurrentUser());
     chatRuntime.conversationsRequestToken += 1;
     conversations.value = conversations.value.filter((c) => c.id !== itemId);
+    // 清掉本地置顶记录，避免已删会话的 id 长期残留
+    const pinnedIds = readDifyPinned();
+    if (pinnedIds.delete(itemId)) {
+      writeDifyPinned(pinnedIds);
+    }
     if (activeConversationId.value === itemId) {
       activeConversationId.value = "";
       messages.value = [];
