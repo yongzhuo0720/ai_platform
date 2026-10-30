@@ -14,6 +14,7 @@ class AiUpstreamStub implements AutoCloseable {
     volatile String query;
     volatile byte[] requestBody;
     volatile String responseBody = "{}";
+    volatile String responseContentType = "application/json";
 
     AiUpstreamStub() throws Exception {
         server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
@@ -31,7 +32,7 @@ class AiUpstreamStub implements AutoCloseable {
                 requestBody = buffer.toByteArray();
                 calls.incrementAndGet();
                 byte[] response = responseBody.getBytes(StandardCharsets.UTF_8);
-                exchange.getResponseHeaders().set("Content-Type", "application/json");
+                exchange.getResponseHeaders().set("Content-Type", responseContentType);
                 exchange.sendResponseHeaders(200, response.length);
                 exchange.getResponseBody().write(response);
             } finally {

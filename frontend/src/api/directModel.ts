@@ -9,6 +9,7 @@
  */
 
 import { getModelsGatewayBase, gatewayAuthHeaders } from '@/stores/difyConfig'
+import type { KbSearchItemDto } from './kbRag'
 
 export interface DirectChatMessage {
   role: 'system' | 'user' | 'assistant'
@@ -35,6 +36,8 @@ export interface DirectChatExtras {
 export interface DirectStreamOptions {
   onChunk: (text: string) => void
   onThinking?: (text: string) => void
+  /** 本轮模型真正收到的知识库片段；未启用知识库或无命中时不会触发 */
+  onKbSources?: (items: KbSearchItemDto[]) => void
   onComplete?: () => void
   onError?: (error: Error) => void
 }
@@ -67,7 +70,7 @@ export const streamDirectChat = (
   extras?: DirectChatExtras
 ): (() => void) => {
   const controller = new AbortController()
-  const { onChunk, onThinking, onComplete, onError } = options
+  const { onChunk, onThinking, onKbSources, onComplete, onError } = options
 
   let completeCalled = false
   let errorCalled = false
@@ -184,9 +187,21 @@ export const streamDirectChat = (
         try {
           parsed = JSON.parse(payload)
         } catch {
+          eventType = ''
           continue
         }
-        if (eventType === 'error' || parsed.error) {
+        // SSE 的 event 字段只对紧随其后的 data 生效，取完立即复位；
+        // 否则网关自定义的 kb_sources 事件会让后续上游增量块都被误判
+        const currentEvent = eventType
+        eventType = ''
+        if (currentEvent === 'kb_sources') {
+          const items = Array.isArray(parsed?.items) ? parsed.items : []
+          if (items.length) {
+            onKbSources?.(items)
+          }
+          continue
+        }
+        if (currentEvent === 'error' || parsed.error) {
           const err = parsed.error
           const message =
             (typeof err === 'string' ? err : err?.message) ||
