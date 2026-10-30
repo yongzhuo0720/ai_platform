@@ -10,6 +10,7 @@
     "typecheck": "vue-tsc --noEmit -p tsconfig.json",
     "test": "vitest run",
     "test:component": "vitest run --config vitest.component.config.ts",
+    "test:e2e": "playwright test",
     "test:watch": "vitest",
     "check:markdown": "node scripts/check-markdown.mjs",
     "check:streaming": "node scripts/check-streaming.mjs",
@@ -31,6 +32,7 @@
     "vue-router": "^4.3.0"
   },
   "devDependencies": {
+    "@playwright/test": "^1.64.1",
     "@types/js-cookie": "^3.0.6",
     "@vitejs/plugin-vue": "^6.0.6",
     "@vue/test-utils": "^2.5.1",

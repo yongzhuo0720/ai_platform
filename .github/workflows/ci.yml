@@ -33,6 +33,21 @@ jobs:
       # 2026-10-30 新增：组件级渲染/点击测试（真实 SFC + Element Plus）
       - name: 组件测试
         run: npm run test:component
+      # 2026-10-30 新增：真实 Chromium 里启动完整应用（接口层 mock）。
+      # 覆盖 jsdom 看不到的路由守卫、自动导入、Teleport 菜单与 SSE 流式解析。
+      - name: 安装 Chromium（浏览器冒烟）
+        run: npx playwright install --with-deps chromium
+      - name: 浏览器冒烟
+        run: npm run test:e2e
+      - name: 上传浏览器冒烟报告
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: |
+            frontend/playwright-report
+            frontend/test-results
+          retention-days: 7
       - name: 流式回归检查
         run: npm run check:streaming
       # 2026-10-29 新增：这条此前一直没进 CI，而它在本地其实是失败的
