@@ -1,5 +1,3 @@
-export const ADMIN_ACCESS_KEY = 'admin:access'
-
 export const adminMenus = [
   {
     title: '用户管理',
@@ -52,14 +50,6 @@ export const adminMenus = [
 ]
 
 export const aiPlatformMenus: any[] = [
-  {
-    id: 'admin-access',
-    title: '后台管理',
-    icon: 'Setting',
-    items: [
-      { title: '后台管理', path: '/admin', routeName: 'admin:access' },
-    ],
-  },
   {
     id: 'chat',
     title: '问答交互引擎',
