@@ -46,6 +46,14 @@ public class KbRagHolder {
     private static final int CHUNK_OVERLAP = 100;
     private static final int MAX_TOP_K = 20;
     private static final int MAX_QUERY_CHARS = 2000;
+    /**
+     * 单次检索最多扫描的分块数。
+     *
+     * <p>当前检索在应用内存里算余弦（见类注释），不设上限时一篇超大知识库
+     * 会把整库分块读进堆内存，既慢又可能 OOM。超限时只取前 N 块并在响应里
+     * 提示「结果可能不完整」，而不是让请求失败。</p>
+     */
+    private static final int MAX_SCAN_CHUNKS = 5000;
 
     private final ObjectMapper objectMapper = new ObjectMapper();
 
@@ -239,8 +247,8 @@ public class KbRagHolder {
      * 这是它比加权求和更适合这里的原因。</p>
      *
      * <p><b>两路的分工</b>：关键词路用 PostgreSQL 全文检索（GIN 表达式索引）做候选召回，
-     * 向量路对全部自有分块算余弦。召回阶段用索引、精排阶段在内存，
-     * 与当前「万块以内」的规模匹配。</p>
+     * 向量路对自有分块算余弦（单次最多 {@link #MAX_SCAN_CHUNKS} 块）。
+     * 召回阶段用索引、精排阶段在内存，与当前「万块以内」的规模匹配。</p>
      */
     public Result<KbSearchResult> search(String uid, String query, String kbName, Integer topK) {
         if (uid == null || uid.trim().isEmpty()) {
@@ -264,7 +272,12 @@ public class KbRagHolder {
             where.setKbName(kbName.trim());
         }
         where.setLastuser(uid);
-        List<KbChunkBean> chunks = kbChunkBeanMapper.select(null, where);
+        List<KbChunkBean> chunks = kbChunkBeanMapper.select(scanWindow(), where);
+        // 多取一条用来判断是否还有未扫描的分块
+        boolean scanTruncated = chunks != null && chunks.size() > MAX_SCAN_CHUNKS;
+        if (scanTruncated) {
+            chunks = new ArrayList<KbChunkBean>(chunks.subList(0, MAX_SCAN_CHUNKS));
+        }
         if (chunks == null || chunks.isEmpty()) {
             KbSearchResult empty = new KbSearchResult();
             empty.setQuery(query.trim());
@@ -304,16 +317,30 @@ public class KbRagHolder {
         result.setScanned(chunks.size());
         result.setSkipped(diagnostics.skipped());
         result.setItems(items);
+        List<String> warnings = new ArrayList<String>();
         if (diagnostics.skipped() > 0) {
             log.warn("[KbRag] 向量路跳过 {} 块（模型不一致 {} / 维度不一致 {} / 解析失败 {}），当前模型 {}({} 维)",
                     diagnostics.skipped(), diagnostics.modelMismatch,
                     diagnostics.dimensionMismatch, diagnostics.unparsable,
                     embedding.getEmbedModel(), queryVector.length);
-            result.setWarning("有 " + diagnostics.skipped()
+            warnings.add("有 " + diagnostics.skipped()
                     + " 个分块的向量与当前向量模型 " + embedding.getEmbedModel()
                     + " 不匹配，已跳过语义比对，检索结果可能不完整；如更换过向量模型，请重新上传相关文档");
         }
+        if (scanTruncated) {
+            log.warn("[KbRag] 扫描上限 {} 块已触发，检索结果可能不完整，建议拆分知识库", MAX_SCAN_CHUNKS);
+            warnings.add("知识库分块较多，本次只扫描前 " + MAX_SCAN_CHUNKS
+                    + " 块，检索结果可能不完整；建议拆分知识库或缩小检索范围");
+        }
+        if (!warnings.isEmpty()) {
+            result.setWarning(String.join("；", warnings));
+        }
         return Result.succeed(result, "检索成功");
+    }
+
+    /** 单次检索的扫描窗口：多取一条用于判断是否存在未扫描分块 */
+    private static PageRequest scanWindow() {
+        return new PageRequest(1, MAX_SCAN_CHUNKS + 1);
     }
 
     /**
@@ -517,7 +544,8 @@ public class KbRagHolder {
             }
             String escaped = escapeSqlLiteral(query);
             String ftsWhere = "to_tsvector('simple', \"content\") @@ plainto_tsquery('simple', '" + escaped + "')";
-            List<KbChunkBean> matched = kbChunkBeanMapper.select(null, where, ftsWhere);
+            List<KbChunkBean> matched = kbChunkBeanMapper.select(
+                    new PageRequest(1, MAX_SCAN_CHUNKS), where, ftsWhere);
             if (matched != null) {
                 for (KbChunkBean chunk : matched) {
                     if (chunk.getIid() != null) {
