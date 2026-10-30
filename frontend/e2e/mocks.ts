@@ -24,6 +24,12 @@ export interface BackendMockOptions {
    * 而不只是界面上显示了附件。</p>
    */
   directRequests?: unknown[];
+  /**
+   * Dify 应用参数（/chat/parameters）的响应体。
+   * <p>默认空表单；聊天页用例需要验证「应用参数在直连模式下不出现」时，
+   * 可传入带必填项的 user_input_form。</p>
+   */
+  appParameters?: unknown;
 }
 
 /**
@@ -115,7 +121,9 @@ export async function installBackendMocks(
     }
     // Dify 协议接口：直接返回业务 JSON，不套 resp_code 外壳
     if (path.endsWith("/ai/api/aiGateway/chat/parameters")) {
-      return respond({ user_input_form: [], suggested_questions: [] });
+      return respond(
+        options.appParameters ?? { user_input_form: [], suggested_questions: [] }
+      );
     }
     if (path.endsWith("/ai/api/aiGateway/chat/chat-messages")) {
       if (options.difyChatError) {

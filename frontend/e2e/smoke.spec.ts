@@ -102,6 +102,49 @@ test.describe("浏览器冒烟", () => {
     expect(parts[1]?.image_url?.url).toMatch(/^data:image\/jpeg;base64,/);
   });
 
+  test("直连模式隐藏 Dify 应用参数，必填项不拦截发送", async ({ page }) => {
+    const directRequests: unknown[] = [];
+    await installBackendMocks(page, {
+      directRequests,
+      appParameters: {
+        user_input_form: [
+          { "text-input": { variable: "topic", label: "主题", required: true } },
+        ],
+        suggested_questions: ["应用专属建议"],
+      },
+    });
+    await loginAsUser(page);
+
+    await page.goto("/#/chat");
+
+    const input = page.getByPlaceholder("请输入问题，开始对话...");
+    await expect(input).toBeVisible();
+    // Dify 通道下应用参数正常渲染，确认这条用例的场景成立
+    await expect(
+      page.locator(".chat-composer-form-label", { hasText: "主题" })
+    ).toBeVisible();
+
+    await page.locator('label[aria-label="选择模型"] button').first().click();
+    await page.locator(".chat-model-menu-item").first().click();
+
+    // 切到直连：应用参数整组消失，空状态改用通用开场问题
+    await expect(page.locator(".chat-composer-form")).toHaveCount(0);
+    await expect(
+      page.locator(".suggested-question-btn", { hasText: "用一句话介绍你自己" })
+    ).toBeVisible();
+    await expect(
+      page.locator(".suggested-question-btn", { hasText: "应用专属建议" })
+    ).toHaveCount(0);
+
+    // 未填「主题」也能发送，且请求确实走直连网关
+    await input.fill("你好");
+    await page.getByRole("button", { name: "发送消息" }).click();
+    await expect(
+      page.locator(".chat-message-item.assistant .markdown-content")
+    ).toContainText("你好，世界");
+    await expect.poll(() => directRequests.length).toBe(1);
+  });
+
   test("配额用尽时对话展示服务端原因，而不是裸错误码", async ({ page }) => {
     await installBackendMocks(page, {
       difyChatError: {
