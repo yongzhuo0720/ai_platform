@@ -184,7 +184,7 @@ npm run typecheck      # TypeScript 类型检查
 npm run check:icons    # 图标注册检查（模板图标必须 import 或全局注册）
 npm run test            # 单元测试（Vitest），13 个文件 / 175 项
 npm run test:component  # 组件测试（真实渲染），23 个文件 / 184 项
-npm run test:e2e        # 浏览器冒烟（真实 Chromium + 接口 mock），6 项
+npm run test:e2e        # 浏览器冒烟（真实 Chromium + 接口 mock），7 项
 npm run check:streaming # 流式超时/取消回归，14 项
 npm run check:markdown  # Markdown 与 XSS 消毒回归，10 项
 npm run build            # 生产构建
@@ -202,7 +202,7 @@ npm run check:bundle     # 首屏 gzip 体积预算（需先 build）
 | 前端图标注册检查 | 通过（56 个在用图标全部可解析） |
 | 前端单元测试 | 13 个文件 / **175 项通过** |
 | 前端组件测试 | 23 个文件 / **184 项通过**（@vue/test-utils 真实渲染 LoginView / ChatComposer / ChatMessageList / ChatSidebar / KbSearchView / MyUsageView / ShareView / AiGatewayView / UserView / RoleView / UnitView / ModelsConfigView / DifyConfigView / LogView / KnowledgeBaseMngView / ModelsView / ApplicationsView / CapabilitiesView / DatasetView / KnowledgeBaseSquareView / KnowledgeBaseView / PreviewView / NotFoundView） |
-| 浏览器冒烟（Playwright） | **6 项通过**（真实 Chromium：登录守卫与登录跳转、聊天页启动无异常、直连模型 SSE 流式回答、配额 429 展示服务端原因、知识库模块未配置引导、404 兜底；接口层由 `page.route` 拦截） |
+| 浏览器冒烟（Playwright） | **7 项通过**（真实 Chromium：登录守卫与登录跳转、聊天页启动无异常、直连模型 SSE 流式回答、直连图片附件带压缩 dataURL、配额 429 展示服务端原因、知识库模块未配置引导、404 兜底；接口层由 `page.route` 拦截） |
 | 前端流式回归 | 14 项通过 |
 | 前端 Markdown / XSS 回归 | 10 项通过（**2026-10-29 前该脚本一直是失败的，见文档**） |
 | 前端生产构建 | 通过（element-plus 按路由分包，入口 gzip 152.5 kB，已无 >500 kB 分包警告） |
@@ -260,9 +260,10 @@ npm run check:bundle     # 首屏 gzip 体积预算（需先 build）
    （-51%），构建不再有 >500 kB 分包警告；体积预算同步从 470 kB 收紧到 260 kB，
    防止回退。
 8. **浏览器冒烟**（Playwright + 真实 Chromium）：组件测试跑在 jsdom 里，看不到
-   路由守卫、自动导入缺失、Teleport 菜单与真实 `fetch` 流式解析。新增 6 项浏览器
+   路由守卫、自动导入缺失、Teleport 菜单与真实 `fetch` 流式解析。新增 7 项浏览器
    用例覆盖登录守卫与登录跳转、聊天页启动无未捕获异常、直连模型 SSE 回答渲染、
-   配额 429 时展示服务端原因、知识库模块未配置引导与 404 兜底；接口层用
+   附件图片在真实 Canvas 里压缩后随请求体发出、配额 429 时展示服务端原因、
+   知识库模块未配置引导与 404 兜底；接口层用
    `page.route` 拦截，不依赖本机后端，已接入 CI（Chromium）。本地默认复用已安装
    的 Edge，无需额外下载浏览器。
 9. **HTTP 错误提示可读**：网关错误体是 `{code,message,status,requestId}`，
@@ -276,7 +277,9 @@ npm run check:bundle     # 首屏 gzip 体积预算（需先 build）
 10. **附件拖拽与点选统一**：拖拽此前固定调用 Dify 上传接口，直连模式下拖入的图片
    虽然提示「上传成功」，却不带本地 `dataUrl`，发送时被静默丢掉。现在拖拽与点选
    共用同一套处理：直连模式压缩成 `dataURL` 并限制 2 张，Dify 模式走上传接口并按
-   应用配置限流。新增 10 项 `useChatFiles` 单测，断言直连路径不再调用上传接口。
+   应用配置限流。新增 10 项 `useChatFiles` 单测，断言直连路径不再调用上传接口；
+   浏览器冒烟里再走一遍真实 FileReader / Canvas 压缩，确认 `data:image/jpeg` 的
+   dataURL 确实进了请求体的多模态数组。
 
 2026-10-30 后端改进：并发请求的配额预扣
 

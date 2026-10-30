@@ -59,6 +59,49 @@ test.describe("浏览器冒烟", () => {
     expect(pageErrors).toEqual([]);
   });
 
+  test("直连模式选择图片后，压缩过的 dataURL 随请求发到网关", async ({
+    page,
+  }) => {
+    const directRequests: unknown[] = [];
+    await installBackendMocks(page, { directRequests });
+    await loginAsUser(page);
+
+    await page.goto("/#/chat");
+
+    const input = page.getByPlaceholder("请输入问题，开始对话...");
+    await expect(input).toBeVisible();
+    await page.locator('label[aria-label="选择模型"] button').first().click();
+    await page.locator(".chat-model-menu-item").first().click();
+
+    // 1×1 PNG：验证真实浏览器里的 FileReader → Image → Canvas 压缩链路
+    await page.locator("input.chat-composer-file-input").first().setInputFiles({
+      name: "pixel.png",
+      mimeType: "image/png",
+      buffer: Buffer.from(
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==",
+        "base64"
+      ),
+    });
+    await expect(page.locator(".attached-file-name")).toHaveText("pixel.png");
+
+    // 只有附件没有文字：使用默认 query，正好覆盖附件兜底提问
+    await page.getByRole("button", { name: "发送消息" }).click();
+    await expect(
+      page.locator(".chat-message-item.assistant .markdown-content")
+    ).toContainText("你好，世界");
+
+    await expect.poll(() => directRequests.length).toBe(1);
+    const body = directRequests[0] as {
+      messages: Array<{ role: string; content: unknown }>;
+    };
+    const lastUser = [...body.messages].reverse().find((m) => m.role === "user");
+    expect(Array.isArray(lastUser?.content)).toBe(true);
+    const parts = lastUser?.content as Array<Record<string, any>>;
+    expect(parts[0]).toEqual({ type: "text", text: "请分析上传的文件" });
+    expect(parts[1]?.type).toBe("image_url");
+    expect(parts[1]?.image_url?.url).toMatch(/^data:image\/jpeg;base64,/);
+  });
+
   test("配额用尽时对话展示服务端原因，而不是裸错误码", async ({ page }) => {
     await installBackendMocks(page, {
       difyChatError: {

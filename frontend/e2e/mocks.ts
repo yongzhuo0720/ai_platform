@@ -18,6 +18,12 @@ export interface BackendMockOptions {
    * 用于覆盖「发送失败时错误如何呈现」这条路径；不配置则回一段正常的 SSE 回答。</p>
    */
   difyChatError?: { status: number; body: unknown };
+  /**
+   * 收集直连模型（/models/{iid}/chat/completions）的请求体。
+   * <p>用于断言前端真的把压缩后的图片 dataURL 放进了多模态 messages，
+   * 而不只是界面上显示了附件。</p>
+   */
+  directRequests?: unknown[];
 }
 
 /**
@@ -64,6 +70,11 @@ export async function installBackendMocks(
     }
     // 聊天页的直连模型流式回答：整段 SSE 一次性返回，前端按行解析
     if (path.includes("/ai/api/aiGateway/models/") && path.endsWith("/chat/completions")) {
+      try {
+        options.directRequests?.push(route.request().postDataJSON());
+      } catch {
+        // 无请求体（理论上不会发生）：跳过采集，不影响响应
+      }
       return route.fulfill({
         status: 200,
         headers: { "content-type": "text/event-stream; charset=utf-8" },
