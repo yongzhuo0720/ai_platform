@@ -1,4 +1,6 @@
-import { ElTree, FormInstance } from 'element-plus'
+import { nextTick, onMounted, reactive, ref } from 'vue'
+import { ElLoading, ElMessage, ElMessageBox } from 'element-plus'
+import type { ElTree, FormInstance } from 'element-plus'
 import { roleApi } from '@/api/role'
 import { aiPlatformMenus } from '@/data/adminPlatform'
 import Cookies from 'js-cookie'
@@ -132,19 +134,30 @@ export function useIndex() {
     })
   }
 
-  const showDelete = (row: any) => {
-    ElMessageBox.confirm('您确定要删除吗?', '提示', {
-      confirmButtonText: '确定',
-      cancelButtonText: '取消',
-      type: 'warning',
-    }).then(async () => {
+  const showDelete = async (row: any) => {
+    try {
+      await ElMessageBox.confirm('您确定要删除吗?', '提示', {
+        confirmButtonText: '确定',
+        cancelButtonText: '取消',
+        type: 'warning',
+      })
+    } catch {
+      // 取消 / 关闭确认框：直接返回，避免 .then 链产生未处理拒绝
+      return
+    }
+    try {
       const reqdata = { bean: { iid: row.iid } }
       const { data: res } = await roleApi.delete(reqdata)
       if (res.resp_code == 0) {
         ElMessage.success('删除成功')
         getDataList()
+      } else {
+        ElMessage.error('删除失败')
       }
-    })
+    } catch (err) {
+      debug.error('删除角色失败', err)
+      ElMessage.error('删除失败，请稍后重试')
+    }
   }
 
   const onSave = () => {
