@@ -28,7 +28,7 @@ AI 请求默认统一收口到业务后端，浏览器不再持有 Dify API Key�
 | B · 平台接口 | `/ai/api/...` | 浏览器 → Spring Boot → PostgreSQL | `@LoginUserId` 注入登录态 + Holder 内权限校验，业务读写与操作日志 |
 | C · 直连（兼容） | `/v1/...` | 浏览器 → Dify | 设置 `VITE_AI_GATEWAY=0` 后启用；凭据下发浏览器，无治理能力 |
 
-网关核心在 `AiGatewayService`：转发请求/响应、过滤逐跳响应头、SSE 边读边写、解析上游 usage 并记录请求 ID、首块响应耗时与成本；`AiGatewayGuard` 用 Redis 做每分钟限流与每日 Token 配额（配额适用于 `chat` / `knowledgeChat` / `models`，`0` 表示不限制）；`AiGatewayAdminHolder` 提供用量看板、调用日志与配额管理接口，后台页面为「AI 调用治理」。Dify 对话模块的查询、JSON 与文件上传中的 `user` 统一使用后端认证身份。
+网关核心在 `AiGatewayService`：转发请求/响应、过滤逐跳响应头、SSE 边读边写、解析上游 usage 并记录请求 ID、首 token 耗时与成本（首 token 按第一行带正文的 SSE 事件计时，不把 role/usage 帧与心跳算进去）；`AiGatewayGuard` 用 Redis 做每分钟限流与每日 Token 配额（配额适用于 `chat` / `knowledgeChat` / `models`，`0` 表示不限制）；`AiGatewayAdminHolder` 提供用量看板、调用日志与配额管理接口，后台页面为「AI 调用治理」。Dify 对话模块的查询、JSON 与文件上传中的 `user` 统一使用后端认证身份。
 
 **取舍**：换来凭据不出服务端、可计量可治理；代价是多一跳网关延迟与 SSE 代理复杂度，且 Dify 超时与断流需要在网关侧兜底。
 
@@ -196,7 +196,7 @@ npm run check:bundle     # 首屏 gzip 体积预算（需先 build）
 
 | 项目 | 结果 |
 |---|---|
-| 后端单元测试 | **191 项通过，0 失败** |
+| 后端单元测试 | **193 项通过，0 失败** |
 | 前端 TypeScript 检查 | 通过 |
 | 前端图标注册检查 | 通过（56 个在用图标全部可解析） |
 | 前端单元测试 | 9 个文件 / **147 项通过** |

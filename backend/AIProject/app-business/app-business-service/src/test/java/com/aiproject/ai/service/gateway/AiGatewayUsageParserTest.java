@@ -3,9 +3,39 @@ package com.aiproject.ai.service.gateway;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class AiGatewayUsageParserTest {
+
+    /** 首 token 延迟只认「带正文的事件」：心跳、role 帧、usage 帧都不能提前计时 */
+    @Test
+    void detectsFirstAnswerContentForTtft() {
+        AiGatewayUsageParser parser = new AiGatewayUsageParser();
+        assertFalse(parser.acceptSseLine(": ping"));
+        assertFalse(parser.acceptSseLine("event: message"));
+        assertFalse(parser.acceptSseLine("data: [DONE]"));
+        assertFalse(parser.acceptSseLine(
+                "data: {\"choices\":[{\"delta\":{\"role\":\"assistant\"}}]}"));
+        assertFalse(parser.acceptSseLine(
+                "data: {\"choices\":[{\"delta\":{\"content\":\"\"}}]}"));
+        assertFalse(parser.acceptSseLine(
+                "data: {\"choices\":[],\"usage\":{\"total_tokens\":9}}"));
+
+        assertTrue(parser.acceptSseLine(
+                "data: {\"choices\":[{\"delta\":{\"content\":\"你\"}}]}"));
+        assertTrue(parser.acceptSseLine(
+                "data: {\"choices\":[{\"delta\":{\"reasoning_content\":\"先想\"}}]}"));
+    }
+
+    @Test
+    void detectsDifyAnswerAsFirstContent() {
+        AiGatewayUsageParser parser = new AiGatewayUsageParser();
+        assertFalse(parser.acceptSseLine("data: {\"event\":\"message\",\"answer\":\"\"}"));
+        assertTrue(parser.acceptSseLine("data: {\"event\":\"message\",\"answer\":\"你好\"}"));
+        assertTrue(parser.acceptSseLine("data: {\"event\":\"agent_message\",\"answer\":\"Hi\"}"));
+    }
 
     @Test
     void extractsUsageFromMessageEndEvent() {
