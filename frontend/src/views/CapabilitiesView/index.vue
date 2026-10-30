@@ -249,6 +249,7 @@ import { useIndex } from './index'
 import { SUPER_ADMIN_RID } from '@/config/constants'
 import TagDropdown from '@/components/TagDropdown/index.vue'
 import TagFilterDropdown from '@/components/TagFilterDropdown/index.vue'
+import { Plus, Search, Edit, Delete, Tools, View, PriceTag } from '@element-plus/icons-vue'
 
 const {
   state,
