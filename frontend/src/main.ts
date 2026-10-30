@@ -14,7 +14,22 @@ import { installCodeCopy } from './utils/markdown'
 installCodeCopy()
 import { ensureLoaded } from './stores/difyConfig'
 
-import * as ElementPlusIconsVue from '@element-plus/icons-vue'
+// 只注册模板里没有直接 import 的图标：
+// - data/*.ts 用字符串名引用，靠 <component :is> 解析
+// - 部分页面在模板里直接用图标、由组合式函数返回值带进作用域
+// 其余图标都由组件自行 import。此前的 import * 会把 293 个图标全部打进首屏。
+// 新增图标优先在组件里 import；确需全局时加到下面的 globalIcons。
+import {
+  ArrowLeft, Avatar, Box, ChatDotRound, CirclePlusFilled, Collection, Cpu,
+  DataLine, Delete, Document, Download, Edit, Grid, OfficeBuilding, Plus,
+  PriceTag, Promotion, Refresh, Search, Tools, Upload, User, View,
+} from '@element-plus/icons-vue'
+
+const globalIcons = {
+  ArrowLeft, Avatar, Box, ChatDotRound, CirclePlusFilled, Collection, Cpu,
+  DataLine, Delete, Document, Download, Edit, Grid, OfficeBuilding, Plus,
+  PriceTag, Promotion, Refresh, Search, Tools, Upload, User, View,
+}
 
 // 预加载 Dify 配置。
 // 这里刻意不 await：应用启动不该被这个请求阻塞（各 api 层已有 ensureLoaded 门禁兜底）。
@@ -25,7 +40,7 @@ ensureLoaded().catch((err) => {
 
 const app = createApp(App).use(router).use(createPinia())
 useThemeStore().apply()
-for (const [key, component] of Object.entries(ElementPlusIconsVue)) {
+for (const [key, component] of Object.entries(globalIcons)) {
   app.component(key, component)
 }
 app.mount('#app')

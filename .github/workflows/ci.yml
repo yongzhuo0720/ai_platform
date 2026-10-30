@@ -24,6 +24,9 @@ jobs:
         run: npm ci
       - name: 类型检查
         run: npm run typecheck
+      # 2026-10-30 新增：图标改为按需注册后，模板里未 import 的图标会静默留白
+      - name: 图标注册检查
+        run: npm run check:icons
       # 2026-10-30 新增：ChatView 拆分后的逻辑模块单测（Vitest + jsdom）
       - name: 单元测试
         run: npm run test

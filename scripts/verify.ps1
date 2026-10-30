@@ -72,6 +72,16 @@ Step "前端类型检查" {
     }
 }
 
+Step "图标注册检查" {
+    Push-Location "$root/frontend"
+    try {
+        npm run check:icons
+        if ($LASTEXITCODE -ne 0) { throw "icons 检查退出码 $LASTEXITCODE" }
+    } finally {
+        Pop-Location
+    }
+}
+
 Step "前端单元测试（Vitest）" {
     Push-Location "$root/frontend"
     try {
