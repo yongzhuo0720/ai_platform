@@ -14,7 +14,9 @@ export default defineConfig({
         // 大体积三方库拆独立 chunk：首屏只加载用到的部分，
         // element-plus / highlight.js 可被浏览器长缓存（业务改动不失效缓存）
         manualChunks: {
-          'element-plus': ['element-plus'],
+          // element-plus 不整体固定成单一 vendor chunk：
+          // 它横跨聊天页与后台管理页，固定后会连管理台才用的 Table/DatePicker
+          // 一起塞进首屏预加载。交给 Rollup 按路由动态 import 切分。
           'highlight': ['highlight.js'],
           'vendor-vue': ['vue', 'vue-router', 'pinia'],
         },

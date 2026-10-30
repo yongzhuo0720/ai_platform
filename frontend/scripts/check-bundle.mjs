@@ -15,7 +15,7 @@ import { fileURLToPath } from "node:url";
  */
 
 const BUDGETS = {
-  initialJsGzipKb: 470,
+  initialJsGzipKb: 260,
   initialCssGzipKb: 80,
   chunkGzipKb: 320,
 };
