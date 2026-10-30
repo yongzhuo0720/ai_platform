@@ -164,9 +164,16 @@ const getRoleMenu = async () => {
       pageSize: 1,
     },
   };
-  const { data: res } = await roleApi.getDataList(reqdata);
-  if (res.resp_code === 0) {
-    state.viewjson = JSON.parse(res.datas.content[0].viewjson || "[]");
+  try {
+    const { data: res } = await roleApi.getDataList(reqdata);
+    const role = res.resp_code === 0 ? res.datas?.content?.[0] : null;
+    if (!role) return;
+    try {
+      state.viewjson = JSON.parse(role.viewjson || "[]");
+    } catch {
+      // 角色菜单配置损坏时保持完整菜单（后端仍按角色拦截），至少不让页面报错
+      return;
+    }
     state.menuSections.forEach((section) => {
       section.items = section.items.filter((item: any) =>
         state.viewjson.includes(item.routeName),
@@ -179,6 +186,9 @@ const getRoleMenu = async () => {
         i--;
       }
     }
+  } catch (error) {
+    // 菜单过滤失败不影响页面使用；拦截器已提示错误
+    console.warn('[菜单] 加载角色菜单失败', error);
   }
 };
 

@@ -4,8 +4,6 @@ import { Lock, Star } from '@element-plus/icons-vue'
 import Cookies from 'js-cookie'
 import { isSuperAdmin } from '@/config/constants'
 import { userApi } from '@/api/user'
-import { roleApi } from '@/api/role'
-import { ADMIN_ACCESS_KEY } from '@/data/adminPlatform'
 import { ensureLoaded } from '@/stores/difyConfig'
 import { clearAdminSession } from '@/utils/session'
 
@@ -95,28 +93,10 @@ export function useIndex() {
         Cookies.set('admin_access', '1', { path: '/' })
         ensureLoaded()
         router.push('/admin/users')
-        return
-      }
-
-      const roleRes = await request(roleApi.getDataList({
-        bean: { iid: user.rid },
-        pageRequest: { pageNum: 1, pageSize: 1 },
-      }))
-      const roles = roleRes?.resp_code == 0 ? (roleRes.datas?.content ?? []) : []
-      let viewjson: string[] = []
-      if (roles.length > 0) {
-        try {
-          viewjson = JSON.parse(roles[0].viewjson || '[]')
-        } catch {
-          viewjson = []
-        }
-      }
-
-      if (viewjson.includes(ADMIN_ACCESS_KEY)) {
-        Cookies.set('admin_access', '1', { path: '/' })
-        ensureLoaded()
-        router.push('/admin/users')
       } else {
+        // 后台接口一律以 rid=99999 鉴权（MyUserBaseDbHolder.isAdmin），
+        // 非超管即便角色菜单里有 admin:access 也进不了任何接口，
+        // 放行只会让用户看到一整屏「仅管理员可访问」错误。
         ElMessage.error('暂无权限')
         clearAdminCookies()
       }
