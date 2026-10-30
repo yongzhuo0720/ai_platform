@@ -136,7 +136,7 @@
 
     <!-- 全部模式：新建/编辑弹窗 -->
     <el-dialog v-model="dialogVisible" :title="dialogTitle" width="650px">
-      <el-form :model="formData" :rules="formRules" label-width="100px">
+      <el-form ref="formRef" :model="formData" :rules="formRules" label-width="100px">
         <el-form-item label="名称" prop="name">
           <el-input v-model="formData.name" placeholder="请输入知识库名称" />
         </el-form-item>
@@ -346,7 +346,7 @@ const {
   dialogVisible, dialogTitle,   localDialogVisible, localDialogTitle, localFormData,
   associateDialogVisible, associateForm,
   formData, formRules, associateRules,
-  treeRef, localTreeRef, deptTree, roleList, defaultProps,
+  treeRef, localTreeRef, deptTree, roleList, defaultProps, formRef,
   filteredDatasets, paginatedDatasets,
   filteredLocalRecords, paginatedLocalRecords,
   handleSearch, handlePageChange, handleSizeChange,

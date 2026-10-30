@@ -10,7 +10,7 @@ import { userApi } from '@/api/user'
 import Cookies from 'js-cookie'
 import { isSuperAdmin, SUPER_ADMIN_RID } from '@/config/constants'
 import type { KnowledgeBase, CreateDatasetParams } from '@/types/knowledge'
-import type { ElTree } from 'element-plus'
+import type { ElTree, FormInstance } from 'element-plus'
 
 export function useIndex() {
   const datasets = ref<KnowledgeBase[]>([])
@@ -58,6 +58,7 @@ export function useIndex() {
 
   const uid = Cookies.get('uid') || ''
   const isAdmin = isSuperAdmin(Cookies.get('rid'))
+  const formRef = ref<FormInstance>()
   const treeRef = ref<InstanceType<typeof ElTree>>()
   const localTreeRef = ref<InstanceType<typeof ElTree>>()
   const associateTreeRef = ref<InstanceType<typeof ElTree>>()
@@ -325,6 +326,9 @@ export function useIndex() {
   }
 
   const handleSubmit = async () => {
+    // 表单声明了 name 必填，但之前从未调用 validate，空名称也能建库
+    const valid = formRef.value ? await formRef.value.validate().catch(() => false) : true
+    if (!valid) return
     const loadingInstance = ElLoading.service({
       lock: true,
       text: '正在保存，请稍后',
@@ -644,7 +648,7 @@ export function useIndex() {
     localDialogVisible, localDialogTitle, localEditingRecord, localFormData,
     associateDialogVisible, associateForm,
     formData, formRules, associateRules,
-    isAdmin, treeRef, localTreeRef, associateTreeRef, deptTree, roleList, defaultProps,
+    isAdmin, formRef, treeRef, localTreeRef, associateTreeRef, deptTree, roleList, defaultProps,
     filteredDatasets, paginatedDatasets,
     filteredLocalRecords, paginatedLocalRecords,
     fetchDatasets, fetchLocalRecords,
