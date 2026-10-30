@@ -58,35 +58,34 @@ export const handleDrop = async (e: DragEvent) => {
     return;
   }
 
-  const files = e.dataTransfer?.files;
-  if (!files || files.length === 0) return;
+  const files = Array.from(e.dataTransfer?.files ?? []);
+  if (files.length === 0) return;
 
-  const remainingSlots = Math.max(maxFileUploadCount.value - attachedFiles.value.length, 0);
+  /*
+   * 拖拽与点选必须走同一套处理：直连模式要把图片压成本地 dataURL，
+   * 而 Dify 模式才走上传接口。此前这里固定调用上传，直连模式下图片
+   * 虽然提示「上传成功」，却不带 dataUrl，发送时被静默丢掉。
+   */
+  const limit = isDirectMode.value ? 2 : maxFileUploadCount.value;
+  const remainingSlots = Math.max(limit - attachedFiles.value.length, 0);
   if (remainingSlots <= 0) {
-    ElMessage.warning(`最多可上传 ${maxFileUploadCount.value} 个文件`);
+    ElMessage.warning(
+      isDirectMode.value ? "直连模式最多携带 2 张图片" : `最多可上传 ${limit} 个文件`
+    );
     return;
   }
 
-  const filesToUpload = Array.from(files).slice(0, remainingSlots);
+  const filesToUpload = files.slice(0, remainingSlots);
   if (filesToUpload.length < files.length) {
-    ElMessage.warning(`最多可上传 ${maxFileUploadCount.value} 个文件，已忽略超出部分`);
+    ElMessage.warning(
+      isDirectMode.value
+        ? "直连模式最多携带 2 张图片，已忽略超出部分"
+        : `最多可上传 ${limit} 个文件，已忽略超出部分`
+    );
   }
 
   for (const file of filesToUpload) {
-    try {
-      ElMessage.info(`正在上传文件: ${file.name}`);
-      const response = await uploadFileToDify(file);
-      attachedFiles.value.push({
-        id: response.id,
-        name: response.name,
-        type: response.mime_type,
-        size: response.size,
-      });
-      ElMessage.success(`文件 ${file.name} 上传成功`);
-    } catch (error) {
-      console.error(`文件 ${file.name} 上传失败:`, error);
-      ElMessage.error(`文件 ${file.name} 上传失败`);
-    }
+    await handleFileSelected(file);
   }
 };
 
