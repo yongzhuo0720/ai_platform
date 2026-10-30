@@ -55,7 +55,7 @@ import {
   loadConversations,
   scrollToBottom,
 } from "./useChatHistory";
-import { handleQuickAction, handleSuggestedClick, submitMessage } from "./useChatSend";
+import { handleSuggestedClick, submitMessage } from "./useChatSend";
 import { startNewConversation, toggleHistorySidebar } from "./useChatConversations";
 import {
   handleDragLeave,
@@ -103,7 +103,6 @@ export interface UseChatReturn {
   activeAssistant: typeof activeAssistant;
   /** 助手问候语中显示的助手名称 */
   assistantGreetingName: typeof assistantGreetingName;
-  handleQuickAction: typeof handleQuickAction;
   submitMessage: typeof submitMessage;
   toggleHistorySidebar: typeof toggleHistorySidebar;
   /** 已上传的文件列表，包含文件ID、名称、类型和大小 */
@@ -280,7 +279,6 @@ export function useChat(): UseChatReturn {
     userInput,
     activeAssistant,
     assistantGreetingName,
-    handleQuickAction,
     submitMessage,
     toggleHistorySidebar,
     attachedFiles,

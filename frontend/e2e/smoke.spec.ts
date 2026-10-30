@@ -136,13 +136,23 @@ test.describe("浏览器冒烟", () => {
       page.locator(".suggested-question-btn", { hasText: "应用专属建议" })
     ).toHaveCount(0);
 
-    // 未填「主题」也能发送，且请求确实走直连网关
-    await input.fill("你好");
-    await page.getByRole("button", { name: "发送消息" }).click();
+    // 点击建议问题原文直接发送（不再拼「请帮我」前缀），未填「主题」也不拦截
+    await page
+      .locator(".suggested-question-btn", { hasText: "用一句话介绍你自己" })
+      .click();
+    const userMessage = page.locator(".chat-message-item.user");
+    await expect(userMessage).toContainText("用一句话介绍你自己");
+    await expect(userMessage).not.toContainText("请帮我");
     await expect(
       page.locator(".chat-message-item.assistant .markdown-content")
     ).toContainText("你好，世界");
+
     await expect.poll(() => directRequests.length).toBe(1);
+    const body = directRequests[0] as {
+      messages: Array<{ role: string; content: unknown }>;
+    };
+    const lastUser = [...body.messages].reverse().find((m) => m.role === "user");
+    expect(lastUser?.content).toBe("用一句话介绍你自己");
   });
 
   test("配额用尽时对话展示服务端原因，而不是裸错误码", async ({ page }) => {
