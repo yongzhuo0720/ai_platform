@@ -100,6 +100,11 @@ public class TableSchemaInitializer implements ApplicationListener<ApplicationRe
         // 云端会话：直连模型会话的多端同步（JSON 快照按 (userId, convId) upsert）
         execute("CREATE TABLE IF NOT EXISTS chatconversationbean (\"convId\" varchar(64), \"userId\" varchar(255), \"title\" varchar(255), \"modelName\" varchar(255), \"pinned\" boolean, \"payload\" text, \"iid\" bigserial NOT NULL PRIMARY KEY, \"lastuser\" varchar(255), \"createtime\" timestamp DEFAULT now(), \"clientUpdatedAt\" int8, \"updatetime\" timestamp, \"enable\" boolean DEFAULT true, \"app\" varchar(255))");
         execute("CREATE INDEX IF NOT EXISTS idx_chatconv_uid ON chatconversationbean (\"userId\", \"convId\")");
+        // 唯一约束兜住并发插入：两端同时首次保存时只允许一行落库，
+        // 后到者插入失败后转为按版本号条件更新（见 ChatConversationHolder）。
+        // 若历史数据已有重复行，索引创建会失败并留日志——需人工去重，
+        // 这里不自动删数据，避免启动时静默丢弃用户会话。
+        execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_chatconv_uid_conv ON chatconversationbean (\"userId\", \"convId\")");
 
         // 对话分享：快照 + 随机 token 访问
         execute("CREATE TABLE IF NOT EXISTS chatsharebean (\"shareToken\" varchar(64), \"title\" varchar(255), \"payload\" text, \"userId\" varchar(255), \"authorName\" varchar(255), \"iid\" bigserial NOT NULL PRIMARY KEY, \"lastuser\" varchar(255), \"createtime\" timestamp DEFAULT now(), \"updatetime\" timestamp, \"enable\" boolean DEFAULT true, \"app\" varchar(255))");

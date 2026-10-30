@@ -71,22 +71,7 @@ public class ChatConversationHolder {
         where.setConvId(data.getConvId().trim());
         List<ChatConversationBean> existing = mapper.select(null, where);
         if (existing != null && !existing.isEmpty()) {
-            ChatConversationBean row = existing.get(0);
-            if (row.getClientUpdatedAt() != null && row.getClientUpdatedAt() > data.getClientUpdatedAt()) {
-                return Result.failed(false, "云端已有更新的会话，请重新拉取后合并");
-            }
-            where.setIid(row.getIid());
-            where.setClientUpdatedAt(row.getClientUpdatedAt());
-            row.setTitle(truncate(data.getTitle(), 200));
-            row.setModelName(truncate(data.getModelName(), 120));
-            row.setPinned(Boolean.TRUE.equals(data.getPinned()));
-            row.setPayload(data.getPayload());
-            row.setClientUpdatedAt(data.getClientUpdatedAt());
-            row.setLastuser(uid);
-            if (mapper.update(row, where) <= 0) {
-                return Result.failed(false, "会话已变更或同步失败，请重新拉取后重试");
-            }
-            return Result.succeed(true, "已同步");
+            return updateExisting(uid, existing.get(0), data);
         }
         ChatConversationBean owned = new ChatConversationBean();
         owned.setConvId(data.getConvId().trim());
@@ -102,8 +87,50 @@ public class ChatConversationHolder {
         if (all != null && all.size() >= MAX_CONVERSATIONS_PER_USER) {
             return Result.failed(false, "云端会话数量已达上限（" + MAX_CONVERSATIONS_PER_USER + "），请删除部分会话后重试");
         }
-        if (mapper.install(owned) <= 0) {
+        try {
+            if (mapper.install(owned) > 0) {
+                return Result.succeed(true, "已同步");
+            }
+        } catch (Exception e) {
+            log.warn("[ChatSync] 插入冲突，转为条件更新: uid={}, convId={}, {}",
+                    uid, owned.getConvId(), e.getMessage());
+        }
+        // 并发插入时唯一索引 (userId, convId) 会拦下后到的那条。
+        // 重新读取赢家行后按它的版本号做条件更新：比它旧就拒绝，
+        // 比它新则覆盖，避免两端同时报错或留下重复会话。
+        return updateAfterInsertConflict(uid, data);
+    }
+
+    /** 并发插入失败后的补偿：重新读取当前行并按版本条件更新 */
+    private Result<Boolean> updateAfterInsertConflict(String uid, ChatConversationBean data) {
+        ChatConversationBean where = new ChatConversationBean();
+        where.setUserId(uid);
+        where.setConvId(data.getConvId().trim());
+        List<ChatConversationBean> rows = mapper.select(null, where);
+        if (rows == null || rows.isEmpty()) {
             return Result.failed(false, "保存会话失败，请稍后重试");
+        }
+        return updateExisting(uid, rows.get(0), data);
+    }
+
+    /** 更新已存在的会话：版本号作为乐观锁条件，旧快照不能覆盖新内容 */
+    private Result<Boolean> updateExisting(String uid, ChatConversationBean row, ChatConversationBean data) {
+        if (row.getClientUpdatedAt() != null && row.getClientUpdatedAt() > data.getClientUpdatedAt()) {
+            return Result.failed(false, "云端已有更新的会话，请重新拉取后合并");
+        }
+        ChatConversationBean where = new ChatConversationBean();
+        where.setUserId(uid);
+        where.setConvId(row.getConvId());
+        where.setIid(row.getIid());
+        where.setClientUpdatedAt(row.getClientUpdatedAt());
+        row.setTitle(truncate(data.getTitle(), 200));
+        row.setModelName(truncate(data.getModelName(), 120));
+        row.setPinned(Boolean.TRUE.equals(data.getPinned()));
+        row.setPayload(data.getPayload());
+        row.setClientUpdatedAt(data.getClientUpdatedAt());
+        row.setLastuser(uid);
+        if (mapper.update(row, where) <= 0) {
+            return Result.failed(false, "会话已变更或同步失败，请重新拉取后重试");
         }
         return Result.succeed(true, "已同步");
     }
