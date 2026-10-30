@@ -182,7 +182,7 @@ mvn -s $settings "-Dmaven.repo.local=$repo" test
 cd frontend
 npm run typecheck      # TypeScript 类型检查
 npm run check:icons    # 图标注册检查（模板图标必须 import 或全局注册）
-npm run test            # 单元测试（Vitest），13 个文件 / 175 项
+npm run test            # 单元测试（Vitest），14 个文件 / 191 项
 npm run test:component  # 组件测试（真实渲染），23 个文件 / 184 项
 npm run test:e2e        # 浏览器冒烟（真实 Chromium + 接口 mock），7 项
 npm run check:streaming # 流式超时/取消回归，14 项
@@ -200,7 +200,7 @@ npm run check:bundle     # 首屏 gzip 体积预算（需先 build）
 | 后端单元测试 | **206 项通过，0 失败** |
 | 前端 TypeScript 检查 | 通过 |
 | 前端图标注册检查 | 通过（56 个在用图标全部可解析） |
-| 前端单元测试 | 13 个文件 / **175 项通过** |
+| 前端单元测试 | 14 个文件 / **191 项通过** |
 | 前端组件测试 | 23 个文件 / **184 项通过**（@vue/test-utils 真实渲染 LoginView / ChatComposer / ChatMessageList / ChatSidebar / KbSearchView / MyUsageView / ShareView / AiGatewayView / UserView / RoleView / UnitView / ModelsConfigView / DifyConfigView / LogView / KnowledgeBaseMngView / ModelsView / ApplicationsView / CapabilitiesView / DatasetView / KnowledgeBaseSquareView / KnowledgeBaseView / PreviewView / NotFoundView） |
 | 浏览器冒烟（Playwright） | **7 项通过**（真实 Chromium：登录守卫与登录跳转、聊天页启动无异常、直连模型 SSE 流式回答、直连图片附件带压缩 dataURL、配额 429 展示服务端原因、知识库模块未配置引导、404 兜底；接口层由 `page.route` 拦截） |
 | 前端流式回归 | 14 项通过 |
@@ -280,6 +280,12 @@ npm run check:bundle     # 首屏 gzip 体积预算（需先 build）
    应用配置限流。新增 10 项 `useChatFiles` 单测，断言直连路径不再调用上传接口；
    浏览器冒烟里再走一遍真实 FileReader / Canvas 压缩，确认 `data:image/jpeg` 的
    dataURL 确实进了请求体的多模态数组。
+11. **直连会话删除不再「复活」**：删除原本是「先删本地、再删云端」，云端删除失败时
+   用户会看到「删除会话失败」，但本地其实已经删了；更糟的是下次登录合并云端列表会
+   把这条会话重新拉回本地。现在删除先写本地墓碑（保留最近 200 条 id），云端删除
+   失败只记 warn 并保留墓碑；登录合并时跳过墓碑命中的会话并重试云端删除，成功后
+   清理墓碑。新增 16 项 `useChatConversations` 单测覆盖置顶、重命名、编辑消息、
+   新建对话、删除与云端合并，其中删除失败容忍与墓碑跳过两处做了变异验证。
 
 2026-10-30 后端改进：并发请求的配额预扣
 

@@ -6,7 +6,7 @@ import { getCurrentUserId } from "@/utils/user";
 import type { Conversation, AppParametersResponse, NormalizedUserInputField } from "@/types/chat";
 import type ChatComposer from "./ChatComposer.vue";
 import type { ChatModel, DirectConversation, MessageItem, UploadedChatFile } from "./chatTypes";
-import { getActiveModelStorageKey, getCurrentUser, readStorage, writeStorage } from "./chatStorage";
+import { getActiveModelStorageKey, getCurrentUser, readDeletedConversationIds, readStorage, removeDeletedConversationId, writeStorage } from "./chatStorage";
 import { chatRuntime } from "./chatRuntime";
 
 export const defaultModels = ref<ChatModel[]>([]);
@@ -86,9 +86,23 @@ export const mergeCloudConversations = async () => {
     if (owner !== chatRuntime.ownerUserId || owner !== getCurrentUser()) return;
     if (res.resp_code !== 0 || !Array.isArray(res.datas)) return;
     const localById = new Map(directConversations.value.map((c) => [c.id, c]));
+    const deletedIds = new Set(readDeletedConversationIds(owner));
     let changed = false;
     for (const row of res.datas) {
-      if (!row?.convId || !row?.payload) continue;
+      if (!row?.convId) continue;
+      if (deletedIds.has(row.convId)) {
+        // 本地已删除但云端还在（删除时离线）：继续清理，且不要合并回本地
+        void chatConversationApi
+          .delete(row.convId)
+          .then(() => {
+            if (chatRuntime.ownerUserId === owner) {
+              removeDeletedConversationId(owner, row.convId);
+            }
+          })
+          .catch(() => undefined);
+        continue;
+      }
+      if (!row.payload) continue;
       const local = localById.get(row.convId);
       const cloudUpdatedAt = row.clientUpdatedAt ?? 0;
       if (!local || (local.updatedAt ?? 0) < cloudUpdatedAt) {
