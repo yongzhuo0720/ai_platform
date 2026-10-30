@@ -21,6 +21,7 @@ import {
   CaretTop,
   CaretBottom,
   Share,
+  ArrowDown,
 } from "@element-plus/icons-vue";
 import { useChat } from "./index";
 import ChatComposer from "./ChatComposer.vue";
@@ -128,6 +129,15 @@ const {
   messages,
   chatMessagesRef,
   composerRef,
+  conversationsHasMore,
+  conversationsLoadingMore,
+  loadMoreConversations,
+  messagesHasMore,
+  messagesLoadingMore,
+  loadEarlierMessages,
+  showScrollToBottom,
+  handleMessagesScroll,
+  scrollToBottom,
   filteredConversations,
   activeConversationId,
   loading,
@@ -472,72 +482,85 @@ onUnmounted(() => {
             {{ conversationSearch.trim() ? '没有匹配的会话' : '暂无会话' }}
           </div>
 
-          <template v-for="group in topicGroups" :key="group.key">
-            <div class="chat-side-group-head">
-              <span>{{ group.label }}</span>
-              <span class="chat-side-group-count">{{ group.items.length }}</span>
-            </div>
-            <ul class="chat-side-topic-list">
-              <li
-                v-for="item in group.items"
-                :key="item.id"
-                class="chat-side-topic-item"
-                :class="{ active: activeConversationId === item.id }"
-              >
-                <button
-                  type="button"
-                  class="chat-side-topic-main"
-                  @click="handleSelectConversation(item.id)"
+          <div class="chat-side-topic-scroll">
+            <template v-for="group in topicGroups" :key="group.key">
+              <div class="chat-side-group-head">
+                <span>{{ group.label }}</span>
+                <span class="chat-side-group-count">{{ group.items.length }}</span>
+              </div>
+              <ul class="chat-side-topic-list">
+                <li
+                  v-for="item in group.items"
+                  :key="item.id"
+                  class="chat-side-topic-item"
+                  :class="{ active: activeConversationId === item.id }"
                 >
-                  <span class="chat-side-topic-title">
-                    <span v-if="item.pinned" class="chat-side-topic-pin" title="已置顶">📌</span>
-                    {{ item.name }}
+                  <button
+                    type="button"
+                    class="chat-side-topic-main"
+                    @click="handleSelectConversation(item.id)"
+                  >
+                    <span class="chat-side-topic-title">
+                      <span v-if="item.pinned" class="chat-side-topic-pin" title="已置顶">📌</span>
+                      {{ item.name }}
+                    </span>
+                    <span v-if="topicPreview(item.id)" class="chat-side-topic-preview">
+                      {{ topicPreview(item.id) }}
+                    </span>
+                    <span class="chat-side-topic-time">{{ formatTopicTime(item.updated_at) }}</span>
+                  </button>
+                  <span class="chat-side-topic-actions">
+                    <button
+                      type="button"
+                      class="chat-side-topic-action"
+                      :aria-label="'分享会话：' + item.name"
+                      title="分享"
+                      @click.stop="handleShareConversation(item)"
+                    >
+                      <el-icon><Share /></el-icon>
+                    </button>
+                  <button
+                      type="button"
+                      class="chat-side-topic-action"
+                      :aria-label="(item.pinned ? '取消置顶：' : '置顶：') + item.name"
+                      :title="item.pinned ? '取消置顶' : '置顶'"
+                      @click.stop="togglePinConversation(item.id)"
+                    >
+                      <el-icon><Top /></el-icon>
+                    </button>
+                    <button
+                      type="button"
+                      class="chat-side-topic-action"
+                      :aria-label="'重命名会话：' + item.name"
+                      title="重命名"
+                      @click.stop="handleRenameConversation(item)"
+                    >
+                      <el-icon><Edit /></el-icon>
+                    </button>
+                    <button
+                      type="button"
+                      class="chat-side-topic-delete"
+                      :aria-label="'删除会话：' + item.name"
+                      @click.stop="handleDeleteHistory(item.id)"
+                    >
+                      <el-icon><Close /></el-icon>
+                    </button>
                   </span>
-                  <span v-if="topicPreview(item.id)" class="chat-side-topic-preview">
-                    {{ topicPreview(item.id) }}
-                  </span>
-                  <span class="chat-side-topic-time">{{ formatTopicTime(item.updated_at) }}</span>
-                </button>
-                <span class="chat-side-topic-actions">
-                  <button
-                    type="button"
-                    class="chat-side-topic-action"
-                    :aria-label="'分享会话：' + item.name"
-                    title="分享"
-                    @click.stop="handleShareConversation(item)"
-                  >
-                    <el-icon><Share /></el-icon>
-                  </button>
-                <button
-                    type="button"
-                    class="chat-side-topic-action"
-                    :aria-label="(item.pinned ? '取消置顶：' : '置顶：') + item.name"
-                    :title="item.pinned ? '取消置顶' : '置顶'"
-                    @click.stop="togglePinConversation(item.id)"
-                  >
-                    <el-icon><Top /></el-icon>
-                  </button>
-                  <button
-                    type="button"
-                    class="chat-side-topic-action"
-                    :aria-label="'重命名会话：' + item.name"
-                    title="重命名"
-                    @click.stop="handleRenameConversation(item)"
-                  >
-                    <el-icon><Edit /></el-icon>
-                  </button>
-                  <button
-                    type="button"
-                    class="chat-side-topic-delete"
-                    :aria-label="'删除会话：' + item.name"
-                    @click.stop="handleDeleteHistory(item.id)"
-                  >
-                    <el-icon><Close /></el-icon>
-                  </button>
-                </span>
-              </li>
-            </ul>
-          </template>
+                </li>
+              </ul>
+            </template>
+
+            <div v-if="!isDirectMode && conversationsHasMore" class="chat-side-load-more">
+              <button
+                type="button"
+                :disabled="conversationsLoadingMore"
+                @click="loadMoreConversations"
+              >
+                <el-icon v-if="conversationsLoadingMore" class="is-loading"><Loading /></el-icon>
+                <span>{{ conversationsLoadingMore ? '加载中…' : '加载更多会话' }}</span>
+              </button>
+            </div>
+          </div>
         </div>
       </aside>
     </transition>
@@ -625,31 +648,43 @@ onUnmounted(() => {
                 </button>
               </div>
               <div v-if="filteredConversations.length === 0" class="chat-side-empty">暂无会话</div>
-              <template v-else v-for="group in topicGroups" :key="'drawer-' + group.key">
-                <div class="chat-side-group-head">
-                  <span>{{ group.label }}</span>
-                  <span class="chat-side-group-count">{{ group.items.length }}</span>
-                </div>
-                <ul class="chat-side-topic-list">
-                  <li
-                    v-for="item in group.items"
-                    :key="item.id"
-                    class="chat-side-topic-item"
-                    :class="{ active: activeConversationId === item.id }"
+              <div class="chat-side-topic-scroll">
+                <template v-for="group in topicGroups" :key="'drawer-' + group.key">
+                  <div class="chat-side-group-head">
+                    <span>{{ group.label }}</span>
+                    <span class="chat-side-group-count">{{ group.items.length }}</span>
+                  </div>
+                  <ul class="chat-side-topic-list">
+                    <li
+                      v-for="item in group.items"
+                      :key="item.id"
+                      class="chat-side-topic-item"
+                      :class="{ active: activeConversationId === item.id }"
+                    >
+                      <button type="button" class="chat-side-topic-main" @click="handleSelectConversation(item.id)">
+                        <span class="chat-side-topic-title">
+                          <span v-if="item.pinned" class="chat-side-topic-pin">📌</span>
+                          {{ item.name }}
+                        </span>
+                        <span class="chat-side-topic-time">{{ formatTopicTime(item.updated_at) }}</span>
+                      </button>
+                      <button type="button" class="chat-side-topic-delete" @click.stop="handleDeleteHistory(item.id)">
+                        <el-icon><Close /></el-icon>
+                      </button>
+                    </li>
+                  </ul>
+                </template>
+                <div v-if="!isDirectMode && conversationsHasMore" class="chat-side-load-more">
+                  <button
+                    type="button"
+                    :disabled="conversationsLoadingMore"
+                    @click="loadMoreConversations"
                   >
-                    <button type="button" class="chat-side-topic-main" @click="handleSelectConversation(item.id)">
-                      <span class="chat-side-topic-title">
-                        <span v-if="item.pinned" class="chat-side-topic-pin">📌</span>
-                        {{ item.name }}
-                      </span>
-                      <span class="chat-side-topic-time">{{ formatTopicTime(item.updated_at) }}</span>
-                    </button>
-                    <button type="button" class="chat-side-topic-delete" @click.stop="handleDeleteHistory(item.id)">
-                      <el-icon><Close /></el-icon>
-                    </button>
-                  </li>
-                </ul>
-              </template>
+                    <el-icon v-if="conversationsLoadingMore" class="is-loading"><Loading /></el-icon>
+                    <span>{{ conversationsLoadingMore ? '加载中…' : '加载更多会话' }}</span>
+                  </button>
+                </div>
+              </div>
             </div>
           </aside>
         </div>
@@ -844,7 +879,7 @@ onUnmounted(() => {
         </div>
       </div>
 
-      <div ref="chatMessagesRef" class="chat-messages">
+      <div ref="chatMessagesRef" class="chat-messages" @scroll.passive="handleMessagesScroll">
         <transition name="chat-stage" mode="out-in" @after-enter="onStageEnter">
           <div v-if="messages.length === 0" key="empty" class="chat-empty">
             <div v-if="parametersLoading && !isDirectMode" class="chat-empty-loading">
@@ -908,6 +943,16 @@ onUnmounted(() => {
           </div>
 
           <div v-else key="messages" class="chat-messages-list">
+            <div v-if="!isDirectMode && messagesHasMore" class="chat-load-older">
+              <button
+                type="button"
+                :disabled="messagesLoadingMore"
+                @click="loadEarlierMessages"
+              >
+                <el-icon v-if="messagesLoadingMore" class="is-loading"><Loading /></el-icon>
+                <span>{{ messagesLoadingMore ? '加载中…' : '加载更早消息' }}</span>
+              </button>
+            </div>
             <div
               v-for="message in messages"
               :key="message.id"
@@ -1067,6 +1112,19 @@ onUnmounted(() => {
               </div>
             </div>
           </div>
+        </transition>
+
+        <transition name="chat-scroll-hint">
+          <button
+            v-if="showScrollToBottom && messages.length > 0"
+            type="button"
+            class="chat-scroll-bottom"
+            aria-label="回到底部"
+            title="回到底部"
+            @click="scrollToBottom(true)"
+          >
+            <el-icon><ArrowDown /></el-icon>
+          </button>
         </transition>
       </div>
 

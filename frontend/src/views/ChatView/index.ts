@@ -7,7 +7,7 @@ import { modelsConfigApi } from "@/api/modelsConfig";
 import { streamDirectChat } from "@/api/directModel";
 import { kbRagApi, type KbSearchItemDto } from "@/api/kbRag";
 import { chatConversationApi, type CloudConversation } from "@/api/chatConversation";
-import { uploadFileToDify } from "@/api/request";
+import { uploadFileToDify, splitThinking } from "@/api/request";
 import type {
   Conversation,
   ChatMessage,
@@ -87,6 +87,24 @@ export interface UseChatReturn {
   composerRef: typeof composerRef;
   chatMessagesRef: typeof chatMessagesRef;
   conversations: typeof conversations;
+  /** 会话列表是否还有更早的会话（Dify 游标分页） */
+  conversationsHasMore: Ref<boolean>;
+  /** 正在加载更多会话 */
+  conversationsLoadingMore: Ref<boolean>;
+  /** 加载下一页（更早）会话 */
+  loadMoreConversations: () => Promise<void>;
+  /** 当前会话是否还有更早的消息 */
+  messagesHasMore: Ref<boolean>;
+  /** 正在加载更早的消息 */
+  messagesLoadingMore: Ref<boolean>;
+  /** 加载更早的历史消息（前置插入并保持滚动位置） */
+  loadEarlierMessages: () => Promise<void>;
+  /** 是否显示「回到底部」悬浮按钮 */
+  showScrollToBottom: Ref<boolean>;
+  /** 消息区滚动事件：更新「回到底部」按钮显隐 */
+  handleMessagesScroll: () => void;
+  /** 滚动消息区到底部 */
+  scrollToBottom: (smooth?: boolean) => void;
   filteredConversations: ComputedRef<Conversation[]>;
   activeConversationId: typeof activeConversationId;
   loading: typeof loading;
@@ -711,6 +729,27 @@ const composerRef = ref<InstanceType<typeof ChatComposer> | null>(null);
 const conversations = ref<Conversation[]>([]);
 const activeConversationId = ref<string>("");
 const loading = ref(false);
+
+/** 会话列表分页：Dify 按 updated_at 倒序返回，last_id 取更早的一页 */
+const CONVERSATION_PAGE_SIZE = 30;
+const conversationsHasMore = ref(false);
+const conversationsLoadingMore = ref(false);
+const conversationsCursor = ref("");
+/** 会话列表刷新时的竞态保护：旧分页响应不得追加到新列表 */
+let conversationsRequestToken = 0;
+
+/** 历史消息分页：first_id 取更早的一页，Dify 返回按时间升序 */
+const MESSAGE_PAGE_SIZE = 30;
+const messagesHasMore = ref(false);
+const messagesLoadingMore = ref(false);
+const messagesCursor = ref("");
+/** 连点会话时的竞态保护：只有最后一次请求可以写入消息列表 */
+let historyRequestToken = 0;
+
+/** 消息区滚动：仅在用户贴近底部时自动跟随，离开底部则显示「回到底部」 */
+const showScrollToBottom = ref(false);
+/** 前置插入更早消息期间暂停自动跟随，避免视口被拽回底部 */
+let suppressAutoScroll = false;
 const thinking = ref<string>('');
 const difyModels = ref<ChatModel[]>([]);
 const modelsLoading = ref(false);
@@ -1429,50 +1468,213 @@ export function useChat(): UseChatReturn {
     }
   };
 
+  /** 消息区是否接近底部（用于判断流式输出是否继续跟随） */
+  const isMessageListNearBottom = (threshold = 120): boolean => {
+    const el = chatMessagesRef.value;
+    if (!el) return true;
+    return el.scrollHeight - el.scrollTop - el.clientHeight <= threshold;
+  };
+
+  const handleMessagesScroll = () => {
+    showScrollToBottom.value = !isMessageListNearBottom(120);
+  };
+
+  /** 滚动到消息区底部；双 rAF 等待 Markdown 完成布局 */
+  const scrollToBottom = (smooth = false) => {
+    showScrollToBottom.value = false;
+    nextTick(() => {
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+          const el = chatMessagesRef.value;
+          if (!el) return;
+          if (smooth && typeof el.scrollTo === "function") {
+            el.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
+          } else {
+            el.scrollTop = el.scrollHeight;
+          }
+        });
+      });
+    });
+  };
+
   const loadConversations = async () => {
+    const token = ++conversationsRequestToken;
+    // 刷新会整体替换列表，进行中的「加载更多」作废，避免按钮卡在加载中
+    conversationsLoadingMore.value = false;
     try {
       const response = await chatApi.getConversations({
         user: getCurrentUser(),
-        limit: 100,
+        limit: CONVERSATION_PAGE_SIZE,
       });
+      if (token !== conversationsRequestToken) return;
       const nextConversations = response.data || [];
       conversations.value = nextConversations;
+      conversationsHasMore.value = !!response.has_more;
+      conversationsCursor.value = nextConversations.length
+        ? nextConversations[nextConversations.length - 1].id
+        : "";
     } catch (error) {
+      if (token !== conversationsRequestToken) return;
       console.warn("获取会话列表失败:", error);
       conversations.value = [];
+      conversationsHasMore.value = false;
+      conversationsCursor.value = "";
     }
   };
 
+  /** 加载更早的会话（Dify 游标分页；直连会话全量在本地，无需分页） */
+  const loadMoreConversations = async () => {
+    if (isDirectMode.value || conversationsLoadingMore.value || !conversationsHasMore.value) {
+      return;
+    }
+    const cursor = conversationsCursor.value;
+    if (!cursor) {
+      conversationsHasMore.value = false;
+      return;
+    }
+    const token = conversationsRequestToken;
+    conversationsLoadingMore.value = true;
+    try {
+      const response = await chatApi.getConversations({
+        user: getCurrentUser(),
+        last_id: cursor,
+        limit: CONVERSATION_PAGE_SIZE,
+      });
+      if (token !== conversationsRequestToken) return;
+      const rows = response.data || [];
+      const existingIds = new Set(conversations.value.map((c) => c.id));
+      const fresh = rows.filter((c) => !existingIds.has(c.id));
+      if (fresh.length) {
+        conversations.value = [...conversations.value, ...fresh];
+      }
+      // 空页说明已经到底，避免出现「有更多但点了没反应」
+      conversationsHasMore.value = !!response.has_more && rows.length > 0;
+      if (rows.length) {
+        conversationsCursor.value = rows[rows.length - 1].id;
+      }
+    } catch (error) {
+      if (token !== conversationsRequestToken) return;
+      console.warn("加载更多会话失败:", error);
+      ElMessage.error("加载更多会话失败");
+    } finally {
+      if (token === conversationsRequestToken) {
+        conversationsLoadingMore.value = false;
+      }
+    }
+  };
+
+  /** Dify 历史消息 → 消息列表项（一条记录拆成用户问 + 助手答） */
+  const mapHistoryMessages = (rows: ChatMessage[]): MessageItem[] => {
+    const messageList: MessageItem[] = [];
+    rows.forEach((msg) => {
+      if (msg.query) {
+        messageList.push({
+          id: `${msg.id}-user`,
+          role: "user",
+          content: msg.query,
+        });
+      }
+      if (msg.answer) {
+        // 与流式展示保持一致：历史回答同样剥掉 <think> 思考块，
+        // 否则重新打开会话会看到一大段推理原文
+        const parsed = splitThinking(msg.answer);
+        messageList.push({
+          id: `${msg.id}-assistant`,
+          role: "assistant",
+          content: parsed.closed ? parsed.answer : msg.answer,
+        });
+      }
+    });
+    return messageList;
+  };
+
   const loadConversationMessages = async (conversationId: string) => {
+    cancelCurrentRequest();
+    const token = ++historyRequestToken;
+    messagesCursor.value = "";
+    messagesHasMore.value = false;
+    messagesLoadingMore.value = false;
+    suppressAutoScroll = false;
     try {
       const response = await chatApi.getConversationHistory(
         conversationId,
         getCurrentUser(),
         undefined,
-        100
+        MESSAGE_PAGE_SIZE
       );
-      const messageList: MessageItem[] = [];
-      (response.data || []).forEach((msg: ChatMessage) => {
-        if (msg.query) {
-          messageList.push({
-            id: `${msg.id}-user`,
-            role: "user",
-            content: msg.query,
-          });
-        }
-        if (msg.answer) {
-          messageList.push({
-            id: `${msg.id}-assistant`,
-            role: "assistant",
-            content: msg.answer,
-          });
-        }
-      });
-      messages.value = messageList;
+      if (token !== historyRequestToken) return;
+      const rows = response.data || [];
+      messages.value = mapHistoryMessages(rows);
+      messagesHasMore.value = !!response.has_more;
+      messagesCursor.value = rows.length ? rows[0].id : "";
       activeConversationId.value = conversationId;
+      scrollToBottom(false);
     } catch (error) {
+      if (token !== historyRequestToken) return;
       console.warn("获取会话历史失败:", error);
       ElMessage.error("获取会话历史失败");
+    }
+  };
+
+  /** 加载更早的历史消息：前置插入并保持当前滚动位置 */
+  const loadEarlierMessages = async () => {
+    if (
+      isDirectMode.value ||
+      messagesLoadingMore.value ||
+      !messagesHasMore.value ||
+      !activeConversationId.value
+    ) {
+      return;
+    }
+    const cursor = messagesCursor.value;
+    if (!cursor) {
+      messagesHasMore.value = false;
+      return;
+    }
+    const container = chatMessagesRef.value;
+    const prevHeight = container?.scrollHeight ?? 0;
+    const prevTop = container?.scrollTop ?? 0;
+    const token = historyRequestToken;
+    messagesLoadingMore.value = true;
+    suppressAutoScroll = true;
+    try {
+      const response = await chatApi.getConversationHistory(
+        activeConversationId.value,
+        getCurrentUser(),
+        cursor,
+        MESSAGE_PAGE_SIZE
+      );
+      // 加载期间切换了会话：丢弃这一页，避免把旧会话的消息插到新会话顶部
+      if (token !== historyRequestToken) {
+        return;
+      }
+      const rows = response.data || [];
+      const existingIds = new Set(messages.value.map((m) => m.id));
+      const older = mapHistoryMessages(rows).filter((m) => !existingIds.has(m.id));
+      messagesHasMore.value = !!response.has_more && rows.length > 0;
+      if (rows.length) {
+        messagesCursor.value = rows[0].id;
+      }
+      if (older.length) {
+        messages.value = [...older, ...messages.value];
+      }
+      await nextTick();
+      requestAnimationFrame(() => {
+        const el = chatMessagesRef.value;
+        if (el) {
+          el.scrollTop = el.scrollHeight - prevHeight + prevTop;
+        }
+        suppressAutoScroll = false;
+      });
+    } catch (error) {
+      if (token !== historyRequestToken) return;
+      suppressAutoScroll = false;
+      console.warn("加载更早消息失败:", error);
+      ElMessage.error("加载更早消息失败");
+    } finally {
+      if (token === historyRequestToken) {
+        messagesLoadingMore.value = false;
+      }
     }
   };
 
@@ -1585,6 +1787,9 @@ export function useChat(): UseChatReturn {
         sourceUserMessageId: userMessageId,
       });
     }
+
+    // 发送/重新生成后强制跟随到最新消息，避免用户此前上翻时看不到新回复
+    scrollToBottom(false);
 
     /**
      * 发送流式消息到 Dify
@@ -1834,6 +2039,7 @@ export function useChat(): UseChatReturn {
         }
       );
       await chatApi.deleteConversation(itemId, getCurrentUser());
+      conversationsRequestToken += 1;
       conversations.value = conversations.value.filter((c) => c.id !== itemId);
       if (activeConversationId.value === itemId) {
         activeConversationId.value = "";
@@ -2088,11 +2294,17 @@ export function useChat(): UseChatReturn {
     conversation.updatedAt = Date.now();
     persistDirectConversations();
     syncConversationToCloud(conversation);
+    scrollToBottom(false);
     runDirectStream(conversation, `assistant-${Date.now()}`, userMessageId, queryContent, images);
   };
 
   const loadDirectConversation = (conversationId: string) => {
     cancelCurrentRequest();
+    historyRequestToken += 1;
+    messagesCursor.value = "";
+    messagesHasMore.value = false;
+    messagesLoadingMore.value = false;
+    suppressAutoScroll = false;
     const conversation = directConversations.value.find((c) => c.id === conversationId);
     if (!conversation) {
       return;
@@ -2109,6 +2321,7 @@ export function useChat(): UseChatReturn {
             ...(turn.kbSources?.length ? { kbSources: turn.kbSources } : {}),
           }),
     }));
+    scrollToBottom(false);
   };
 
   /**
@@ -2120,9 +2333,15 @@ export function useChat(): UseChatReturn {
    */
   function startNewConversation() {
     cancelCurrentRequest();
+    historyRequestToken += 1;
     activeConversationId.value = "";
     activeDirectConversationId.value = "";
     messages.value = [];
+    messagesHasMore.value = false;
+    messagesLoadingMore.value = false;
+    messagesCursor.value = "";
+    showScrollToBottom.value = false;
+    suppressAutoScroll = false;
     inputValue.value = "";
     thinking.value = "";
     postAnswerSuggestions.value = [];
@@ -2625,16 +2844,28 @@ export function useChat(): UseChatReturn {
     { immediate: true }
   );
 
-  // AI 流式输出时自动滚动到底部（双重 rAF 确保 Markdown 内容完成布局）
+  // 流式输出时自动跟随到底部，但用户上翻查看历史后不再抢滚动；
+  // 双 rAF 确保 Markdown 内容完成布局后再计算 scrollHeight
   watch(
     messages,
     () => {
+      if (suppressAutoScroll) {
+        return;
+      }
+      if (!isMessageListNearBottom(160)) {
+        if (loading.value) {
+          showScrollToBottom.value = true;
+        }
+        return;
+      }
       nextTick(() => {
         requestAnimationFrame(() => {
           requestAnimationFrame(() => {
-            if (chatMessagesRef.value) {
-              chatMessagesRef.value.scrollTop = chatMessagesRef.value.scrollHeight;
+            if (suppressAutoScroll || !chatMessagesRef.value) {
+              return;
             }
+            chatMessagesRef.value.scrollTop = chatMessagesRef.value.scrollHeight;
+            showScrollToBottom.value = false;
           });
         });
       });
@@ -2694,6 +2925,15 @@ export function useChat(): UseChatReturn {
     chatMessagesRef,
     composerRef,
     conversations,
+    conversationsHasMore,
+    conversationsLoadingMore,
+    loadMoreConversations,
+    messagesHasMore,
+    messagesLoadingMore,
+    loadEarlierMessages,
+    showScrollToBottom,
+    handleMessagesScroll,
+    scrollToBottom,
     filteredConversations,
     activeConversationId,
     loading,
