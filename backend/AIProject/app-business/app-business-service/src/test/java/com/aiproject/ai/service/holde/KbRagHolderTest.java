@@ -228,7 +228,37 @@ class KbRagHolderTest {
         assertEquals(1, result.getDatas().getItems().size(), "维度正常的块仍应参与排序");
     }
 
-    /** 归因要分开：维度不一致是模型切换，解析失败是数据损坏，处置方式不同 */
+    /**
+     * 换到维度相同的另一个向量模型时，旧分块（记录了旧模型名）必须被跳过：
+     * 维度一样不代表语义空间一致，混用旧向量会让检索悄悄变差。
+     */
+    @Test
+    void search_shouldSkipChunksFromAnotherEmbeddingModel() throws Exception {
+        when(embeddingClient.resolve()).thenReturn(embeddingConfig());
+        when(embeddingClient.embed(any(EmbeddingClient.ResolvedEmbedding.class), any(List.class)))
+                .thenReturn(Collections.singletonList(new double[]{1.0, 0.0}));
+        KbChunkBean current = chunk(1L, "默认知识库", "差旅报销需要审批", "[1.0,0.0]");
+        current.setEmbeddingModel("text-embedding-3-small");
+        current.setEmbeddingDim(2);
+        KbChunkBean legacyOtherModel = chunk(2L, "默认知识库", "报销标准为五百元", "[1.0,0.0]");
+        legacyOtherModel.setEmbeddingModel("bge-m3");
+        legacyOtherModel.setEmbeddingDim(2);
+        KbChunkBean legacyUnknown = chunk(3L, "默认知识库", "报销流程", "[0.0,1.0]");
+        when(kbChunkBeanMapper.select(isNull(), any(KbChunkBean.class)))
+                .thenReturn(Arrays.asList(current, legacyOtherModel, legacyUnknown));
+
+        Result<com.aiproject.ai.service.gateway.dto.KbSearchResult> result =
+                holder.search("u1", "报销", null, 5);
+
+        assertNotNull(result.getDatas());
+        assertEquals(1, result.getDatas().getSkipped(), "其他模型的分块必须计数");
+        assertEquals(2, result.getDatas().getItems().size(),
+                "同模型分块与未记录模型的存量分块仍应参与排序");
+        assertNotNull(result.getDatas().getWarning());
+        assertTrue(result.getDatas().getWarning().contains("重新上传"));
+    }
+
+    /** 归因要分开：模型不一致、维度不一致、解析失败，处置方式不同 */
     @Test
     void hybridRank_shouldCountSkippedVectorsByReason() {
         KbChunkBean ok = chunk(1L, "kb", "报销流程", "[1.0,0.0]");
@@ -242,6 +272,7 @@ class KbRagHolderTest {
         assertEquals(1, ranked.size());
         assertEquals(1, diagnostics.dimensionMismatch);
         assertEquals(1, diagnostics.unparsable);
+        assertEquals(0, diagnostics.modelMismatch);
         assertEquals(2, diagnostics.skipped());
     }
 

@@ -29,6 +29,7 @@ public class TableSchemaInitializer implements ApplicationListener<ApplicationRe
         ensureCapabilitiesIconColumn();
         ensureAiGatewayIndexes();
         ensureKbChunkFullTextIndex();
+        ensureKbChunkEmbeddingModelColumns();
         ensureCostAndTracingColumns();
     }
 
@@ -67,6 +68,18 @@ public class TableSchemaInitializer implements ApplicationListener<ApplicationRe
     private void ensureKbChunkFullTextIndex() {
         execute("CREATE INDEX IF NOT EXISTS idx_kbchunk_content_fts ON kbchunkbean "
                 + "USING gin (to_tsvector('simple', \"content\"))");
+    }
+
+    /**
+     * RAG 分块记录生成向量所用的模型与维度。
+     *
+     * <p>只存模型名时，切换到「维度相同」的另一个向量模型无法从维度判断旧分块失效；
+     * 记录模型名后，检索可以精确跳过旧模型的向量并提示重新上传。
+     * 存量分块为 NULL，语义是「未知模型」，仍按维度兜底判断。</p>
+     */
+    private void ensureKbChunkEmbeddingModelColumns() {
+        execute("ALTER TABLE kbchunkbean ADD COLUMN IF NOT EXISTS \"embeddingModel\" varchar(128)");
+        execute("ALTER TABLE kbchunkbean ADD COLUMN IF NOT EXISTS \"embeddingDim\" int4");
     }
 
     /**

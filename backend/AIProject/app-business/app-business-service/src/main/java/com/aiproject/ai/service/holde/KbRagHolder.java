@@ -155,6 +155,8 @@ public class KbRagHolder {
             chunk.setChunkIndex(i);
             chunk.setContent(chunks.get(i));
             chunk.setEmbedding(toJson(vectors.get(i)));
+            chunk.setEmbeddingModel(embedding.getEmbedModel());
+            chunk.setEmbeddingDim(vectors.get(i).length);
             chunk.setTokenCount(chunks.get(i).length());
             chunk.setLastuser(uid);
             if (kbChunkBeanMapper.install(chunk) <= 0) {
@@ -256,7 +258,8 @@ public class KbRagHolder {
 
         Set<Long> lexicalHits = lexicalCandidates(uid, kbName, query.trim());
         RankDiagnostics diagnostics = new RankDiagnostics();
-        List<KbSearchItem> fused = hybridRank(query.trim(), chunks, queryVector, lexicalHits, diagnostics);
+        List<KbSearchItem> fused = hybridRank(query.trim(), chunks, queryVector, lexicalHits,
+                diagnostics, embedding.getEmbedModel());
 
         int limit = topK == null ? 5 : Math.max(1, Math.min(MAX_TOP_K, topK));
         fused = applyRerank(query.trim(), fused, limit);
@@ -274,9 +277,10 @@ public class KbRagHolder {
         result.setSkipped(diagnostics.skipped());
         result.setItems(items);
         if (diagnostics.skipped() > 0) {
-            log.warn("[KbRag] 向量路跳过 {} 块（维度不一致 {} / 解析失败 {}），当前模型 {}({} 维)",
-                    diagnostics.skipped(), diagnostics.dimensionMismatch,
-                    diagnostics.unparsable, embedding.getEmbedModel(), queryVector.length);
+            log.warn("[KbRag] 向量路跳过 {} 块（模型不一致 {} / 维度不一致 {} / 解析失败 {}），当前模型 {}({} 维)",
+                    diagnostics.skipped(), diagnostics.modelMismatch,
+                    diagnostics.dimensionMismatch, diagnostics.unparsable,
+                    embedding.getEmbedModel(), queryVector.length);
             result.setWarning("有 " + diagnostics.skipped()
                     + " 个分块的向量与当前向量模型 " + embedding.getEmbedModel()
                     + " 不匹配，已跳过语义比对，检索结果可能不完整；如更换过向量模型，请重新上传相关文档");
@@ -345,7 +349,7 @@ public class KbRagHolder {
      */
     public List<KbSearchItem> hybridRank(String query, List<KbChunkBean> chunks,
                                          double[] queryVector, Set<Long> lexicalHits) {
-        return hybridRank(query, chunks, queryVector, lexicalHits, new RankDiagnostics());
+        return hybridRank(query, chunks, queryVector, lexicalHits, new RankDiagnostics(), null);
     }
 
     /**
@@ -354,10 +358,29 @@ public class KbRagHolder {
      */
     List<KbSearchItem> hybridRank(String query, List<KbChunkBean> chunks, double[] queryVector,
                                   Set<Long> lexicalHits, RankDiagnostics diagnostics) {
+        return hybridRank(query, chunks, queryVector, lexicalHits, diagnostics, null);
+    }
+
+    /**
+     * 带当前向量模型名的排序：模型名不同的分块直接跳过。
+     *
+     * <p>只看维度不够——换到维度相同的另一个模型时，旧向量仍会被当成有效候选，
+     * 检索结果会悄悄变差。存量分块没有模型名（NULL），此时退回维度判断。</p>
+     */
+    List<KbSearchItem> hybridRank(String query, List<KbChunkBean> chunks, double[] queryVector,
+                                  Set<Long> lexicalHits, RankDiagnostics diagnostics,
+                                  String currentEmbeddingModel) {
         // ---- 向量路：对全部分块算余弦 ----
         Map<Long, KbSearchItem> byChunkIid = new HashMap<Long, KbSearchItem>();
         List<KbSearchItem> denseRanked = new ArrayList<KbSearchItem>();
         for (KbChunkBean chunk : chunks) {
+            String chunkModel = chunk.getEmbeddingModel();
+            if (currentEmbeddingModel != null && !currentEmbeddingModel.isEmpty()
+                    && chunkModel != null && !chunkModel.isEmpty()
+                    && !chunkModel.equals(currentEmbeddingModel)) {
+                diagnostics.modelMismatch++;
+                continue;
+            }
             double[] vector = parseVector(chunk.getEmbedding());
             if (vector == null) {
                 diagnostics.unparsable++;
@@ -656,11 +679,12 @@ public class KbRagHolder {
 
     /** 混合排序的降级统计，用于把「向量路被跳过」的原因暴露给调用方 */
     static class RankDiagnostics {
+        int modelMismatch;
         int dimensionMismatch;
         int unparsable;
 
         int skipped() {
-            return dimensionMismatch + unparsable;
+            return modelMismatch + dimensionMismatch + unparsable;
         }
     }
 
