@@ -21,6 +21,8 @@ export default defineConfig({
   test: {
     environment: "jsdom",
     include: ["src/**/*.spec.ts"],
+    // 组件级用例走 vitest.component.config.ts（需要 Vue 插件与真实 Element Plus）
+    exclude: ["**/node_modules/**", "**/dist/**", "src/**/*.component.spec.ts"],
     clearMocks: true,
     restoreMocks: true,
   },

@@ -92,6 +92,16 @@ Step "前端单元测试（Vitest）" {
     }
 }
 
+Step "前端组件测试（Vitest + @vue/test-utils）" {
+    Push-Location "$root/frontend"
+    try {
+        npm run test:component
+        if ($LASTEXITCODE -ne 0) { throw "组件测试退出码 $LASTEXITCODE" }
+    } finally {
+        Pop-Location
+    }
+}
+
 Step "流式回归检查" {
     Push-Location "$root/frontend"
     try {

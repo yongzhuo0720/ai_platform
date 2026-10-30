@@ -30,6 +30,9 @@ jobs:
       # 2026-10-30 新增：ChatView 拆分后的逻辑模块单测（Vitest + jsdom）
       - name: 单元测试
         run: npm run test
+      # 2026-10-30 新增：组件级渲染/点击测试（真实 SFC + Element Plus）
+      - name: 组件测试
+        run: npm run test:component
       - name: 流式回归检查
         run: npm run check:streaming
       # 2026-10-29 新增：这条此前一直没进 CI，而它在本地其实是失败的
