@@ -7,6 +7,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.Getter;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.context.event.EventListener;
 import org.springframework.stereotype.Component;
 
 import java.io.ByteArrayOutputStream;
@@ -96,6 +97,24 @@ public class RerankResolver {
         cacheAt = System.currentTimeMillis();
         resolvedOnce = true;
         return found;
+    }
+
+    /**
+     * 后台保存模型配置后主动失效。
+     *
+     * <p>没有这一步时，停用 rerank 或更换密钥最长要等 5 分钟 TTL 才生效——
+     * 管理员看到「已保存」，实际请求仍在用旧配置，属于容易误判的隐蔽问题。</p>
+     */
+    @EventListener
+    public void onModelConfigChanged(ModelConfigChangedEvent event) {
+        invalidateCache();
+    }
+
+    /** synchronized 与 refresh 互斥，避免失效瞬间被并发刷新写回旧值 */
+    public synchronized void invalidateCache() {
+        cache = null;
+        cacheAt = 0L;
+        resolvedOnce = false;
     }
 
     /**

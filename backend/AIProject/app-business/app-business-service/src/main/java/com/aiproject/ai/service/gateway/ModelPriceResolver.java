@@ -5,6 +5,7 @@ import com.aiproject.ai.service.mapper.ModelsConfigBeanMapper;
 import lombok.Getter;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.context.event.EventListener;
 import org.springframework.stereotype.Component;
 
 import java.util.HashMap;
@@ -27,7 +28,8 @@ import java.util.Map;
  *   <li>永久缓存——管理员改了价格要等重启才生效，体验差且容易和实际账单对不上。</li>
  * </ul>
  * TTL 取 5 分钟是折衷：价格改动的生效延迟可以接受，同时把数据库压力降到
- * 每分钟一次。</p>
+ * 每分钟一次。后台保存配置时会发布 {@link ModelConfigChangedEvent} 主动失效，
+ * TTL 只兜底「绕过写接口直接改库」这类场景。</p>
  */
 @Slf4j
 @Component
@@ -92,6 +94,21 @@ public class ModelPriceResolver {
             return snapshot.get(key);
         }
         return refresh().get(key);
+    }
+
+    /**
+     * 后台保存模型配置后主动失效，让改价 / 删除模型立即反映到成本统计，
+     * 而不是等 TTL 到期才更新。
+     */
+    @EventListener
+    public void onModelConfigChanged(ModelConfigChangedEvent event) {
+        invalidateCache();
+    }
+
+    /** synchronized 与 refresh 互斥，避免失效瞬间被并发刷新写回旧值 */
+    public synchronized void invalidateCache() {
+        cache = null;
+        cacheAt = 0L;
     }
 
     /** 重新加载全部单价 */
