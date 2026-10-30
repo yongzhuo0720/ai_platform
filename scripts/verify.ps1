@@ -132,6 +132,16 @@ if (-not $SkipBuild) {
             Pop-Location
         }
     }
+
+    Step "产物体积预算" {
+        Push-Location "$root/frontend"
+        try {
+            npm run check:bundle
+            if ($LASTEXITCODE -ne 0) { throw "bundle 检查退出码 $LASTEXITCODE" }
+        } finally {
+            Pop-Location
+        }
+    }
 } else {
     Write-Host ""
     Write-Host "（已跳过前端构建）" -ForegroundColor DarkGray

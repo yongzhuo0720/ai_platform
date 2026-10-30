@@ -42,6 +42,9 @@ jobs:
         run: npm run check:markdown
       - name: 构建
         run: npm run build
+      # 2026-10-30 新增：首屏 gzip 体积设预算，防止再出现「全量注册图标」这类静默膨胀
+      - name: 产物体积预算
+        run: npm run check:bundle
 
   # 后端暂不进 CI：依赖私有框架 com.heneng.hnsp / blxt.qjava（不在 Maven Central），
   # 本地离线仓库 hd_redis/ai-maven/pro 也不入库。
