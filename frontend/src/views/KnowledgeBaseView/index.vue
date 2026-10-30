@@ -47,6 +47,7 @@ import type {
   UserInputFormItem,
 } from '@/types/chat'
 import { ElMessage, ElMessageBox, ElPopover } from 'element-plus'
+import type { FormInstance } from 'element-plus'
 import { documentApi } from '@/api/document'
 import { chunkApi } from '@/api/chunk'
 import type { KnowledgeBaseDocument } from '@/types/knowledge'
@@ -59,7 +60,6 @@ import KbChatPanel from '@/components/KbChatPanel/index.vue'
 
 const {
   knowledgeFileUnavailable,
-  selectedCategories,
   allTags,
   filteredKnowledgeBases,
   activeMenu,
@@ -107,6 +107,19 @@ const {
 const handleEmbeddingModelChange = (model: string) => {
   const selected = embeddingModelOptions.value.find((item) => item.model === model)
   mngFormData.value.embedding_model_provider = selected ? selected.provider : ''
+}
+
+// 弹窗里的名称/向量模型规则此前只挂载未校验：确定按钮直接调用 handleMngSubmit，
+// 空名称也会真正创建知识库。这里补上表单校验再提交。
+const mngFormRef = ref<FormInstance>()
+const submitMngForm = () => {
+  mngFormRef.value?.validate(async (valid: boolean) => {
+    if (!valid) {
+      ElMessage.error('请填写完整的信息')
+      return
+    }
+    await handleMngSubmit()
+  })
 }
 
 // Sidebar state
@@ -1650,7 +1663,7 @@ function clearChatMessages() {
             <span class="kb-sidebar-child-name">{{ kb.name }}</span>
           </div>
           <div v-if="sidebarFilteredSharedKnowledgeBases.length === 0" class="kb-sidebar-empty">
-            {{ selectedCategories.length > 0 ? '没有符合标签的共享知识库' : '暂无共享知识库' }}
+            {{ sidebarSelectedTag.length > 0 ? '没有符合标签的共享知识库' : '暂无共享知识库' }}
           </div>
         </div>
       </div>
@@ -1688,7 +1701,7 @@ function clearChatMessages() {
             <span class="kb-sidebar-child-name">{{ kb.name }}</span>
           </div>
           <div v-if="sidebarFilteredJoinedKnowledgeBases.length === 0" class="kb-sidebar-empty">
-            {{ selectedCategories.length > 0 ? '没有符合标签的订阅知识库' : '暂无加入的知识库' }}
+            {{ sidebarSelectedTag.length > 0 ? '没有符合标签的订阅知识库' : '暂无加入的知识库' }}
           </div>
         </div>
       </div>
@@ -2501,7 +2514,7 @@ function clearChatMessages() {
 
     <!-- 知识库管理弹窗：新建 / 编辑 -->
     <el-dialog v-model="mngDialogVisible" :title="mngDialogTitle" width="650px" :close-on-click-modal="false">
-      <el-form :model="mngFormData" :rules="mngFormRules" label-width="100px">
+      <el-form ref="mngFormRef" :model="mngFormData" :rules="mngFormRules" label-width="100px">
         <el-form-item label="名称" prop="name">
           <el-input v-model="mngFormData.name" placeholder="请输入知识库名称" />
         </el-form-item>
@@ -2580,7 +2593,7 @@ function clearChatMessages() {
       </el-form>
       <template #footer>
         <el-button @click="mngDialogVisible = false">取消</el-button>
-        <el-button type="primary" @click="handleMngSubmit">确定</el-button>
+        <el-button type="primary" @click="submitMngForm">确定</el-button>
       </template>
     </el-dialog>
 
