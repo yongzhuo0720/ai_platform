@@ -838,5 +838,7 @@ export function useIndex() {
     removeMember,
     // 当前用户自己创建的知识库 ID
     myKbIds,
+    // 供错误横幅「重试」使用
+    fetchKnowledgeBases,
   }
 }
