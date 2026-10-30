@@ -186,7 +186,8 @@ npm run test            # 单元测试（Vitest），8 个文件 / 142 项
 npm run test:component  # 组件测试（真实渲染），1 个文件 / 9 项
 npm run check:streaming # 流式超时/取消回归，14 项
 npm run check:markdown  # Markdown 与 XSS 消毒回归，10 项
-npm run build           # 生产构建
+npm run build            # 生产构建
+npm run check:bundle     # 首屏 gzip 体积预算（需先 build）
 ```
 
 本地一键验证使用 `scripts/verify.ps1 -JavaHome '<你的 JDK 8 路径>'`。
@@ -203,6 +204,7 @@ npm run build           # 生产构建
 | 前端流式回归 | 14 项通过 |
 | 前端 Markdown / XSS 回归 | 10 项通过（**2026-10-29 前该脚本一直是失败的，见文档**） |
 | 前端生产构建 | 通过（element-plus 分块 922.89 kB / gzip 296.83 kB，仍有体积警告） |
+| 产物体积预算 | 通过（首屏 JS 416.8 kB / 预算 470 kB，gzip） |
 
 2026-10-30 前端改进：
 

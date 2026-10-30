@@ -13,7 +13,8 @@
     "test:watch": "vitest",
     "check:markdown": "node scripts/check-markdown.mjs",
     "check:streaming": "node scripts/check-streaming.mjs",
-    "check:icons": "node scripts/check-icons.mjs"
+    "check:icons": "node scripts/check-icons.mjs",
+    "check:bundle": "node scripts/check-bundle.mjs"
   },
   "dependencies": {
     "@element-plus/icons-vue": "^2.3.2",
