@@ -7,9 +7,11 @@ import com.heneng.hnsp.common.db.utils.PageResult;
 import com.aiproject.ai.permission.holde.MyUserBaseDbHolder;
 import java.lang.String;
 import com.heneng.hnsp.common.croe.model.Result;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 import org.springframework.beans.factory.annotation.Autowired;
 import com.aiproject.ai.service.bean.ModelsConfigBean;
+import com.aiproject.ai.service.gateway.ModelConfigChangedEvent;
 import com.aiproject.ai.service.mapper.ModelsConfigBeanMapper;
 
 
@@ -31,6 +33,9 @@ public  class ModelsConfigBeanHolder  {
     @Autowired
     MyUserBaseDbHolder myUserBaseDbHolder;
 
+    @Autowired
+    ApplicationEventPublisher eventPublisher;
+
     /**
      * 模型配置属平台级配置（前端仅在 Admin/ModelsConfigView 维护），写操作限超管。
      */
@@ -42,6 +47,18 @@ public  class ModelsConfigBeanHolder  {
             return Result.failed(false, "仅管理员可维护模型配置");
         }
         return null;
+    }
+
+    /**
+     * 通知缓存方刷新（RerankResolver / ModelPriceResolver 有 5 分钟 TTL 缓存）。
+     * 写库已经成功，广播失败不能把「成功」报成「失败」，只记日志。
+     */
+    private void publishConfigChanged() {
+        try {
+            eventPublisher.publishEvent(new ModelConfigChangedEvent());
+        } catch (Exception e) {
+            log.warn("[ModelsConfig] 配置变更事件发布失败: {}", e.getMessage());
+        }
     }
 
             /**
@@ -60,6 +77,7 @@ public  class ModelsConfigBeanHolder  {
         if (modelsConfigBeanMapper.install(data) <= 0){
             return Result.failed(false,"增加失败");
         }
+        publishConfigChanged();
         return Result.succeed(true,"增加成功"); 
     }
 
@@ -79,6 +97,7 @@ public  class ModelsConfigBeanHolder  {
         if (modelsConfigBeanMapper.delete(data) <= 0){
             return Result.failed(false,"删除失败");
         }
+        publishConfigChanged();
         return Result.succeed(true,"删除成功"); 
     }
 
@@ -112,6 +131,7 @@ public  class ModelsConfigBeanHolder  {
         if (modelsConfigBeanMapper.update(data, where) <= 0){
             return Result.failed(false,"修改失败");
         }
+        publishConfigChanged();
         return Result.succeed(true,"修改成功");
     }
 
