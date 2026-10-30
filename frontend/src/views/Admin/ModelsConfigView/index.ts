@@ -56,6 +56,8 @@ export function useIndex() {
           state.tableData = []
           state.pagination.total = 0
         }
+      } else {
+        ElMessage.error('获取列表失败')
       }
     } catch (err) {
       debug.error('获取模型配置列表失败', err)
@@ -99,21 +101,30 @@ export function useIndex() {
     }
   }
 
-  const showDelete = (row: any) => {
-    ElMessageBox.confirm('您确定要删除该模型配置吗？', '提示', {
-      confirmButtonText: '确定',
-      cancelButtonText: '取消',
-      type: 'warning',
-    }).then(async () => {
+  const showDelete = async (row: any) => {
+    try {
+      await ElMessageBox.confirm('您确定要删除该模型配置吗？', '提示', {
+        confirmButtonText: '确定',
+        cancelButtonText: '取消',
+        type: 'warning',
+      })
+    } catch {
+      // 取消 / 关闭确认框：直接返回，避免 .then 链产生未处理拒绝
+      return
+    }
+    try {
       const reqdata = { data: { iid: row.iid } }
       const { data: res } = await modelsConfigApi.delete(reqdata)
       if (res.resp_code == 0) {
         ElMessage.success('删除成功')
         getDataList()
+      } else {
+        ElMessage.error('删除失败')
       }
-    }).catch(() => {
-      // 用户取消
-    })
+    } catch (err) {
+      debug.error('删除模型配置失败', err)
+      ElMessage.error('删除失败，请稍后重试')
+    }
   }
 
   const onSave = () => {
@@ -146,11 +157,12 @@ export function useIndex() {
           if (state.params.type === 'add') {
             const reqdata = { data: state.params.form }
             const { data: res } = await modelsConfigApi.create(reqdata)
-            loading.close()
             if (res.resp_code == 0) {
               state.params.dialogVisible = false
               getDataList()
               ElMessage.success('新建成功')
+            } else {
+              ElMessage.error('新建失败')
             }
           } else {
             const reqdata = {
@@ -158,14 +170,18 @@ export function useIndex() {
               where: { iid: state.params.form.iid },
             }
             const { data: res } = await modelsConfigApi.update(reqdata)
-            loading.close()
             if (res.resp_code == 0) {
               state.params.dialogVisible = false
               getDataList()
               ElMessage.success('保存成功')
+            } else {
+              ElMessage.error('保存失败')
             }
           }
-        } catch {
+        } catch (err) {
+          debug.error('保存模型配置失败', err)
+          ElMessage.error('保存失败，请稍后重试')
+        } finally {
           loading.close()
         }
       } else {
