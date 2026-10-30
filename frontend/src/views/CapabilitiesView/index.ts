@@ -4,7 +4,8 @@ import { isConfirmCancelled } from '@/utils/confirm'
 import { safeJsonParse } from '@/utils/json'
 import { safeOpenUrl } from '@/utils/url'
 import { pageDescriptions } from '@/data/platform'
-import { ref, computed, nextTick } from 'vue'
+import { ref, computed, nextTick, onMounted, reactive } from 'vue'
+import { ElLoading, ElMessage, ElMessageBox } from 'element-plus'
 import { tagsApi } from '@/api/tags'
 import { useTagBinding } from '@/composables/useTagBinding'
 import { capabilitiesMngApi } from '@/api/capabilitiesMng'
@@ -272,6 +273,8 @@ export function useIndex() {
       if (res.resp_code == 0) {
         ElMessage.success('删除成功')
         getDataList()
+      } else {
+        ElMessage.error(res.resp_msg || '删除失败')
       }
     } catch (error) {
       /*
@@ -442,18 +445,19 @@ export function useIndex() {
         safeOpenUrl(url)
       } catch (err) {
         console.error('获取单点登录跳转地址失败:', err)
+        ElMessage.error('获取跳转地址失败，请重试')
       } finally {
         loading.close()
       }
       return
     }
 
-    // 无需单点登录：保持原来的跳转逻辑
+    // 无需单点登录：同样走安全跳转，拦截 javascript:/data: 等危险协议
     const url = item.difyUrl
     if (!url) {
       return
     }
-    window.open(url, '_blank', 'noopener,noreferrer')
+    safeOpenUrl(url)
   }
 
   const resetForm = (formEl: FormInstance | undefined) => {
