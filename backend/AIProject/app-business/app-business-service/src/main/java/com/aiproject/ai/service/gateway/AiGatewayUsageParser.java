@@ -22,36 +22,92 @@ public class AiGatewayUsageParser {
     private String messageId;
     private String errorMessage;
 
-    /** 处理一行 SSE 文本（非 data 行会被忽略） */
-    public void acceptSseLine(String line) {
+    /**
+     * 处理一行 SSE 文本（非 data 行会被忽略）。
+     *
+     * @return 这一行是否携带了回答正文——用于把「首 token 延迟」算在真正的正文上，
+     *         而不是上游先发的心跳、role 帧或 usage 帧
+     */
+    public boolean acceptSseLine(String line) {
         if (line == null) {
-            return;
+            return false;
         }
         String text = line.trim();
         if (!text.startsWith("data:")) {
-            return;
+            return false;
         }
         String payload = text.substring(5).trim();
         if (payload.isEmpty() || "[DONE]".equals(payload)) {
-            return;
+            return false;
         }
-        acceptJson(payload);
+        JsonNode root = parse(payload);
+        if (root == null) {
+            return false;
+        }
+        boolean carriesAnswer = carriesAnswer(root);
+        applyRoot(root);
+        return carriesAnswer;
     }
 
     /** 处理一个完整的 JSON 响应体（阻塞模式，或 SSE 的 data 行） */
     public void acceptJson(String json) {
+        JsonNode root = parse(json);
+        if (root != null) {
+            applyRoot(root);
+        }
+    }
+
+    private static JsonNode parse(String json) {
         if (json == null || json.trim().isEmpty()) {
-            return;
+            return null;
         }
         try {
             JsonNode root = MAPPER.readTree(json);
-            if (root == null || !root.isObject()) {
-                return;
-            }
-            applyRoot(root);
+            return root != null && root.isObject() ? root : null;
         } catch (Exception ignored) {
             // 非 JSON / 截断的 SSE 行：忽略
+            return null;
         }
+    }
+
+    /**
+     * 判断一个流式事件是否带正文。
+     * <p>OpenAI 协议看 {@code choices[0].delta.content}（DeepSeek 思考流还有
+     * {@code reasoning_content}，同样属于模型已产出的 token）；Dify 看
+     * {@code event=message/agent_message} 的 {@code answer}。</p>
+     */
+    private static boolean carriesAnswer(JsonNode root) {
+        JsonNode choices = root.path("choices");
+        if (choices.isArray() && choices.size() > 0) {
+            JsonNode choice = choices.get(0);
+            JsonNode delta = choice.path("delta");
+            if (delta.isObject() && hasContent(delta.get("content"))) {
+                return true;
+            }
+            if (delta.isObject() && hasContent(delta.get("reasoning_content"))) {
+                return true;
+            }
+            JsonNode message = choice.path("message");
+            if (message.isObject() && hasContent(message.get("content"))) {
+                return true;
+            }
+        }
+        String event = text(root, "event");
+        if ("message".equals(event) || "agent_message".equals(event)) {
+            return hasContent(root.get("answer"));
+        }
+        return false;
+    }
+
+    private static boolean hasContent(JsonNode node) {
+        if (node == null || node.isNull()) {
+            return false;
+        }
+        if (node.isArray()) {
+            return node.size() > 0;
+        }
+        String value = node.asText();
+        return value != null && !value.isEmpty();
     }
 
     private void applyRoot(JsonNode root) {

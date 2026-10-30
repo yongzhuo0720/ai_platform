@@ -121,9 +121,9 @@ public class AiGatewayService {
     private final ThreadLocal<String> currentRequestId = new ThreadLocal<String>();
 
     /**
-     * 首块流式响应写出的时刻。与 requestId 同一套 ThreadLocal 模式：
-     * proxy() 置空、streamSse 首写时赋值、record() 读取后随审计落库（TTFT）。
-     * 非流式请求没有「首块」概念，保持 null。
+     * 首个「带正文的 SSE 事件」到达的时刻。与 requestId 同一套 ThreadLocal 模式：
+     * proxy() 置空、streamSse 嗅探到正文时赋值、record() 读取后随审计落库（TTFT）。
+     * 非流式请求没有「首 token」概念，保持 null；上游全程无正文（如报错）同样为 null。
      */
     private final ThreadLocal<Long> firstTokenAt = new ThreadLocal<Long>();
 
@@ -829,6 +829,9 @@ public class AiGatewayService {
     /**
      * SSE 逐块透传：每读到一块立即写给浏览器，同时按行嗅探 usage。
      * 注意不能按行读上游再写，否则会改变分包与到达时序，破坏「逐字输出」。
+     *
+     * <p>首 token 延迟按「第一行带正文的 SSE」计时：上游常见先发 role 帧、
+     * usage 帧或心跳注释，按首字节计时会把准备时间算成模型延迟。</p>
      */
     private void streamSse(InputStream in, OutputStream out, AiGatewayUsageParser parser)
             throws IOException {
@@ -836,15 +839,12 @@ public class AiGatewayService {
         ByteArrayOutputStream line = new ByteArrayOutputStream(256);
         int read;
         while ((read = in.read(buffer)) != -1) {
-            if (firstTokenAt.get() == null) {
-                firstTokenAt.set(System.currentTimeMillis());
-            }
             out.write(buffer, 0, read);
             out.flush();
             for (int i = 0; i < read; i++) {
                 byte value = buffer[i];
                 if (value == '\n') {
-                    parser.acceptSseLine(new String(line.toByteArray(), StandardCharsets.UTF_8));
+                    markFirstTokenIfAnswer(parser, new String(line.toByteArray(), StandardCharsets.UTF_8));
                     line.reset();
                 } else if (value != '\r' && line.size() < MAX_SSE_LINE) {
                     line.write(value);
@@ -852,7 +852,14 @@ public class AiGatewayService {
             }
         }
         if (line.size() > 0) {
-            parser.acceptSseLine(new String(line.toByteArray(), StandardCharsets.UTF_8));
+            markFirstTokenIfAnswer(parser, new String(line.toByteArray(), StandardCharsets.UTF_8));
+        }
+    }
+
+    private void markFirstTokenIfAnswer(AiGatewayUsageParser parser, String sseLine) {
+        boolean carriesAnswer = parser.acceptSseLine(sseLine);
+        if (carriesAnswer && firstTokenAt.get() == null) {
+            firstTokenAt.set(System.currentTimeMillis());
         }
     }
 
