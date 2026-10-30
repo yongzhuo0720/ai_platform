@@ -29,6 +29,31 @@ export interface RequestConfig {
 const DEFAULT_REQUEST_TIMEOUT_MS = 30000;
 
 /**
+ * 把 HTTP 错误响应转成可直接展示的文案。
+ *
+ * 网关错误体是 `{code,message,status,requestId}`，配额不足等提示都在 message 里。
+ * 修复前直接把整段响应文本拼进异常，用户看到的是「请求失败 (429): {"code":...}」，
+ * 既难读，也让后续错误分类只能靠状态码猜。
+ */
+export const readErrorMessage = async (
+  response: Response,
+  action = '请求失败'
+): Promise<string> => {
+  const text = await response.text().catch(() => '');
+  try {
+    const parsed = JSON.parse(text);
+    const message = parsed && typeof parsed.message === 'string' ? parsed.message.trim() : '';
+    if (message) {
+      return message;
+    }
+  } catch {
+    // 非 JSON 响应体（如网关 502 HTML），使用原文
+  }
+  const detail = text.trim() || response.statusText;
+  return detail ? `${action} (${response.status}): ${detail}` : `${action} (${response.status})`;
+};
+
+/**
  * 获取默认请求头（包含 Authorization）
  */
 export const getDefaultHeaders = (isJson = true): Record<string, string> => {
@@ -97,9 +122,9 @@ export const uploadFileToDify = async (file: File): Promise<DifyFileUploadRespon
   debug.log('[文件上传] 响应状态:', response.status, response.statusText);
 
   if (!response.ok) {
-    const errorText = await response.text();
-    console.error('[文件上传] 上传失败:', errorText);
-    throw new Error(`文件上传失败 (${response.status}): ${errorText}`);
+    const errorMessage = await readErrorMessage(response, '文件上传失败');
+    console.error('[文件上传] 上传失败:', errorMessage);
+    throw new Error(errorMessage);
   }
 
   const result = await response.json();
@@ -213,14 +238,13 @@ export const request = async <T>(
 
   // 统一错误处理
   if (!response.ok) {
-    const errorMessage = await response.text().catch(() => '未知错误');
     if (response.status === 401 || response.status === 403) {
       // 这里只抛明确错误，不做自动跳转：
       // request() 被聊天、知识库等多处复用，贸然 redirect 会打断正常流程，
       // 由调用方决定是提示还是跳登录页（axios.js 那边已经有 401 跳转逻辑）。
       throw new Error(`登录状态已失效，请重新登录 (${response.status})`);
     }
-    throw new Error(`请求失败 (${response.status}): ${errorMessage || response.statusText}`);
+    throw new Error(await readErrorMessage(response));
   }
 
   // 处理空响应（补括号：原写法 || 与 && 混用，语义虽碰巧正确但极易被误改）
@@ -500,8 +524,7 @@ export const streamingRequest = (
     })
     .then(async (response) => {
       if (!response.ok) {
-        const errorText = await response.text();
-        throw new Error(`请求失败 (${response.status}): ${errorText}`);
+        throw new Error(await readErrorMessage(response));
       }
 
       const reader = response.body?.getReader();
