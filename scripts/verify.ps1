@@ -1,4 +1,4 @@
-# 本地一键验证脚本
+﻿# 本地一键验证脚本
 #
 # 作用：在提交前把 CI 会查的东西全跑一遍。
 # 后端目前进不了 GitHub Actions（私有框架 com.heneng.hnsp / blxt.qjava
@@ -77,6 +77,16 @@ Step "流式回归检查" {
     try {
         npm run check:streaming
         if ($LASTEXITCODE -ne 0) { throw "streaming 检查退出码 $LASTEXITCODE" }
+    } finally {
+        Pop-Location
+    }
+}
+
+Step "Markdown / XSS 消毒回归检查" {
+    Push-Location "$root/frontend"
+    try {
+        npm run check:markdown
+        if ($LASTEXITCODE -ne 0) { throw "markdown 检查退出码 $LASTEXITCODE" }
     } finally {
         Pop-Location
     }
