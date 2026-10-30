@@ -9,9 +9,13 @@ import './styles/element-override.css'
 
 import { useThemeStore } from './stores/theme'
 import { installCodeCopy } from './utils/markdown'
+import { installPreloadRecovery } from './utils/preloadRecovery'
 
 // 代码块复制按钮的点击委托：全局一次，聊天页与知识库聊天的 v-html 均生效
 installCodeCopy()
+
+// 发布新版本后，旧页面里懒加载路由指向的旧 chunk 会 404；重载一次换新清单
+installPreloadRecovery()
 import { ensureLoaded } from './stores/difyConfig'
 
 // 只注册模板里没有直接 import 的图标：
