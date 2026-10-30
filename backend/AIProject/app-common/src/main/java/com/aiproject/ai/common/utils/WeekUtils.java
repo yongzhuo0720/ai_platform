@@ -65,13 +65,4 @@ public class WeekUtils {
         LocalDate weekEnd = LocalDate.now().with(DayOfWeek.SUNDAY);
         return !date.isBefore(weekStart) && !date.isAfter(weekEnd);
     }
-    
-    public static void main(String[] args) {
-        System.out.println("本周范围: " + getCurrentWeekRange());
-        System.out.println("上周范围: " + getLastWeekRange());
-        System.out.println("下周范围: " + getNextWeekRange());
-        
-        LocalDate today = LocalDate.now();
-        System.out.println("今天是否在本周: " + isInCurrentWeek(today));
-    }
 }
