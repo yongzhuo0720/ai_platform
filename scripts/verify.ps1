@@ -11,7 +11,7 @@
 #
 # 需要预先装好：
 #   - JDK 8（Java 21 与项目 Lombok 版本不兼容，README 已说明）
-#   - Node.js 18+
+#   - Node.js 22+（单测使用的 jsdom 30 官方要求 ≥22.22）
 #   - 仓库自带的离线 Maven 依赖 hd_redis/ai-maven/pro
 
 param(
@@ -67,6 +67,16 @@ Step "前端类型检查" {
     try {
         npm run typecheck
         if ($LASTEXITCODE -ne 0) { throw "typecheck 退出码 $LASTEXITCODE" }
+    } finally {
+        Pop-Location
+    }
+}
+
+Step "前端单元测试（Vitest）" {
+    Push-Location "$root/frontend"
+    try {
+        npm run test
+        if ($LASTEXITCODE -ne 0) { throw "前端单测退出码 $LASTEXITCODE" }
     } finally {
         Pop-Location
     }
