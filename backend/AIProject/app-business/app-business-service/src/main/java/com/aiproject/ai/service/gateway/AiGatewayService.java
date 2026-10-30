@@ -517,6 +517,9 @@ public class AiGatewayService {
         String clientIp = clientIp(request);
         HttpURLConnection conn = null;
         InputStream upstream = null;
+        // 提升到 try 外：客户端中途断开时 catch 里要用它记审计，
+        // 记录「上游当时到底回了什么状态」，而不是笼统的 502
+        Integer upstreamStatus = null;
 
         try {
             String target = config.getApiUrl() + "/" + upstreamEndpoint;
@@ -561,7 +564,7 @@ public class AiGatewayService {
                 relayRequestBody(request, conn, method, module, userId);
             }
 
-            int upstreamStatus = conn.getResponseCode();
+            upstreamStatus = conn.getResponseCode();
             String upstreamType = conn.getContentType();
             upstream = upstreamStatus >= 400 ? conn.getErrorStream() : conn.getInputStream();
             if (upstream == null) {
@@ -635,7 +638,8 @@ public class AiGatewayService {
                         userId, module, auditEndpoint, aborted, message);
             }
             record(userId, module, auditEndpoint, method, status,
-                    HttpServletResponse.SC_BAD_GATEWAY, null, start, error, clientIp);
+                    aborted ? upstreamStatus : HttpServletResponse.SC_BAD_GATEWAY,
+                    null, start, error, clientIp);
         } finally {
             closeQuietly(upstream);
             if (conn != null) {
