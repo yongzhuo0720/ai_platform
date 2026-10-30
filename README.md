@@ -183,7 +183,7 @@ cd frontend
 npm run typecheck      # TypeScript 类型检查
 npm run check:icons    # 图标注册检查（模板图标必须 import 或全局注册）
 npm run test            # 单元测试（Vitest），9 个文件 / 147 项
-npm run test:component  # 组件测试（真实渲染），9 个文件 / 73 项
+npm run test:component  # 组件测试（真实渲染），10 个文件 / 77 项
 npm run check:streaming # 流式超时/取消回归，14 项
 npm run check:markdown  # Markdown 与 XSS 消毒回归，10 项
 npm run build            # 生产构建
@@ -200,7 +200,7 @@ npm run check:bundle     # 首屏 gzip 体积预算（需先 build）
 | 前端 TypeScript 检查 | 通过 |
 | 前端图标注册检查 | 通过（56 个在用图标全部可解析） |
 | 前端单元测试 | 9 个文件 / **147 项通过** |
-| 前端组件测试 | 9 个文件 / **73 项通过**（@vue/test-utils 真实渲染 ChatComposer / ChatMessageList / ChatSidebar / AiGatewayView / UserView / RoleView / UnitView / ModelsConfigView / DifyConfigView） |
+| 前端组件测试 | 10 个文件 / **77 项通过**（@vue/test-utils 真实渲染 ChatComposer / ChatMessageList / ChatSidebar / AiGatewayView / UserView / RoleView / UnitView / ModelsConfigView / DifyConfigView / LogView） |
 | 前端流式回归 | 14 项通过 |
 | 前端 Markdown / XSS 回归 | 10 项通过（**2026-10-29 前该脚本一直是失败的，见文档**） |
 | 前端生产构建 | 通过（element-plus 按路由分包，入口 gzip 152.5 kB，已无 >500 kB 分包警告） |
@@ -228,7 +228,7 @@ npm run check:bundle     # 首屏 gzip 体积预算（需先 build）
    旧分块因向量维度不一致会被跳过（此前是静默跳过），现在检索结果返回 `skipped`
    与 `warning`，检索页直接提示重新上传，并分开统计「维度不一致 / 向量数据损坏」。
 6. **组件级测试**：引入 `@vue/test-utils` 与独立的 `vitest.component.config.ts`，
-   直接渲染聊天页三个核心组件、AI 调用治理后台、用户管理、角色管理、部门管理、模型配置与 Dify 配置后台（共 73 项）：
+   直接渲染聊天页三个核心组件、AI 调用治理后台、用户/角色/部门管理、模型配置、Dify 配置与调用日志后台（共 77 项）：
    输入区的 Enter / 输入法组词、发送与停止、模型菜单、知识库切换、附件移除；消息区的
    Markdown 渲染、思考块折叠、引用来源、历史分页、点赞反馈与重新生成；侧栏的 Tab 切换、
    置顶/今天分组、置顶/重命名/删除、分享空会话拦截、会话分页、助手菜单与搜索、移动端
