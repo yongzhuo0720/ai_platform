@@ -59,6 +59,9 @@ import KnowledgeBaseSquareView from '@/views/KnowledgeBaseSquareView/index.vue'
 import KbChatPanel from '@/components/KbChatPanel/index.vue'
 
 const {
+  isLoading,
+  error,
+  fetchKnowledgeBases,
   knowledgeFileUnavailable,
   allTags,
   filteredKnowledgeBases,
@@ -1732,6 +1735,19 @@ function clearChatMessages() {
 
     <!-- Main Content Area -->
     <main class="kb-main">
+      <div v-if="error && !knowledgeFileUnavailable" class="kb-config-alert kb-error-alert">
+        <div class="kb-config-alert-title">{{ error }}</div>
+        <div class="kb-config-alert-hint">
+          <button
+            type="button"
+            class="kb-error-retry"
+            :disabled="isLoading"
+            @click="fetchKnowledgeBases"
+          >
+            {{ isLoading ? '正在重试...' : '重试' }}
+          </button>
+        </div>
+      </div>
       <div v-if="knowledgeFileUnavailable" class="kb-config-alert">
         <div class="kb-config-alert-title">知识库文件模块未配置</div>
         <div class="kb-config-alert-hint">

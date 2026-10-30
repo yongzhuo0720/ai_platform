@@ -318,13 +318,22 @@ describe("KnowledgeBaseView", () => {
     expect((wrapper.vm as any).knowledgeFileUnavailable).toBe(true);
   });
 
-  it("个人列表加载失败时给出错误状态，共享与订阅列表继续可用", async () => {
+  it("个人列表加载失败时给出错误横幅，重试后恢复列表", async () => {
     getDatasets.mockRejectedValueOnce(new Error("network"));
     const wrapper = mountView();
     await flushPromises();
 
     expect(groupNames(wrapper, "个人知识库")).toEqual([]);
     expect(groupNames(wrapper, "共享知识库")).toEqual(["共享知识库", "已加入知识库"]);
+    const alert = wrapper.find(".kb-error-alert");
+    expect(alert.exists()).toBe(true);
+    expect(alert.text()).toContain("无法从服务器获取知识库数据");
+
+    await alert.find(".kb-error-retry").trigger("click");
+    await flushPromises();
+    expect(getDatasets).toHaveBeenCalledTimes(4);
+    expect(groupNames(wrapper, "个人知识库")).toEqual(["我的知识库"]);
+    expect(wrapper.find(".kb-error-alert").exists()).toBe(false);
   });
 
   it("新建弹窗：空名称被表单校验拦截；补全后按 Dify → 权限记录顺序创建", async () => {
