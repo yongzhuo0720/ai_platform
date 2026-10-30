@@ -233,6 +233,15 @@ export const streamDirectChat = (
       complete()
       return
     }
+    /*
+     * fetch 在网络不可达、DNS 失败或跨域被拦截时统一抛 TypeError，
+     * 消息是英文的 "Failed to fetch"。直连模式会把它当成回答正文显示，
+     * 中文界面里既看不懂也提供不了任何处理方向，这里换成可操作的提示。
+     */
+    if (err instanceof TypeError) {
+      fail(new Error('网络连接异常：无法连接 AI 网关，请检查网络或确认后端服务已启动'))
+      return
+    }
     fail(err instanceof Error ? err : new Error(String(err)))
   })
 
