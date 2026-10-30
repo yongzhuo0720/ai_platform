@@ -22,6 +22,7 @@ import {
   maxFileUploadCount,
   modelOptions,
   normalizeUserInputFields,
+  requiredFileInputFields,
   syncModelBoundInput,
 } from "../chatComposerState";
 
@@ -265,6 +266,46 @@ describe("chatComposerState", () => {
       expect(composerInputFields.value.map((f) => f.variable)).toEqual([
         "topic",
       ]);
+    });
+
+    it("输入区不把 file-upload 变量渲染成文本框，但仍记录为必填文件项", () => {
+      baseInputFields.value = [
+        {
+          type: "file-upload",
+          variable: "input_file",
+          label: "附件",
+          required: true,
+          defaultValue: "",
+        },
+        {
+          type: "text-input",
+          variable: "topic",
+          label: "主题",
+          required: false,
+          defaultValue: "",
+        },
+      ];
+
+      expect(composerInputFields.value.map((f) => f.variable)).toEqual(["topic"]);
+      expect(requiredFileInputFields.value.map((f) => f.variable)).toEqual([
+        "input_file",
+      ]);
+    });
+
+    it("直连模式不校验文件变量", () => {
+      baseInputFields.value = [
+        {
+          type: "file-upload",
+          variable: "input_file",
+          label: "附件",
+          required: true,
+          defaultValue: "",
+        },
+      ];
+      defaultModels.value = [{ ...DIRECT_MODEL }];
+      activeModelId.value = "direct-5";
+
+      expect(requiredFileInputFields.value).toEqual([]);
     });
 
     it("直连模式隐藏 Dify 应用参数表单（这些变量不会随直连请求发送）", () => {

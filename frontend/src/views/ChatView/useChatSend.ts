@@ -27,6 +27,7 @@ import {
   composerInputFields,
   fileInputVariables,
   getFileInputTargets,
+  requiredFileInputFields,
 } from "./chatComposerState";
 import { getCurrentUser } from "./chatStorage";
 import { chatRuntime } from "./chatRuntime";
@@ -290,6 +291,12 @@ export const submitMessage = async () => {
 
   if (missingFields.length > 0) {
     ElMessage.warning(`请先填写：${missingFields.map((field) => field.label).join("、")}`);
+    return;
+  }
+
+  const missingFiles = requiredFileInputFields.value;
+  if (missingFiles.length > 0 && attachedFiles.value.length === 0) {
+    ElMessage.warning(`请先上传：${missingFiles.map((field) => field.label).join("、")}`);
     return;
   }
 

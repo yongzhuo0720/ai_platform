@@ -182,7 +182,7 @@ mvn -s $settings "-Dmaven.repo.local=$repo" test
 cd frontend
 npm run typecheck      # TypeScript 类型检查
 npm run check:icons    # 图标注册检查（模板图标必须 import 或全局注册）
-npm run test            # 单元测试（Vitest），14 个文件 / 196 项
+npm run test            # 单元测试（Vitest），14 个文件 / 200 项
 npm run test:component  # 组件测试（真实渲染），23 个文件 / 184 项
 npm run test:e2e        # 浏览器冒烟（真实 Chromium + 接口 mock），8 项
 npm run check:streaming # 流式超时/取消回归，14 项
@@ -200,7 +200,7 @@ npm run check:bundle     # 首屏 gzip 体积预算（需先 build）
 | 后端单元测试 | **206 项通过，0 失败** |
 | 前端 TypeScript 检查 | 通过 |
 | 前端图标注册检查 | 通过（56 个在用图标全部可解析） |
-| 前端单元测试 | 14 个文件 / **196 项通过** |
+| 前端单元测试 | 14 个文件 / **200 项通过** |
 | 前端组件测试 | 23 个文件 / **184 项通过**（@vue/test-utils 真实渲染 LoginView / ChatComposer / ChatMessageList / ChatSidebar / KbSearchView / MyUsageView / ShareView / AiGatewayView / UserView / RoleView / UnitView / ModelsConfigView / DifyConfigView / LogView / KnowledgeBaseMngView / ModelsView / ApplicationsView / CapabilitiesView / DatasetView / KnowledgeBaseSquareView / KnowledgeBaseView / PreviewView / NotFoundView） |
 | 浏览器冒烟（Playwright） | **8 项通过**（真实 Chromium：登录守卫与登录跳转、聊天页启动无异常、直连模型 SSE 流式回答、直连图片附件带压缩 dataURL、直连模式隐藏 Dify 应用参数、配额 429 展示服务端原因、知识库模块未配置引导、404 兜底；接口层由 `page.route` 拦截） |
 | 前端流式回归 | 14 项通过 |
@@ -304,6 +304,13 @@ npm run check:bundle     # 首屏 gzip 体积预算（需先 build）
    是原文直接发送。现在两处统一：点击建议问题原文填入并立即发送，同时删掉多余的
    `handleQuickAction`。单测断言原文直发（变异验证：加回前缀即失败），浏览器冒烟
    点击「用一句话介绍你自己」后断言用户消息与请求体都是原文、且不含「请帮我」。
+16. **工作流文件变量不再渲染成文本框**：Dify 工作流的 `file-upload` 输入变量此前
+   落到通用文本框分支，用户看到一个莫名的输入框；如果该变量必填，还会因附件不会
+   写入 `userInput` 而永远无法发送。现在这类变量不渲染输入框、不按文本校验，改为
+   「必填文件变量 + 未附件」时提示「请先上传：xxx」；已附件时文件照旧注入所有检测
+   到的文件变量。新增 4 项单测（表单排除、直连不校验、未附件拦截、已附件放行并
+   断言注入内容），两处变异验证；浏览器冒烟的应用参数 mock 同时加入必填文件变量，
+   断言它不出现在表单里。
 
 2026-10-30 后端改进：并发请求的配额预扣
 

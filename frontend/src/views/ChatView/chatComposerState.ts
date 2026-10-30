@@ -204,7 +204,21 @@ export const composerInputFields = computed<NormalizedUserInputField[]>(() => {
     return [];
   }
   return chatInputFields.value.filter(
-    (field) => !isModelNameVariable(field.variable) && !isPromptVariable(field.variable)
+    (field) =>
+      !isModelNameVariable(field.variable) &&
+      !isPromptVariable(field.variable) &&
+      // 文件变量由附件按钮负责；渲染成文本框既无意义，必填时还会永远拦住发送
+      field.type !== "file-upload"
+  );
+});
+
+/** Dify 工作流里必填的文件变量：是否满足看附件区，而不是输入框 */
+export const requiredFileInputFields = computed<NormalizedUserInputField[]>(() => {
+  if (isDirectMode.value) {
+    return [];
+  }
+  return chatInputFields.value.filter(
+    (field) => field.type === "file-upload" && field.required
   );
 });
 
