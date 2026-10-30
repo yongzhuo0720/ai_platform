@@ -39,6 +39,14 @@ public class KbChunkBean extends DbEntityBase {
     String embedding;
 
     @SqlColumn()
+    @ApiModelProperty("生成该向量的模型名（用于识别切换模型后的旧分块）")
+    String embeddingModel;
+
+    @SqlColumn()
+    @ApiModelProperty("向量维度")
+    Integer embeddingDim;
+
+    @SqlColumn()
     @ApiModelProperty("分块字符数")
     Integer tokenCount;
 }
