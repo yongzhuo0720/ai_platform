@@ -25,6 +25,15 @@ public class AiGatewayProperties {
     /** 默认每日 Token 配额，<=0 表示不限制 */
     private long defaultDailyTokenQuota = 200000;
 
+    /**
+     * 每次请求开始前预扣的 Token 数，<=0 表示关闭预扣（退回「完成后才计费」）。
+     * <p>
+     * 并发请求在「检查额度」与「完成后扣额度」之间存在窗口，先查后加会让多个
+     * 请求同时通过检查、完成后一起超额。预扣把窗口缩小到一次 Redis 自增：
+     * 请求结束再按上游返回的真实 usage 结算（多退少补），失败或中断则全额释放。
+     */
+    private long quotaReserveTokens = 1500;
+
     /** 连接 Dify 超时（毫秒） */
     private int connectTimeoutMs = 10000;
 

@@ -31,7 +31,11 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -51,6 +55,9 @@ class AiGatewayServiceTest {
         service.kbRagHolder = mock(KbRagHolder.class);
         service.modelGatewayResolver = mock(ModelGatewayResolver.class);
         service.priceResolver = mock(ModelPriceResolver.class);
+        // 默认不预扣（等同配额不限）；需要验证预扣行为的用例自行覆盖
+        when(service.guard.reserve(anyString(), anyString()))
+                .thenReturn(AiGatewayGuard.Reservation.none());
     }
 
     @AfterEach
@@ -137,6 +144,83 @@ class AiGatewayServiceTest {
 
         assertEquals(413, proxy("chat", request, "u1").getStatus());
         assertEquals(0, upstream.calls.get());
+    }
+
+    /**
+     * 预扣时就发现额度不够：必须在调用上游之前拒绝。
+     * 否则「检查通过后并发压满额度」的请求照样打到上游，产生实际费用却永远记不上账。
+     */
+    @Test
+    void blockedReservationRejectsWith429BeforeCallingUpstream() throws Exception {
+        when(service.guard.reserve("u1", "chat")).thenReturn(
+                AiGatewayGuard.Reservation.blocked("今日 AI 额度已用完（已用 1500 / 1500 tokens）"));
+        MockHttpServletRequest request = request("POST", "chat", "chat-messages");
+        request.setContentType("application/json");
+        request.setContent("{\"query\":\"hi\"}".getBytes(StandardCharsets.UTF_8));
+
+        MockHttpServletResponse response = proxy("chat", request, "u1");
+
+        assertEquals(429, response.getStatus());
+        assertTrue(response.getContentAsString(StandardCharsets.UTF_8).contains("quota_exceeded"));
+        assertEquals(0, upstream.calls.get(), "额度不足时不能调用上游");
+        verify(service.guard, never()).settle(any(AiGatewayGuard.Reservation.class), anyLong());
+        verify(service.guard, never()).addTokens(anyString(), anyString(), anyLong());
+    }
+
+    /** 预扣成功后按真实 usage 结算：只调 settle，不能再走 addTokens 重复累计 */
+    @Test
+    void successfulCallSettlesReservationWithActualUsage() {
+        AiGatewayGuard.Reservation reservation =
+                AiGatewayGuard.Reservation.active("u1", null, 1500L);
+        when(service.guard.reserve("u1", "chat")).thenReturn(reservation);
+        upstream.responseContentType = "text/event-stream";
+        upstream.responseBody = "data: {\"choices\":[{\"delta\":{\"content\":\"hi\"}}]}\n\n"
+                + "data: {\"usage\":{\"total_tokens\":321}}\n\ndata: [DONE]\n\n";
+        MockHttpServletRequest request = request("POST", "chat", "chat-messages");
+        request.setContentType("application/json");
+        request.setContent("{\"query\":\"hi\"}".getBytes(StandardCharsets.UTF_8));
+
+        assertEquals(200, proxy("chat", request, "u1").getStatus());
+
+        verify(service.guard).settle(reservation, 321L);
+        verify(service.guard, never()).addTokens(anyString(), anyString(), anyLong());
+    }
+
+    /** 上游失败（含 200 里塞 error 的模型）不计费：预扣全额释放，用户没拿到结果就不占额度 */
+    @Test
+    void failedUpstreamReleasesReservation() {
+        AiGatewayGuard.Reservation reservation =
+                AiGatewayGuard.Reservation.active("u1", null, 1500L);
+        when(service.guard.reserve("u1", "chat")).thenReturn(reservation);
+        upstream.responseBody = "{\"error\":{\"message\":\"upstream boom\",\"code\":\"server_error\"}}";
+        MockHttpServletRequest request = request("POST", "chat", "chat-messages");
+        request.setContentType("application/json");
+        request.setContent("{\"query\":\"hi\"}".getBytes(StandardCharsets.UTF_8));
+
+        assertEquals(200, proxy("chat", request, "u1").getStatus());
+
+        verify(service.guard).settle(reservation, 0L);
+        verify(service.guard, never()).addTokens(anyString(), anyString(), anyLong());
+    }
+
+    /** 直连模型：请求体不合法时不预扣，避免用户为一次根本没发出去的请求占额度 */
+    @Test
+    void invalidModelRequestDoesNotReserveQuota() {
+        when(service.modelGatewayResolver.resolve(7L)).thenReturn(
+                new ModelGatewayResolver.ResolvedModel(upstream.baseUrl(), "test-key", "up-model", "demo"));
+        when(service.guard.check("u1", ModelGatewayResolver.MODULE_MODELS))
+                .thenReturn(AiGatewayGuard.Decision.allow());
+        MockHttpServletRequest request = new MockHttpServletRequest(
+                "POST", "/api/aiGateway/models/7/chat/completions");
+        request.setContentType("application/json");
+        request.setContent("{bad json".getBytes(StandardCharsets.UTF_8));
+
+        MockHttpServletResponse response = new MockHttpServletResponse();
+        service.proxy(ModelGatewayResolver.MODULE_MODELS, "u1", request, response);
+
+        assertEquals(400, response.getStatus());
+        assertEquals(0, upstream.calls.get());
+        verify(service.guard, never()).reserve(anyString(), anyString());
     }
 
     @ParameterizedTest
@@ -228,6 +312,9 @@ class AiGatewayServiceTest {
         when(service.configResolver.resolve("chat")).thenReturn(
                 new AiGatewayConfigResolver.ResolvedConfig(upstream.baseUrl(), "test-key"));
         when(service.guard.check("u1", "chat")).thenReturn(AiGatewayGuard.Decision.allow());
+        AiGatewayGuard.Reservation reservation =
+                AiGatewayGuard.Reservation.active("u1", null, 1500L);
+        when(service.guard.reserve("u1", "chat")).thenReturn(reservation);
 
         MockHttpServletRequest request = request("POST", "chat", "chat-messages");
         request.setContentType("application/json");
@@ -248,6 +335,7 @@ class AiGatewayServiceTest {
                 "浏览器断开后网关必须关闭上游连接，否则上游会继续生成并计费");
         assertTrue(upstream.streamedChunks.get() < AiUpstreamStub.SLOW_SSE_ITERATIONS,
                 "上游应在客户端断开后停止生成");
+        verify(service.guard).settle(reservation, 0L);
     }
 
     /** 响应体第一次写入就抛连接重置，等价于浏览器已经关掉连接 */
