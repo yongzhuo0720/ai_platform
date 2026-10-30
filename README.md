@@ -184,7 +184,7 @@ npm run typecheck      # TypeScript 类型检查
 npm run check:icons    # 图标注册检查（模板图标必须 import 或全局注册）
 npm run test            # 单元测试（Vitest），14 个文件 / 196 项
 npm run test:component  # 组件测试（真实渲染），23 个文件 / 184 项
-npm run test:e2e        # 浏览器冒烟（真实 Chromium + 接口 mock），7 项
+npm run test:e2e        # 浏览器冒烟（真实 Chromium + 接口 mock），8 项
 npm run check:streaming # 流式超时/取消回归，14 项
 npm run check:markdown  # Markdown 与 XSS 消毒回归，10 项
 npm run build            # 生产构建
@@ -202,7 +202,7 @@ npm run check:bundle     # 首屏 gzip 体积预算（需先 build）
 | 前端图标注册检查 | 通过（56 个在用图标全部可解析） |
 | 前端单元测试 | 14 个文件 / **196 项通过** |
 | 前端组件测试 | 23 个文件 / **184 项通过**（@vue/test-utils 真实渲染 LoginView / ChatComposer / ChatMessageList / ChatSidebar / KbSearchView / MyUsageView / ShareView / AiGatewayView / UserView / RoleView / UnitView / ModelsConfigView / DifyConfigView / LogView / KnowledgeBaseMngView / ModelsView / ApplicationsView / CapabilitiesView / DatasetView / KnowledgeBaseSquareView / KnowledgeBaseView / PreviewView / NotFoundView） |
-| 浏览器冒烟（Playwright） | **7 项通过**（真实 Chromium：登录守卫与登录跳转、聊天页启动无异常、直连模型 SSE 流式回答、直连图片附件带压缩 dataURL、配额 429 展示服务端原因、知识库模块未配置引导、404 兜底；接口层由 `page.route` 拦截） |
+| 浏览器冒烟（Playwright） | **8 项通过**（真实 Chromium：登录守卫与登录跳转、聊天页启动无异常、直连模型 SSE 流式回答、直连图片附件带压缩 dataURL、直连模式隐藏 Dify 应用参数、配额 429 展示服务端原因、知识库模块未配置引导、404 兜底；接口层由 `page.route` 拦截） |
 | 前端流式回归 | 14 项通过 |
 | 前端 Markdown / XSS 回归 | 10 项通过（**2026-10-29 前该脚本一直是失败的，见文档**） |
 | 前端生产构建 | 通过（element-plus 按路由分包，入口 gzip 152.5 kB，已无 >500 kB 分包警告） |
@@ -260,10 +260,10 @@ npm run check:bundle     # 首屏 gzip 体积预算（需先 build）
    （-51%），构建不再有 >500 kB 分包警告；体积预算同步从 470 kB 收紧到 260 kB，
    防止回退。
 8. **浏览器冒烟**（Playwright + 真实 Chromium）：组件测试跑在 jsdom 里，看不到
-   路由守卫、自动导入缺失、Teleport 菜单与真实 `fetch` 流式解析。新增 7 项浏览器
+   路由守卫、自动导入缺失、Teleport 菜单与真实 `fetch` 流式解析。新增 8 项浏览器
    用例覆盖登录守卫与登录跳转、聊天页启动无未捕获异常、直连模型 SSE 回答渲染、
-   附件图片在真实 Canvas 里压缩后随请求体发出、配额 429 时展示服务端原因、
-   知识库模块未配置引导与 404 兜底；接口层用
+   附件图片在真实 Canvas 里压缩后随请求体发出、直连模式隐藏 Dify 应用参数、
+   配额 429 时展示服务端原因、知识库模块未配置引导与 404 兜底；接口层用
    `page.route` 拦截，不依赖本机后端，已接入 CI（Chromium）。本地默认复用已安装
    的 Edge，无需额外下载浏览器。
 9. **HTTP 错误提示可读**：网关错误体是 `{code,message,status,requestId}`，
@@ -297,7 +297,8 @@ npm run check:bundle     # 首屏 gzip 体积预算（需先 build）
    `user_input_form`，直连模式下这些变量根本不会随请求发送，必填项却仍会拦截发送；
    空状态的应用建议也优先于通用开场问题。现在直连模式整组隐藏应用参数表单、
    不参与必填校验，建议问题按模式取源（直连固定用通用开场）。新增 3 项单测
-   （表单隐藏、建议取源、直连不校验必填），表单隐藏做了变异验证。
+   （表单隐藏、建议取源、直连不校验必填）与 1 项浏览器冒烟（Dify 通道下表单可见，
+   切到直连后表单消失、通用建议出现、未填必填项也能发出请求），表单隐藏做了变异验证。
 
 2026-10-30 后端改进：并发请求的配额预扣
 
