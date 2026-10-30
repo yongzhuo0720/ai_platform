@@ -52,23 +52,29 @@ export function useIndex() {
     load()
   })
 
+  // 快速切换区间时旧请求可能后到，用序号丢弃过期响应，避免旧数据覆盖新数据
+  let loadSeq = 0
+
   async function load() {
+    const seq = ++loadSeq
     state.loading = true
     try {
       const { data: res } = await aiGatewayAdminApi.getMyUsage({
         startDate: range.value[0],
         endDate: range.value[1],
       })
+      if (seq !== loadSeq) return
       if (res.resp_code === 0) {
         state.usage = res.datas
       } else {
         ElMessage.error(res.resp_msg || '获取用量失败')
       }
     } catch (err) {
+      if (seq !== loadSeq) return
       debug.error('获取我的用量失败', err)
       ElMessage.error('获取用量失败，请稍后重试')
     } finally {
-      state.loading = false
+      if (seq === loadSeq) state.loading = false
     }
   }
 
