@@ -182,7 +182,7 @@ mvn -s $settings "-Dmaven.repo.local=$repo" test
 cd frontend
 npm run typecheck      # TypeScript 类型检查
 npm run check:icons    # 图标注册检查（模板图标必须 import 或全局注册）
-npm run test            # 单元测试（Vitest），8 个文件 / 142 项
+npm run test            # 单元测试（Vitest），9 个文件 / 147 项
 npm run test:component  # 组件测试（真实渲染），1 个文件 / 9 项
 npm run check:streaming # 流式超时/取消回归，14 项
 npm run check:markdown  # Markdown 与 XSS 消毒回归，10 项
@@ -199,7 +199,7 @@ npm run check:bundle     # 首屏 gzip 体积预算（需先 build）
 | 后端单元测试 | **187 项通过，0 失败** |
 | 前端 TypeScript 检查 | 通过 |
 | 前端图标注册检查 | 通过（56 个在用图标全部可解析） |
-| 前端单元测试 | 8 个文件 / **142 项通过** |
+| 前端单元测试 | 9 个文件 / **147 项通过** |
 | 前端组件测试 | 1 个文件 / **9 项通过**（@vue/test-utils 真实渲染 ChatComposer） |
 | 前端流式回归 | 14 项通过 |
 | 前端 Markdown / XSS 回归 | 10 项通过（**2026-10-29 前该脚本一直是失败的，见文档**） |
