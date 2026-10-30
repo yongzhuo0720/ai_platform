@@ -71,3 +71,10 @@ backend/AIProject/Logs/
 Logs/
 # AI 会话工具的工作目录（计划文档等，属过程产物）
 .zcode/
+
+# ============================================================
+# Playwright 浏览器冒烟产物
+# ============================================================
+frontend/test-results/
+frontend/playwright-report/
+frontend/blob-report/
