@@ -23,6 +23,10 @@ export interface KbSearchResultDto {
   query: string
   model: string
   scanned: number
+  /** 向量与当前模型不一致（或数据损坏）而被跳过的分块数 */
+  skipped?: number
+  /** 检索降级说明，正常检索时为 null */
+  warning?: string | null
   items: KbSearchItemDto[]
 }
 

@@ -71,6 +71,15 @@
           </div>
         </div>
 
+        <el-alert
+          v-if="state.searchResult?.warning"
+          :title="state.searchResult.warning"
+          type="warning"
+          :closable="false"
+          show-icon
+          class="kb-warning"
+        />
+
         <div class="kb-hits" v-loading="state.searching">
           <div v-for="(item, index) in state.searchResult?.items ?? []" :key="index" class="kb-hit">
             <div class="kb-hit-head">
