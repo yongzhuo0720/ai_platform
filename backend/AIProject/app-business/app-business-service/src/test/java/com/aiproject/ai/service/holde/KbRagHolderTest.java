@@ -17,6 +17,7 @@ import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
@@ -149,13 +150,13 @@ class KbRagHolderTest {
     @Test
     void search_shouldFilterChunksByCurrentUser() throws Exception {
         when(embeddingClient.resolve()).thenReturn(embeddingConfig());
-        when(kbChunkBeanMapper.select(isNull(), any(KbChunkBean.class)))
+        when(kbChunkBeanMapper.select(any(PageRequest.class), any(KbChunkBean.class)))
                 .thenReturn(Collections.emptyList());
 
         holder.search("u1", "报销流程是什么", "默认知识库", 5);
 
         ArgumentCaptor<KbChunkBean> captor = ArgumentCaptor.forClass(KbChunkBean.class);
-        verify(kbChunkBeanMapper).select(isNull(), captor.capture());
+        verify(kbChunkBeanMapper).select(any(PageRequest.class), captor.capture());
         assertEquals("u1", captor.getValue().getLastuser(),
                 "分块查询必须带归属，否则任意用户可检索他人文档正文");
         assertEquals("默认知识库", captor.getValue().getKbName(), "kbName 条件不应被破坏");
@@ -169,7 +170,7 @@ class KbRagHolderTest {
                 .thenReturn(Collections.singletonList(new double[]{1.0, 0.0}));
 
         KbChunkBean own = chunk(1L, "默认知识库", "差旅报销需要部门负责人审批", "[1.0,0.0]");
-        when(kbChunkBeanMapper.select(isNull(), any(KbChunkBean.class)))
+        when(kbChunkBeanMapper.select(any(PageRequest.class), any(KbChunkBean.class)))
                 .thenReturn(Collections.singletonList(own));
 
         KbDocBean doc = new KbDocBean();
@@ -196,7 +197,7 @@ class KbRagHolderTest {
     @Test
     void search_shouldNotEmbedQueryWhenKnowledgeBaseEmpty() throws Exception {
         when(embeddingClient.resolve()).thenReturn(embeddingConfig());
-        when(kbChunkBeanMapper.select(isNull(), any(KbChunkBean.class)))
+        when(kbChunkBeanMapper.select(any(PageRequest.class), any(KbChunkBean.class)))
                 .thenReturn(Collections.<KbChunkBean>emptyList());
 
         Result<com.aiproject.ai.service.gateway.dto.KbSearchResult> result =
@@ -218,7 +219,7 @@ class KbRagHolderTest {
         KbChunkBean ok = chunk(1L, "默认知识库", "差旅报销需要审批", "[1.0,0.0]");
         KbChunkBean wrongDim = chunk(2L, "默认知识库", "报销标准为五百元", "[1.0,0.0,0.0]");
         KbChunkBean broken = chunk(3L, "默认知识库", "报销流程", "not-json");
-        when(kbChunkBeanMapper.select(isNull(), any(KbChunkBean.class)))
+        when(kbChunkBeanMapper.select(any(PageRequest.class), any(KbChunkBean.class)))
                 .thenReturn(Arrays.asList(ok, wrongDim, broken));
 
         Result<com.aiproject.ai.service.gateway.dto.KbSearchResult> result =
@@ -247,7 +248,7 @@ class KbRagHolderTest {
         legacyOtherModel.setEmbeddingModel("bge-m3");
         legacyOtherModel.setEmbeddingDim(2);
         KbChunkBean legacyUnknown = chunk(3L, "默认知识库", "报销流程", "[0.0,1.0]");
-        when(kbChunkBeanMapper.select(isNull(), any(KbChunkBean.class)))
+        when(kbChunkBeanMapper.select(any(PageRequest.class), any(KbChunkBean.class)))
                 .thenReturn(Arrays.asList(current, legacyOtherModel, legacyUnknown));
 
         Result<com.aiproject.ai.service.gateway.dto.KbSearchResult> result =
@@ -288,7 +289,38 @@ class KbRagHolderTest {
                 holder.search("u1", "报销", null, 5);
 
         assertFalse(result.getDatas() != null);
-        verify(kbChunkBeanMapper, never()).select(isNull(), any(KbChunkBean.class));
+        verify(kbChunkBeanMapper, never()).select(any(PageRequest.class), any(KbChunkBean.class));
+    }
+
+    /**
+     * 超大知识库不能把全部分块读进内存：超过扫描上限时只取前 N 块，
+     * 并在响应里提示结果可能不完整，而不是让检索失败。
+     */
+    @Test
+    void search_shouldCapScanAndWarnWhenKnowledgeBaseIsTooLarge() throws Exception {
+        when(embeddingClient.resolve()).thenReturn(embeddingConfig());
+        when(embeddingClient.embed(any(EmbeddingClient.ResolvedEmbedding.class), any(List.class)))
+                .thenReturn(Collections.singletonList(new double[]{1.0, 0.0}));
+        List<KbChunkBean> huge = new ArrayList<KbChunkBean>();
+        for (int i = 0; i < 5001; i++) {
+            huge.add(chunk(1000L + i, "默认知识库", "内容" + i, "[1.0,0.0]"));
+        }
+        when(kbChunkBeanMapper.select(any(PageRequest.class), any(KbChunkBean.class)))
+                .thenReturn(huge);
+
+        Result<com.aiproject.ai.service.gateway.dto.KbSearchResult> result =
+                holder.search("u1", "内容", null, 5);
+
+        assertNotNull(result.getDatas());
+        assertEquals(5000, result.getDatas().getScanned(), "超出上限的部分不应读进内存");
+        assertNotNull(result.getDatas().getWarning());
+        assertTrue(result.getDatas().getWarning().contains("5000"));
+        assertEquals(5, result.getDatas().getItems().size());
+
+        ArgumentCaptor<PageRequest> scanCaptor = ArgumentCaptor.forClass(PageRequest.class);
+        verify(kbChunkBeanMapper).select(scanCaptor.capture(), any(KbChunkBean.class));
+        assertEquals(Integer.valueOf(5001), scanCaptor.getValue().getPageSize(),
+                "多取一条用于判断是否存在未扫描分块");
     }
 
     /**
@@ -349,15 +381,15 @@ class KbRagHolderTest {
         when(embeddingClient.resolve()).thenReturn(embeddingConfig());
         when(embeddingClient.embed(any(EmbeddingClient.ResolvedEmbedding.class), any(List.class)))
                 .thenReturn(Collections.singletonList(new double[]{1.0, 0.0}));
-        when(kbChunkBeanMapper.select(isNull(), any(KbChunkBean.class)))
+        when(kbChunkBeanMapper.select(any(PageRequest.class), any(KbChunkBean.class)))
                 .thenReturn(Collections.<KbChunkBean>singletonList(chunk));
-        when(kbChunkBeanMapper.select(isNull(), any(KbChunkBean.class), anyString()))
+        when(kbChunkBeanMapper.select(any(PageRequest.class), any(KbChunkBean.class), anyString()))
                 .thenReturn(Collections.<KbChunkBean>singletonList(chunk));
 
         holder.search("u1", "报销流程", "默认知识库", 5);
 
-        verify(kbChunkBeanMapper).select(isNull(), any(KbChunkBean.class));
-        verify(kbChunkBeanMapper).select(isNull(), any(KbChunkBean.class), anyString());
+        verify(kbChunkBeanMapper).select(any(PageRequest.class), any(KbChunkBean.class));
+        verify(kbChunkBeanMapper).select(any(PageRequest.class), any(KbChunkBean.class), anyString());
     }
 
     /**
@@ -372,16 +404,16 @@ class KbRagHolderTest {
         when(embeddingClient.resolve()).thenReturn(embeddingConfig());
         when(embeddingClient.embed(any(EmbeddingClient.ResolvedEmbedding.class), any(List.class)))
                 .thenReturn(Collections.singletonList(new double[]{1.0, 0.0}));
-        when(kbChunkBeanMapper.select(isNull(), any(KbChunkBean.class)))
+        when(kbChunkBeanMapper.select(any(PageRequest.class), any(KbChunkBean.class)))
                 .thenReturn(Collections.<KbChunkBean>singletonList(chunk));
-        when(kbChunkBeanMapper.select(isNull(), any(KbChunkBean.class), anyString()))
+        when(kbChunkBeanMapper.select(any(PageRequest.class), any(KbChunkBean.class), anyString()))
                 .thenReturn(Collections.<KbChunkBean>emptyList());
 
         // 含单引号的恶意输入：'; DROP TABLE kbchunkbean; --
         holder.search("u1", "it's a test'; DROP TABLE kbchunkbean; --", null, 5);
 
         ArgumentCaptor<KbChunkBean> captor = ArgumentCaptor.forClass(KbChunkBean.class);
-        verify(kbChunkBeanMapper).select(isNull(), captor.capture(), anyString());
+        verify(kbChunkBeanMapper).select(any(PageRequest.class), captor.capture(), anyString());
         for (KbChunkBean where : captor.getAllValues()) {
             assertNotNull(where);
             assertEquals("u1", where.getLastuser(), "关键词路也必须带归属条件");
@@ -399,9 +431,9 @@ class KbRagHolderTest {
 
         KbChunkBean chunk = chunk(1L, "默认知识库", "差旅报销需要部门负责人审批", "[1.0,0.0]");
         // 向量路返回分块；关键词路（3 参）抛异常
-        when(kbChunkBeanMapper.select(isNull(), any(KbChunkBean.class)))
+        when(kbChunkBeanMapper.select(any(PageRequest.class), any(KbChunkBean.class)))
                 .thenReturn(Collections.<KbChunkBean>singletonList(chunk));
-        when(kbChunkBeanMapper.select(isNull(), any(KbChunkBean.class), anyString()))
+        when(kbChunkBeanMapper.select(any(PageRequest.class), any(KbChunkBean.class), anyString()))
                 .thenThrow(new RuntimeException("FTS 索引不存在"));
 
         Result<com.aiproject.ai.service.gateway.dto.KbSearchResult> result =
@@ -423,9 +455,9 @@ class KbRagHolderTest {
                 .thenReturn(Collections.singletonList(new double[]{1.0, 0.0}));
 
         KbChunkBean chunk = chunk(1L, "默认知识库", "差旅报销需要部门负责人审批", "[1.0,0.0]");
-        when(kbChunkBeanMapper.select(isNull(), any(KbChunkBean.class)))
+        when(kbChunkBeanMapper.select(any(PageRequest.class), any(KbChunkBean.class)))
                 .thenReturn(Collections.<KbChunkBean>singletonList(chunk));
-        when(kbChunkBeanMapper.select(isNull(), any(KbChunkBean.class), anyString()))
+        when(kbChunkBeanMapper.select(any(PageRequest.class), any(KbChunkBean.class), anyString()))
                 .thenReturn(Collections.<KbChunkBean>singletonList(chunk));
 
         Result<com.aiproject.ai.service.gateway.dto.KbSearchResult> result =

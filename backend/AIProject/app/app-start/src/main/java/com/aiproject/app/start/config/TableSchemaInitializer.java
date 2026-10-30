@@ -29,6 +29,7 @@ public class TableSchemaInitializer implements ApplicationListener<ApplicationRe
         ensureCapabilitiesIconColumn();
         ensureAiGatewayIndexes();
         ensureKbChunkFullTextIndex();
+        ensureKbChunkQueryIndexes();
         ensureKbChunkEmbeddingModelColumns();
         ensureCostAndTracingColumns();
     }
@@ -68,6 +69,19 @@ public class TableSchemaInitializer implements ApplicationListener<ApplicationRe
     private void ensureKbChunkFullTextIndex() {
         execute("CREATE INDEX IF NOT EXISTS idx_kbchunk_content_fts ON kbchunkbean "
                 + "USING gin (to_tsvector('simple', \"content\"))");
+    }
+
+    /**
+     * RAG 分块的两条高频查询路径：
+     * <ul>
+     *   <li>检索按 {@code (lastuser[, kbName])} 过滤——缺索引会全表扫描，
+     *       且 (lastuser, kbName) 的最左前缀已覆盖只按 lastuser 的查询；</li>
+     *   <li>删除文档按 {@code docIid} 清分块——文档多了以后同样是全表扫描。</li>
+     * </ul>
+     */
+    private void ensureKbChunkQueryIndexes() {
+        execute("CREATE INDEX IF NOT EXISTS idx_kbchunk_user_kb ON kbchunkbean (\"lastuser\", \"kbName\")");
+        execute("CREATE INDEX IF NOT EXISTS idx_kbchunk_doc ON kbchunkbean (\"docIid\")");
     }
 
     /**
