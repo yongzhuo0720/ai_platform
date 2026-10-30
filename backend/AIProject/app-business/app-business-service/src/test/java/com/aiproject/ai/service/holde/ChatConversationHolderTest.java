@@ -61,6 +61,7 @@ class ChatConversationHolderTest {
         assertFalse(holder.save("u1", conversation(200L, "new")).getDatas());
     }
 
+    /** 插入失败且确实不存在可更新的行时，仍应如实返回失败 */
     @Test
     void failedInsertDoesNotClaimSuccess() {
         when(holder.mapper.select(isNull(), any(ChatConversationBean.class)))
@@ -68,6 +69,47 @@ class ChatConversationHolderTest {
         when(holder.mapper.install(any(ChatConversationBean.class))).thenReturn(0);
 
         assertFalse(holder.save("u1", conversation(100L, "answer")).getDatas());
+        verify(holder.mapper, never()).update(any(), any(ChatConversationBean.class));
+    }
+
+    /**
+     * 并发首次保存：唯一索引让后到的插入失败，此时必须重新读取赢家行，
+     * 按它的版本号做条件更新，而不是把「会话已存在」当成保存失败。
+     */
+    @Test
+    void concurrentInsertConflictFallsBackToConditionalUpdate() {
+        ChatConversationBean winner = conversation(100L, "winner");
+        when(holder.mapper.select(isNull(), any(ChatConversationBean.class)))
+                .thenReturn(Collections.<ChatConversationBean>emptyList(),
+                        Collections.singletonList(winner));
+        when(holder.mapper.install(any(ChatConversationBean.class)))
+                .thenThrow(new RuntimeException("duplicate key value violates unique constraint"));
+        when(holder.mapper.update(any(), any(ChatConversationBean.class))).thenAnswer(invocation -> {
+            ChatConversationBean condition = invocation.getArgument(1);
+            assertEquals("u1", condition.getUserId());
+            assertEquals("conversation-1", condition.getConvId());
+            assertEquals(Long.valueOf(100), condition.getClientUpdatedAt(),
+                    "重试更新必须以赢家写入的版本号为条件");
+            return 1;
+        });
+
+        assertTrue(holder.save("u1", conversation(200L, "newer")).getDatas());
+        assertEquals("newer", winner.getPayload());
+    }
+
+    /** 冲突后重试同样要服从乐观锁：比云端旧的快照不能覆盖赢家 */
+    @Test
+    void concurrentInsertConflictDoesNotOverwriteNewerWinner() {
+        ChatConversationBean winner = conversation(300L, "winner");
+        when(holder.mapper.select(isNull(), any(ChatConversationBean.class)))
+                .thenReturn(Collections.<ChatConversationBean>emptyList(),
+                        Collections.singletonList(winner));
+        when(holder.mapper.install(any(ChatConversationBean.class)))
+                .thenThrow(new RuntimeException("duplicate key"));
+
+        assertFalse(holder.save("u1", conversation(100L, "older")).getDatas());
+        assertEquals("winner", winner.getPayload());
+        verify(holder.mapper, never()).update(any(), any(ChatConversationBean.class));
     }
 
     @Test
