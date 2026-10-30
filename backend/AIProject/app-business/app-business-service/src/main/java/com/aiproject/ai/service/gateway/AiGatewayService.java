@@ -79,6 +79,8 @@ public class AiGatewayService {
     private static final int KB_MAX_CONTEXT_CHARS = 6000;
     /** 与 KbRagHolder.MAX_QUERY_CHARS 对齐：超长查询截断而非让检索失败 */
     private static final int KB_QUERY_MAX_CHARS = 2000;
+    /** 检索来源事件的请求属性：由 readModelRequestBody 写入，doProxy 在转发上游前取出并下发 */
+    private static final String KB_SOURCES_ATTR = "aiGateway.kbSourcesEvent";
 
     @Autowired
     AiGatewayProperties properties;
@@ -327,8 +329,13 @@ public class AiGatewayService {
             body.remove("kb_name");
             body.remove("kb_top_k");
             if (!kbName.isEmpty()) {
-                int hits = applyKnowledgeContext(body, userId, kbName, kbTopK);
-                response.setHeader("X-KB-Hits", String.valueOf(hits));
+                List<KbSearchItem> used = applyKnowledgeContext(body, userId, kbName, kbTopK);
+                response.setHeader("X-KB-Hits", String.valueOf(used.size()));
+                // 流式请求在转发上游前先下发「实际注入的来源」，
+                // 前端据此展示引用，不再自己重复检索一次
+                if (!used.isEmpty() && body.path("stream").asBoolean(false)) {
+                    request.setAttribute(KB_SOURCES_ATTR, buildKbSourcesEvent(used, kbName));
+                }
             }
             return MAPPER.writeValueAsBytes(body);
         } catch (Exception e) {
@@ -359,23 +366,24 @@ public class AiGatewayService {
      *       与生成空间，甚至直接超窗口。</li>
      * </ul>
      *
-     * @return 实际注入的片段数（写入 X-KB-Hits 响应头）
+     * @return 实际注入的片段（按注入顺序），同时用于 X-KB-Hits 与来源事件
      */
-    private int applyKnowledgeContext(ObjectNode body, String userId,
-                                      String kbName, Integer topK) {
+    private List<KbSearchItem> applyKnowledgeContext(ObjectNode body, String userId,
+                                                     String kbName, Integer topK) {
+        List<KbSearchItem> injectedItems = new ArrayList<KbSearchItem>();
         try {
             JsonNode messagesNode = body.path("messages");
             if (!messagesNode.isArray()) {
-                return 0;
+                return injectedItems;
             }
             ArrayNode messages = (ArrayNode) messagesNode;
             int userIndex = lastUserMessageIndex(messages);
             if (userIndex < 0) {
-                return 0;
+                return injectedItems;
             }
             String query = extractUserText(messages.get(userIndex));
             if (query == null || query.trim().isEmpty()) {
-                return 0;
+                return injectedItems;
             }
             if (query.length() > KB_QUERY_MAX_CHARS) {
                 query = query.substring(0, KB_QUERY_MAX_CHARS);
@@ -386,7 +394,7 @@ public class AiGatewayService {
             List<KbSearchItem> items = result == null || result.getDatas() == null
                     ? null : result.getDatas().getItems();
             if (items == null || items.isEmpty()) {
-                return 0;
+                return injectedItems;
             }
 
             StringBuilder prompt = new StringBuilder()
@@ -414,20 +422,42 @@ public class AiGatewayService {
                 prompt.append(block);
                 used += block.length();
                 injected++;
+                injectedItems.add(item);
             }
             if (injected == 0) {
-                return 0;
+                return injectedItems;
             }
 
             ObjectNode context = MAPPER.createObjectNode();
             context.put("role", "system");
             context.put("content", prompt.toString());
             messages.insert(userIndex, context);
-            return injected;
+            return injectedItems;
         } catch (Exception e) {
             log.warn("[AiGateway] 知识库检索失败，降级为无上下文直连: {}", e.getMessage());
-            return 0;
+            return injectedItems;
         }
+    }
+
+    /**
+     * 构造发给前端的来源 SSE 事件。字段与检索接口的 items 保持一致，
+     * 前端复用同一套引用展示组件。
+     */
+    private byte[] buildKbSourcesEvent(List<KbSearchItem> items, String kbName) throws Exception {
+        ArrayNode sources = MAPPER.createArrayNode();
+        for (KbSearchItem item : items) {
+            ObjectNode node = sources.addObject();
+            node.put("docIid", item.getDocIid());
+            node.put("docName", item.getDocName());
+            node.put("kbName", item.getKbName() == null ? kbName : item.getKbName());
+            node.put("chunkIndex", item.getChunkIndex());
+            node.put("content", item.getContent());
+            node.put("score", item.getScore());
+        }
+        ObjectNode payload = MAPPER.createObjectNode();
+        payload.set("items", sources);
+        String frame = "event: kb_sources\ndata: " + MAPPER.writeValueAsString(payload) + "\n\n";
+        return frame.getBytes(StandardCharsets.UTF_8);
     }
 
     private static int lastUserMessageIndex(ArrayNode messages) {
@@ -546,6 +576,16 @@ public class AiGatewayService {
             if (sse) {
                 response.setHeader("Cache-Control", "no-cache");
                 response.setHeader("X-Accel-Buffering", "no");
+            }
+
+            // 先下发检索来源，再透传上游回答：前端拿到的是模型真正收到的片段
+            if (sse && upstreamStatus < 400) {
+                Object kbSourcesEvent = request.getAttribute(KB_SOURCES_ATTR);
+                if (kbSourcesEvent instanceof byte[]) {
+                    OutputStream eventOut = response.getOutputStream();
+                    eventOut.write((byte[]) kbSourcesEvent);
+                    eventOut.flush();
+                }
             }
 
             AiGatewayUsageParser parser = new AiGatewayUsageParser();

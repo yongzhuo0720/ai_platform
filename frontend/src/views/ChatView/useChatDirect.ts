@@ -1,6 +1,6 @@
 import { ElMessage } from "element-plus";
 import { streamDirectChat } from "@/api/directModel";
-import { kbRagApi, type KbSearchItemDto } from "@/api/kbRag";
+import type { KbSearchItemDto } from "@/api/kbRag";
 import type { DirectConversation, UploadedChatFile } from "./chatTypes";
 import {
   activeDirectConversationId,
@@ -140,36 +140,17 @@ export const runDirectStream = (
     context.unshift({ role: "system", content: assistantPrompt });
   }
 
-  // 并行拉取检索命中片段（与网关注入同源的检索接口），
-  // 回答完成后展示「引用来源」。失败静默——不影响主对话流
-  if (directKbName.value) {
-    kbRagApi
-      .search({ query: queryContent, kbName: directKbName.value })
-      .then(({ data: res }) => {
-        if (requestToken !== chatRuntime.currentRequestToken) {
-          return;
-        }
-        const items: KbSearchItemDto[] = res?.datas?.items ?? [];
-        if (!items.length) return;
-        const msg = messages.value.find((m) => m.id === assistantMessageId);
-        if (msg) {
-          msg.kbSources = items;
-        }
-        // 流已结束时（turn 已落盘）补写最后一条 assistant 轮次并持久化
-        if (!loading.value && conversation.messages.length) {
-          const last = conversation.messages[conversation.messages.length - 1];
-          if (last.role === "assistant") {
-            last.kbSources = items;
-            persistDirectConversations();
-          }
-        }
-      })
-      .catch((error) => {
-        console.warn("[RAG 来源] 检索片段获取失败（不影响对话）:", error);
-      });
-  }
-
   chatRuntime.currentStopFn = streamDirectChat(String(model.iid), context, {
+    // 来源由网关随流下发（真正注入上下文的片段），前端不再重复检索一次
+    onKbSources: (items) => {
+      if (requestToken !== chatRuntime.currentRequestToken) {
+        return;
+      }
+      const msg = messages.value.find((m) => m.id === assistantMessageId);
+      if (msg) {
+        msg.kbSources = items;
+      }
+    },
     onChunk: (text) => {
       if (requestToken !== chatRuntime.currentRequestToken) {
         return;

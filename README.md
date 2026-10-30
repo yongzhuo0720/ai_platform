@@ -182,7 +182,7 @@ mvn -s $settings "-Dmaven.repo.local=$repo" test
 cd frontend
 npm run typecheck      # TypeScript 类型检查
 npm run check:icons    # 图标注册检查（模板图标必须 import 或全局注册）
-npm run test            # 逻辑层单元测试（Vitest），7 个文件 / 137 项
+npm run test            # 单元测试（Vitest），8 个文件 / 142 项
 npm run check:streaming # 流式超时/取消回归，14 项
 npm run check:markdown  # Markdown 与 XSS 消毒回归，10 项
 npm run build           # 生产构建
@@ -194,10 +194,10 @@ npm run build           # 生产构建
 
 | 项目 | 结果 |
 |---|---|
-| 后端单元测试 | **165 项通过，0 失败**（2026-10-29） |
+| 后端单元测试 | **175 项通过，0 失败** |
 | 前端 TypeScript 检查 | 通过 |
 | 前端图标注册检查 | 通过（56 个在用图标全部可解析） |
-| 前端单元测试 | 7 个文件 / **137 项通过** |
+| 前端单元测试 | 8 个文件 / **142 项通过** |
 | 前端流式回归 | 14 项通过 |
 | 前端 Markdown / XSS 回归 | 10 项通过（**2026-10-29 前该脚本一直是失败的，见文档**） |
 | 前端生产构建 | 通过（element-plus 分块 922.89 kB / gzip 296.83 kB，仍有体积警告） |
@@ -210,6 +210,10 @@ npm run build           # 生产构建
    56 个。改为组件内 import + 23 个全局图标后，element-plus 分块从 1,052.14 kB
    降到 922.89 kB（gzip 331.25 → 296.83 kB），并新增 `check:icons` 防止模板漏注册
    导致图标静默留白。
+3. **引用与上下文同源**：直连 + 知识库模式此前浏览器和网关各检索一次
+   （默认 topK 不同，展示的引用不一定等于模型收到的片段）。现在网关在 SSE 流开头
+   下发 `event: kb_sources`，附带本轮真正注入的片段，前端删掉重复检索，
+   引用与回答共享同一次检索结果。
 
 2026-10-29 补充的测试类：
 

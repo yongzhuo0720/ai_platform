@@ -19,8 +19,11 @@ import org.springframework.test.util.ReflectionTestUtils;
 
 import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
+import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
@@ -39,6 +42,8 @@ class AiGatewayServiceTest {
         service.guard = mock(AiGatewayGuard.class);
         service.callLogHolder = mock(AiCallLogHolder.class);
         service.kbRagHolder = mock(KbRagHolder.class);
+        service.modelGatewayResolver = mock(ModelGatewayResolver.class);
+        service.priceResolver = mock(ModelPriceResolver.class);
     }
 
     @AfterEach
@@ -153,11 +158,54 @@ class AiGatewayServiceTest {
         when(service.kbRagHolder.search("u1", "question", "kb", 4)).thenReturn(Result.succeed(result));
         ObjectNode body = (ObjectNode) mapper.readTree("{\"messages\":[{\"role\":\"user\",\"content\":\"question\"}]}");
 
-        Integer hits = ReflectionTestUtils.invokeMethod(service, "applyKnowledgeContext", body, "u1", "kb", 4);
+        List<KbSearchItem> injected = ReflectionTestUtils.invokeMethod(
+                service, "applyKnowledgeContext", body, "u1", "kb", 4);
 
-        assertEquals(Integer.valueOf(2), hits);
+        assertEquals(2, injected.size());
+        assertSame(relevant, injected.get(0));
         String prompt = body.path("messages").get(0).path("content").asText();
         assertTrue(prompt.indexOf("relevant-first") < prompt.indexOf("distractor-second"));
+    }
+
+    /**
+     * 前端只展示网关真正注入的片段：来源事件必须出现在上游 SSE 之前，
+     * 且包含全部注入片段；kb_name 等增强字段不能透传给上游。
+     */
+    @Test
+    void kbSourcesEventPrecedesUpstreamSseAndStaysHiddenFromUpstream() throws Exception {
+        KbSearchItem relevant = item("relevant-first", 0.01);
+        KbSearchItem distractor = item("distractor-second", 0.05);
+        KbSearchResult result = new KbSearchResult();
+        result.setItems(Arrays.asList(relevant, distractor));
+        when(service.kbRagHolder.search("u1", "question", "kb", 4)).thenReturn(Result.succeed(result));
+        when(service.modelGatewayResolver.resolve(7L)).thenReturn(
+                new ModelGatewayResolver.ResolvedModel(upstream.baseUrl(), "test-key", "up-model", "demo"));
+        when(service.guard.check("u1", ModelGatewayResolver.MODULE_MODELS))
+                .thenReturn(AiGatewayGuard.Decision.allow());
+
+        upstream.responseContentType = "text/event-stream";
+        upstream.responseBody = "data: {\"choices\":[{\"delta\":{\"content\":\"hi\"}}]}\n\ndata: [DONE]\n\n";
+
+        MockHttpServletRequest request = new MockHttpServletRequest(
+                "POST", "/api/aiGateway/models/7/chat/completions");
+        request.setContentType("application/json");
+        request.setContent(("{\"stream\":true,\"kb_name\":\"kb\","
+                + "\"messages\":[{\"role\":\"user\",\"content\":\"question\"}]}")
+                .getBytes(StandardCharsets.UTF_8));
+        MockHttpServletResponse response = new MockHttpServletResponse();
+
+        service.proxy(ModelGatewayResolver.MODULE_MODELS, "u1", request, response);
+
+        String content = response.getContentAsString(StandardCharsets.UTF_8);
+        assertTrue(content.startsWith("event: kb_sources\ndata: {"), content);
+        assertTrue(content.contains("\"docName\":\"source\""));
+        assertTrue(content.indexOf("relevant-first") < content.indexOf("distractor-second"));
+        assertTrue(content.contains("data: {\"choices\""));
+        assertEquals("2", response.getHeader("X-KB-Hits"));
+
+        String forwarded = new String(upstream.requestBody, StandardCharsets.UTF_8);
+        assertFalse(forwarded.contains("kb_name"));
+        assertFalse(forwarded.contains("kb_top_k"));
     }
 
     private KbSearchItem item(String content, double score) {
