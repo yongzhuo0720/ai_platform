@@ -1,5 +1,6 @@
 package com.aiproject.ai.service.gateway;
 
+import com.aiproject.ai.service.bean.AiCallLogBean;
 import com.aiproject.ai.service.gateway.dto.KbSearchItem;
 import com.aiproject.ai.service.gateway.dto.KbSearchResult;
 import com.aiproject.ai.service.holde.AiCallLogHolder;
@@ -12,20 +13,26 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
+import org.mockito.ArgumentCaptor;
 import org.springframework.mock.web.MockHttpServletRequest;
 import org.springframework.mock.web.MockHttpServletResponse;
 import org.springframework.mock.web.MockPart;
 import org.springframework.test.util.ReflectionTestUtils;
 
+import javax.servlet.ServletOutputStream;
+import javax.servlet.WriteListener;
+import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
 import java.util.List;
+import java.util.concurrent.TimeUnit;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 class AiGatewayServiceTest {
@@ -206,6 +213,72 @@ class AiGatewayServiceTest {
         String forwarded = new String(upstream.requestBody, StandardCharsets.UTF_8);
         assertFalse(forwarded.contains("kb_name"));
         assertFalse(forwarded.contains("kb_top_k"));
+    }
+
+    /**
+     * 浏览器点「停止」关闭连接后：
+     * 1. 不能把异常抛给容器（proxy 正常返回）；
+     * 2. 审计记为 aborted，httpStatus 记上游真实状态而非笼统的 502；
+     * 3. 必须关闭上游连接——否则上游继续生成、继续计费。
+     */
+    @Test
+    void clientAbortMidStreamClosesUpstreamAndRecordsAborted() throws Exception {
+        upstream.slowSse = true;
+        when(service.configResolver.isSupported("chat")).thenReturn(true);
+        when(service.configResolver.resolve("chat")).thenReturn(
+                new AiGatewayConfigResolver.ResolvedConfig(upstream.baseUrl(), "test-key"));
+        when(service.guard.check("u1", "chat")).thenReturn(AiGatewayGuard.Decision.allow());
+
+        MockHttpServletRequest request = request("POST", "chat", "chat-messages");
+        request.setContentType("application/json");
+        request.setContent("{\"query\":\"hi\",\"user\":\"u1\"}".getBytes(StandardCharsets.UTF_8));
+
+        service.proxy("chat", "u1", request, new AbortingResponse());
+
+        ArgumentCaptor<AiCallLogBean> captor = ArgumentCaptor.forClass(AiCallLogBean.class);
+        verify(service.callLogHolder).record(captor.capture());
+        AiCallLogBean entry = captor.getValue();
+        assertEquals("aborted", entry.getStatus());
+        assertEquals("客户端已断开连接", entry.getErrorMessage());
+        assertEquals("u1", entry.getUserId());
+        assertEquals(Integer.valueOf(200), entry.getHttpStatus(),
+                "中断发生在已收到上游响应之后，审计应记真实上游状态，而不是误报 502");
+
+        assertTrue(upstream.clientGone.await(5, TimeUnit.SECONDS),
+                "浏览器断开后网关必须关闭上游连接，否则上游会继续生成并计费");
+        assertTrue(upstream.streamedChunks.get() < AiUpstreamStub.SLOW_SSE_ITERATIONS,
+                "上游应在客户端断开后停止生成");
+    }
+
+    /** 响应体第一次写入就抛连接重置，等价于浏览器已经关掉连接 */
+    private static class AbortingResponse extends MockHttpServletResponse {
+        private boolean committed;
+        private final ServletOutputStream stream = new ServletOutputStream() {
+            @Override
+            public boolean isReady() {
+                return true;
+            }
+
+            @Override
+            public void setWriteListener(WriteListener listener) {
+            }
+
+            @Override
+            public void write(int b) throws IOException {
+                committed = true;
+                throw new IOException("Connection reset by peer");
+            }
+        };
+
+        @Override
+        public ServletOutputStream getOutputStream() {
+            return stream;
+        }
+
+        @Override
+        public boolean isCommitted() {
+            return committed;
+        }
     }
 
     private KbSearchItem item(String content, double score) {
