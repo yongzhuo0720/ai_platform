@@ -182,7 +182,7 @@ mvn -s $settings "-Dmaven.repo.local=$repo" test
 cd frontend
 npm run typecheck      # TypeScript 类型检查
 npm run check:icons    # 图标注册检查（模板图标必须 import 或全局注册）
-npm run test            # 单元测试（Vitest），11 个文件 / 154 项
+npm run test            # 单元测试（Vitest），12 个文件 / 165 项
 npm run test:component  # 组件测试（真实渲染），23 个文件 / 184 项
 npm run test:e2e        # 浏览器冒烟（真实 Chromium + 接口 mock），6 项
 npm run check:streaming # 流式超时/取消回归，14 项
@@ -200,7 +200,7 @@ npm run check:bundle     # 首屏 gzip 体积预算（需先 build）
 | 后端单元测试 | **206 项通过，0 失败** |
 | 前端 TypeScript 检查 | 通过 |
 | 前端图标注册检查 | 通过（56 个在用图标全部可解析） |
-| 前端单元测试 | 11 个文件 / **154 项通过** |
+| 前端单元测试 | 12 个文件 / **165 项通过** |
 | 前端组件测试 | 23 个文件 / **184 项通过**（@vue/test-utils 真实渲染 LoginView / ChatComposer / ChatMessageList / ChatSidebar / KbSearchView / MyUsageView / ShareView / AiGatewayView / UserView / RoleView / UnitView / ModelsConfigView / DifyConfigView / LogView / KnowledgeBaseMngView / ModelsView / ApplicationsView / CapabilitiesView / DatasetView / KnowledgeBaseSquareView / KnowledgeBaseView / PreviewView / NotFoundView） |
 | 浏览器冒烟（Playwright） | **6 项通过**（真实 Chromium：登录守卫与登录跳转、聊天页启动无异常、直连模型 SSE 流式回答、配额 429 展示服务端原因、知识库模块未配置引导、404 兜底；接口层由 `page.route` 拦截） |
 | 前端流式回归 | 14 项通过 |
@@ -270,8 +270,9 @@ npm run check:bundle     # 首屏 gzip 体积预算（需先 build）
    `parseChatError` 的 token 关键词会把配额文案「已用 1500 / 1500 tokens」
    误判成「API 密钥失效」。现在 `readErrorMessage` 只取服务端 message，
    `parseChatError` 优先识别 `quota_exceeded` / `额度已用完`（不可重试，原样展示）
-   与 `rate_limited`（可重试），401 认证分支保持不变；新增 7 项单测，并在浏览器
-   冒烟里断言配额提示原文出现、错误码不外泄。
+   与 `rate_limited`（可重试），401 认证分支保持不变；直连模型在网络不可达时
+   不再把英文 `Failed to fetch` 当回答显示，改为中文可操作提示。新增 12 项单测，
+   并在浏览器冒烟里断言配额提示原文出现、错误码不外泄。
 
 2026-10-30 后端改进：并发请求的配额预扣
 

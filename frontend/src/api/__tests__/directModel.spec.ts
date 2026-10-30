@@ -136,4 +136,49 @@ describe("streamDirectChat 知识库来源事件", () => {
 
     expect(error.message).toContain("上游限流");
   });
+
+  it("网关 429 时原样透出服务端配额文案", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        async () =>
+          new Response(
+            JSON.stringify({
+              code: "quota_exceeded",
+              message: "今日 AI 额度已用完（已用 1500 / 1500 tokens），请明天再试",
+              status: 429,
+            }),
+            { status: 429, headers: { "Content-Type": "application/json" } }
+          )
+      )
+    );
+
+    const error = await new Promise<Error>((resolve) => {
+      streamDirectChat("7", [{ role: "user", content: "问题" }], {
+        onChunk: () => undefined,
+        onError: resolve,
+      });
+    });
+
+    expect(error.message).toBe("今日 AI 额度已用完（已用 1500 / 1500 tokens），请明天再试");
+  });
+
+  it("网络不可达时给出中文提示，不把 Failed to fetch 显示给用户", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => {
+        throw new TypeError("Failed to fetch");
+      })
+    );
+
+    const error = await new Promise<Error>((resolve) => {
+      streamDirectChat("7", [{ role: "user", content: "问题" }], {
+        onChunk: () => undefined,
+        onError: resolve,
+      });
+    });
+
+    expect(error.message).toContain("网络连接异常");
+    expect(error.message).not.toContain("Failed to fetch");
+  });
 });
