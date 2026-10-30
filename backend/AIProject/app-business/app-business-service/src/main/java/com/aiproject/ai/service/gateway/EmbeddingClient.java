@@ -9,6 +9,7 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 import lombok.Getter;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.context.event.EventListener;
 import org.springframework.stereotype.Component;
 
 import java.io.InputStream;
@@ -33,41 +34,88 @@ public class EmbeddingClient {
 
     private static final int TIMEOUT_MS = 30000;
 
+    /** 配置缓存 TTL：后台写入会发 ModelConfigChangedEvent 立即失效，TTL 只兜底直改库 */
+    private static final long CONFIG_CACHE_TTL_MS = 5 * 60 * 1000L;
+
     @Autowired
     ModelsConfigBeanHolder modelsConfigBeanHolder;
 
     private final ObjectMapper objectMapper = new ObjectMapper();
 
-    /** 解析出一个可用的向量化配置；不存在返回 null */
+    private volatile ResolvedEmbedding configCache;
+    private volatile long configCacheAt;
+    private volatile boolean configResolvedOnce;
+
+    /**
+     * 解析出一个可用的向量化配置；不存在返回 null。
+     * <p>
+     * 带 5 分钟缓存：每次检索都读一遍 modelsconfigbean 是纯浪费，
+     * 而未配置时返回 null 同样要缓存——否则没配模型的知识库每次提问都会落一次查询。
+     */
     public ResolvedEmbedding resolve() {
+        long now = System.currentTimeMillis();
+        if (configResolvedOnce && now - configCacheAt < CONFIG_CACHE_TTL_MS) {
+            return configCache;
+        }
+        try {
+            return refresh(now);
+        } catch (Exception e) {
+            // 读库失败不写缓存：下一次调用可以立即重试，而不是把故障状态粘住 5 分钟
+            log.warn("[KbRag] 读取向量化模型配置失败: {}", e.getMessage());
+            return null;
+        }
+    }
+
+    private synchronized ResolvedEmbedding refresh(long now) {
+        // 双重检查：并发首访时只让一个线程查库
+        if (configResolvedOnce && now - configCacheAt < CONFIG_CACHE_TTL_MS) {
+            return configCache;
+        }
+        ResolvedEmbedding resolved = loadFromDb();
+        configCache = resolved;
+        configCacheAt = now;
+        configResolvedOnce = true;
+        return resolved;
+    }
+
+    private ResolvedEmbedding loadFromDb() {
         ModelsConfigBean where = new ModelsConfigBean();
         where.setProtocol(ModelGatewayResolver.PROTOCOL_OPENAI);
-        try {
-            List<ModelsConfigBean> list = modelsConfigBeanHolder.queryList(where, null);
-            if (list == null) {
-                return null;
+        List<ModelsConfigBean> list = modelsConfigBeanHolder.queryList(where, null);
+        if (list == null) {
+            return null;
+        }
+        for (ModelsConfigBean item : list) {
+            String embedModel = trimToNull(item.getEmbedModel());
+            String baseUrl = trimToNull(item.getBaseUrl());
+            if (embedModel == null || baseUrl == null) {
+                continue;
             }
-            for (ModelsConfigBean item : list) {
-                String embedModel = trimToNull(item.getEmbedModel());
-                String baseUrl = trimToNull(item.getBaseUrl());
-                if (embedModel == null || baseUrl == null) {
-                    continue;
-                }
-                String enabled = String.valueOf(item.getEnable());
-                if ("false".equalsIgnoreCase(enabled)) {
-                    continue;
-                }
-                String baseUrlTrimmed = baseUrl;
-                while (baseUrlTrimmed.endsWith("/")) {
-                    baseUrlTrimmed = baseUrlTrimmed.substring(0, baseUrlTrimmed.length() - 1);
-                }
-                return new ResolvedEmbedding(baseUrlTrimmed, trimToNull(item.getApiKey()),
-                        embedModel, item.getName());
+            String enabled = String.valueOf(item.getEnable());
+            if ("false".equalsIgnoreCase(enabled)) {
+                continue;
             }
-        } catch (Exception e) {
-            log.warn("[KbRag] 读取向量化模型配置失败: {}", e.getMessage());
+            String baseUrlTrimmed = baseUrl;
+            while (baseUrlTrimmed.endsWith("/")) {
+                baseUrlTrimmed = baseUrlTrimmed.substring(0, baseUrlTrimmed.length() - 1);
+            }
+            return new ResolvedEmbedding(baseUrlTrimmed, trimToNull(item.getApiKey()),
+                    embedModel, item.getName());
         }
         return null;
+    }
+
+    /** 后台保存模型配置后立即丢缓存，不必等 TTL */
+    @EventListener
+    public void onModelConfigChanged(ModelConfigChangedEvent event) {
+        invalidateCache();
+    }
+
+    /** synchronized 与 refresh 互斥，避免失效瞬间被并发刷新写回旧值 */
+    public synchronized void invalidateCache() {
+        configCache = null;
+        configCacheAt = 0L;
+        configResolvedOnce = false;
     }
 
     /**

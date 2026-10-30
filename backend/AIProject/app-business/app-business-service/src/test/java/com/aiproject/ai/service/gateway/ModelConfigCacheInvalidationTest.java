@@ -14,6 +14,8 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 /**
@@ -64,6 +66,54 @@ class ModelConfigCacheInvalidationTest {
         }
     }
 
+    /**
+     * 向量模型配置同样缓存：每次检索都读库是纯浪费；
+     * 后台改完后必须立即生效，否则「换了向量模型还按旧维度检索」会持续命中降级分支。
+     */
+    @Test
+    void embeddingConfigShouldBeCachedAndInvalidatedOnChange() {
+        ModelsConfigBeanHolder holder = mock(ModelsConfigBeanHolder.class);
+        when(holder.queryList(any(ModelsConfigBean.class), isNull()))
+                .thenReturn(Collections.singletonList(embeddingConfig("embed-v1")));
+
+        try (AnnotationConfigApplicationContext ctx = context(holder, mockMapper())) {
+            EmbeddingClient client = ctx.getBean(EmbeddingClient.class);
+            assertEquals("embed-v1", client.resolve().getEmbedModel());
+            assertEquals("embed-v1", client.resolve().getEmbedModel());
+            verify(holder, times(1)).queryList(any(ModelsConfigBean.class), isNull());
+
+            when(holder.queryList(any(ModelsConfigBean.class), isNull()))
+                    .thenReturn(Collections.singletonList(embeddingConfig("embed-v2")));
+            assertEquals("embed-v1", client.resolve().getEmbedModel(), "TTL 内仍是旧配置");
+
+            ctx.publishEvent(new ModelConfigChangedEvent());
+            assertEquals("embed-v2", client.resolve().getEmbedModel(), "改完向量模型应立即生效");
+        }
+    }
+
+    /**
+     * 未配置也是常见状态（没传文档的知识库）：null 同样要缓存，
+     * 否则每次提问都落一次空查询；配好模型后靠事件立即恢复。
+     */
+    @Test
+    void missingEmbeddingConfigShouldAlsoBeCached() {
+        ModelsConfigBeanHolder holder = mock(ModelsConfigBeanHolder.class);
+        when(holder.queryList(any(ModelsConfigBean.class), isNull()))
+                .thenReturn(Collections.<ModelsConfigBean>emptyList());
+
+        try (AnnotationConfigApplicationContext ctx = context(holder, mockMapper())) {
+            EmbeddingClient client = ctx.getBean(EmbeddingClient.class);
+            assertNull(client.resolve());
+            assertNull(client.resolve());
+            verify(holder, times(1)).queryList(any(ModelsConfigBean.class), isNull());
+
+            when(holder.queryList(any(ModelsConfigBean.class), isNull()))
+                    .thenReturn(Collections.singletonList(embeddingConfig("embed-v1")));
+            ctx.publishEvent(new ModelConfigChangedEvent());
+            assertEquals("embed-v1", client.resolve().getEmbedModel());
+        }
+    }
+
     private AnnotationConfigApplicationContext context(ModelsConfigBeanHolder holder,
                                                        ModelsConfigBeanMapper<ModelsConfigBean> mapper) {
         AnnotationConfigApplicationContext ctx = new AnnotationConfigApplicationContext();
@@ -72,6 +122,7 @@ class ModelConfigCacheInvalidationTest {
         ctx.getBeanFactory().registerSingleton("modelsConfigBeanMapper", mapper);
         ctx.registerBean(RerankResolver.class);
         ctx.registerBean(ModelPriceResolver.class);
+        ctx.registerBean(EmbeddingClient.class);
         ctx.refresh();
         return ctx;
     }
@@ -96,6 +147,16 @@ class ModelConfigCacheInvalidationTest {
         c.setName("m");
         c.setUpstreamModel("m");
         c.setPriceInputPerMillion(inputPerMillion);
+        return c;
+    }
+
+    private ModelsConfigBean embeddingConfig(String embedModel) {
+        ModelsConfigBean c = new ModelsConfigBean();
+        c.setProtocol("openai");
+        c.setEnable(true);
+        c.setBaseUrl("http://127.0.0.1:9");
+        c.setEmbedModel(embedModel);
+        c.setName("embed");
         return c;
     }
 }
