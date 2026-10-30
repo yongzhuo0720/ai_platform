@@ -11,7 +11,8 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "check:markdown": "node scripts/check-markdown.mjs",
-    "check:streaming": "node scripts/check-streaming.mjs"
+    "check:streaming": "node scripts/check-streaming.mjs",
+    "check:icons": "node scripts/check-icons.mjs"
   },
   "dependencies": {
     "@element-plus/icons-vue": "^2.3.2",

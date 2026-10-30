@@ -181,6 +181,7 @@ mvn -s $settings "-Dmaven.repo.local=$repo" test
 ```bash
 cd frontend
 npm run typecheck      # TypeScript 类型检查
+npm run check:icons    # 图标注册检查（模板图标必须 import 或全局注册）
 npm run test            # 逻辑层单元测试（Vitest），7 个文件 / 137 项
 npm run check:streaming # 流式超时/取消回归，14 项
 npm run check:markdown  # Markdown 与 XSS 消毒回归，10 项
@@ -189,19 +190,26 @@ npm run build           # 生产构建
 
 本地一键验证使用 `scripts/verify.ps1 -JavaHome '<你的 JDK 8 路径>'`。
 
-### 当前测试结果（2026-10-29 实测）
+### 当前测试结果（2026-10-30 实测）
 
 | 项目 | 结果 |
 |---|---|
-| 后端单元测试 | **165 项通过，0 失败** |
+| 后端单元测试 | **165 项通过，0 失败**（2026-10-29） |
 | 前端 TypeScript 检查 | 通过 |
+| 前端图标注册检查 | 通过（56 个在用图标全部可解析） |
+| 前端单元测试 | 7 个文件 / **137 项通过** |
 | 前端流式回归 | 14 项通过 |
-| 前端 Markdown / XSS 回归 | 10 项通过（**本次修复前该脚本一直是失败的，见下**） |
-| 前端生产构建 | 通过（仍有 element-plus 1.05MB 分包警告） |
+| 前端 Markdown / XSS 回归 | 10 项通过（**2026-10-29 前该脚本一直是失败的，见文档**） |
+| 前端生产构建 | 通过（element-plus 分块 922.89 kB / gzip 296.83 kB，仍有体积警告） |
 
-2026-10-30 新增：前端逻辑层单元测试（Vitest + jsdom，覆盖 ChatView 拆分后的
-格式化 / 存储 / 选择器 / 表单 / 助手权限 / 分页竞态 / 发送逻辑），7 个文件
-**137 项通过**，已接入 CI 与 `scripts/verify.ps1`。
+2026-10-30 前端改进：
+
+1. **逻辑层单元测试**（Vitest + jsdom）：覆盖 ChatView 拆分后的格式化 / 存储 /
+   选择器 / 表单 / 助手权限 / 分页竞态 / 发送逻辑，已接入 CI 与 `scripts/verify.ps1`。
+2. **图标按需注册**：`main.ts` 原来全量注册 293 个 Element Plus 图标，实际只用到
+   56 个。改为组件内 import + 23 个全局图标后，element-plus 分块从 1,052.14 kB
+   降到 922.89 kB（gzip 331.25 → 296.83 kB），并新增 `check:icons` 防止模板漏注册
+   导致图标静默留白。
 
 2026-10-29 补充的测试类：
 
