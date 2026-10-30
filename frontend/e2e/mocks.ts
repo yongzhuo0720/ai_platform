@@ -12,6 +12,12 @@ const JSON_HEADERS = { "content-type": "application/json; charset=utf-8" };
 export interface BackendMockOptions {
   /** 网关模块是否已配置；知识库页用例需要 file: false */
   modules?: Record<string, boolean>;
+  /**
+   * Dify 对话接口返回的错误响应。
+   * <p>配置后 /chat/chat-messages 直接返回该状态与错误体（如配额 429），
+   * 用于覆盖「发送失败时错误如何呈现」这条路径；不配置则回一段正常的 SSE 回答。</p>
+   */
+  difyChatError?: { status: number; body: unknown };
 }
 
 /**
@@ -99,6 +105,23 @@ export async function installBackendMocks(
     // Dify 协议接口：直接返回业务 JSON，不套 resp_code 外壳
     if (path.endsWith("/ai/api/aiGateway/chat/parameters")) {
       return respond({ user_input_form: [], suggested_questions: [] });
+    }
+    if (path.endsWith("/ai/api/aiGateway/chat/chat-messages")) {
+      if (options.difyChatError) {
+        return respond(options.difyChatError.body, options.difyChatError.status);
+      }
+      return route.fulfill({
+        status: 200,
+        headers: { "content-type": "text/event-stream; charset=utf-8" },
+        body: [
+          'data: {"event":"message","answer":"你好","message_id":"e2e-msg-1","conversation_id":"e2e-conv-1"}',
+          "",
+          'data: {"event":"message_end","message_id":"e2e-msg-1","conversation_id":"e2e-conv-1"}',
+          "",
+          "data: [DONE]",
+          "",
+        ].join("\n"),
+      });
     }
     if (path.endsWith("/ai/api/aiGateway/chat/conversations")) {
       return respond({ data: [], has_more: false, limit: 30 });
