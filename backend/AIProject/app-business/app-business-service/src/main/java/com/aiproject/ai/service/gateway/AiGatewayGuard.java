@@ -116,6 +116,183 @@ public class AiGatewayGuard {
         return Decision.allow();
     }
 
+    /**
+     * 请求开始前预扣 Token：先自增再比较，把「检查额度」与「完成后计费」之间的
+     * 并发窗口压缩到一次 Redis 自增。
+     * <p>
+     * 用户池与部门池都可能生效：两个池都要预扣，任一超额就回滚并拒绝。
+     * Redis 异常时返回「未预扣」，仍走完成后的 addTokens——治理能力降级，
+     * 但不阻断 AI 入口。
+     */
+    public Reservation reserve(String userId, String module) {
+        if (userId == null || userId.isEmpty() || !tokenQuotaApplies(module)) {
+            return Reservation.none();
+        }
+        long tokens = properties.getQuotaReserveTokens();
+        if (tokens <= 0) {
+            return Reservation.none();
+        }
+        String userKey = null;
+        String unitKey = null;
+        boolean userReserved = false;
+        boolean unitReserved = false;
+        try {
+            long userQuota;
+            try {
+                userQuota = quotaHolder.effectiveQuota(userId);
+            } catch (Exception e) {
+                log.warn("[AiGateway] 读取用户配额失败，跳过预扣, uid={}: {}", userId, e.getMessage());
+                return Reservation.none();
+            }
+            String gid = gidOf(userId);
+            String unitOwner = gid == null || gid.trim().isEmpty() ? null : UNIT_PREFIX + gid.trim();
+            long unitQuota = 0L;
+            if (unitOwner != null) {
+                AiUserQuotaBean unit = quotaHolder.find(unitOwner);
+                unitQuota = unit == null || unit.getDailyTokenQuota() == null
+                        ? 0L : unit.getDailyTokenQuota();
+            }
+            if (userQuota <= 0 && unitQuota <= 0) {
+                return Reservation.none();
+            }
+
+            userKey = todayTokenKey(userId);
+            Long userUsed = redisServer.increment(userKey, tokens);
+            if (userUsed == null) {
+                // Redis 未返回计数说明自增没生效，放弃预扣而不是假装已占用
+                return Reservation.none();
+            }
+            userReserved = true;
+            redisTemplate.expire(userKey, 2, TimeUnit.DAYS);
+            if (userQuota > 0 && userUsed > userQuota) {
+                redisServer.decrement(userKey, tokens);
+                userReserved = false;
+                long used = userUsed - tokens;
+                return Reservation.blocked("今日 AI 额度已用完（已用 " + used + " / "
+                        + userQuota + " tokens），请明天再试或联系管理员");
+            }
+
+            if (unitQuota > 0) {
+                unitKey = todayTokenKey(unitOwner);
+                Long unitUsed = redisServer.increment(unitKey, tokens);
+                if (unitUsed == null) {
+                    redisServer.decrement(userKey, tokens);
+                    userReserved = false;
+                    return Reservation.none();
+                }
+                unitReserved = true;
+                redisTemplate.expire(unitKey, 2, TimeUnit.DAYS);
+                if (unitUsed > unitQuota) {
+                    redisServer.decrement(unitKey, tokens);
+                    unitReserved = false;
+                    redisServer.decrement(userKey, tokens);
+                    userReserved = false;
+                    long used = unitUsed - tokens;
+                    return Reservation.blocked("所在部门今日 AI 额度已用完（" + used + " / "
+                            + unitQuota + " tokens），请联系管理员");
+                }
+            }
+            userReserved = false; // 预扣转交给 Reservation，由 settle 负责结算
+            unitReserved = false;
+            return Reservation.active(userId, unitOwner, tokens);
+        } catch (Exception e) {
+            if (userReserved && userKey != null) {
+                try {
+                    redisServer.decrement(userKey, tokens);
+                } catch (Exception ignored) {
+                    // 回滚失败只能依赖次日 key 过期
+                }
+            }
+            if (unitReserved && unitKey != null) {
+                try {
+                    redisServer.decrement(unitKey, tokens);
+                } catch (Exception ignored) {
+                    // 回滚失败只能依赖次日 key 过期
+                }
+            }
+            log.warn("[AiGateway] 预扣配额失败，已放行, uid={}: {}", userId, e.getMessage());
+            return Reservation.none();
+        }
+    }
+
+    /**
+     * 请求结束后按真实 usage 结算预扣：多退少补；usage 缺失（失败/中断）时传 0 全额释放。
+     * <p>
+     * 同一 Reservation 只结算一次；未预扣（配额不限或 Redis 降级）时是空操作，
+     * 调用方仍按原逻辑走 {@link #addTokens}。
+     */
+    public void settle(Reservation reservation, long actualTokens) {
+        if (reservation == null || !reservation.isActive() || !reservation.trySettle()) {
+            return;
+        }
+        long delta = actualTokens - reservation.getTokens();
+        try {
+            adjustTokens(todayTokenKey(reservation.getUserId()), delta);
+            if (reservation.getUnitOwner() != null) {
+                adjustTokens(todayTokenKey(reservation.getUnitOwner()), delta);
+            }
+        } catch (Exception e) {
+            log.warn("[AiGateway] 结算预扣配额失败, uid={}: {}", reservation.getUserId(), e.getMessage());
+        }
+    }
+
+    private void adjustTokens(String key, long delta) {
+        if (delta > 0) {
+            redisServer.increment(key, delta);
+            redisTemplate.expire(key, 2, TimeUnit.DAYS);
+        } else if (delta < 0) {
+            redisServer.decrement(key, -delta);
+            redisTemplate.expire(key, 2, TimeUnit.DAYS);
+        }
+    }
+
+    /** 预扣结果：active 表示已占用额度；blocked 表示额度不足，调用方应直接拒绝 */
+    @Getter
+    public static class Reservation {
+        private static final Reservation NONE = new Reservation(false, false, null, 0L, null, null);
+
+        private final boolean active;
+        private final boolean blocked;
+        private final String blockedMessage;
+        private final long tokens;
+        private final String userId;
+        /** 部门共享池的配额行 userId（"unit:gid"），无部门时为 null */
+        private final String unitOwner;
+        private final java.util.concurrent.atomic.AtomicBoolean settled =
+                new java.util.concurrent.atomic.AtomicBoolean(false);
+
+        private Reservation(boolean active, boolean blocked, String blockedMessage,
+                            long tokens, String userId, String unitOwner) {
+            this.active = active;
+            this.blocked = blocked;
+            this.blockedMessage = blockedMessage;
+            this.tokens = tokens;
+            this.userId = userId;
+            this.unitOwner = unitOwner;
+        }
+
+        public static Reservation none() {
+            return NONE;
+        }
+
+        public static Reservation blocked(String message) {
+            return new Reservation(false, true, message, 0L, null, null);
+        }
+
+        public static Reservation active(String userId, String unitOwner, long tokens) {
+            return new Reservation(true, false, null, tokens, userId, unitOwner);
+        }
+
+        boolean trySettle() {
+            return settled.compareAndSet(false, true);
+        }
+
+        /** 拒绝时统一使用 quota_exceeded，前端按 429 处理 */
+        public String getBlockedCode() {
+            return "quota_exceeded";
+        }
+    }
+
     /** 部门配额行的 userId 前缀 */
 
     public long usedTokens(String userId) {

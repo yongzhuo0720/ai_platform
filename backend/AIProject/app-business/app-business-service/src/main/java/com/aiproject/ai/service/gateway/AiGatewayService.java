@@ -203,7 +203,15 @@ public class AiGatewayService {
             return;
         }
 
-        doProxy(module, userId, endpoint, endpoint, config, request, response, start);
+        AiGatewayGuard.Reservation reservation = guard.reserve(userId, module);
+        if (reservation != null && reservation.isBlocked()) {
+            writeError(response, 429, reservation.getBlockedCode(), reservation.getBlockedMessage());
+            record(userId, module, endpoint, method, "blocked", 429, null, start,
+                    reservation.getBlockedMessage(), clientIp(request));
+            return;
+        }
+        doProxy(module, userId, endpoint, endpoint, config, request, response, start,
+                null, reservation);
     }
 
     /**
@@ -276,10 +284,21 @@ public class AiGatewayService {
             return;
         }
 
+        // 预扣放在请求体校验之后：非法请求不会占用额度
+        AiGatewayGuard.Reservation reservation =
+                guard.reserve(userId, ModelGatewayResolver.MODULE_MODELS);
+        if (reservation != null && reservation.isBlocked()) {
+            writeError(response, 429, reservation.getBlockedCode(), reservation.getBlockedMessage());
+            record(userId, ModelGatewayResolver.MODULE_MODELS, endpoint, method, "blocked",
+                    429, null, start, reservation.getBlockedMessage(), clientIp(request));
+            return;
+        }
+
         AiGatewayConfigResolver.ResolvedConfig config =
                 new AiGatewayConfigResolver.ResolvedConfig(model.getBaseUrl(), model.getApiKey());
         doProxy(ModelGatewayResolver.MODULE_MODELS, userId,
-                upstreamEndpoint, endpoint, config, request, response, start, presetBody);
+                upstreamEndpoint, endpoint, config, request, response, start, presetBody,
+                reservation);
     }
 
     /** 读取并改写 OpenAI 协议请求体；失败时写错误响应并记录审计，返回 null */
@@ -503,16 +522,8 @@ public class AiGatewayService {
                          String upstreamEndpoint, String auditEndpoint,
                          AiGatewayConfigResolver.ResolvedConfig config,
                          HttpServletRequest request, HttpServletResponse response,
-                         long start) {
-        doProxy(module, userId, upstreamEndpoint, auditEndpoint, config,
-                request, response, start, null);
-    }
-
-    private void doProxy(String module, String userId,
-                         String upstreamEndpoint, String auditEndpoint,
-                         AiGatewayConfigResolver.ResolvedConfig config,
-                         HttpServletRequest request, HttpServletResponse response,
-                         long start, byte[] presetBody) {
+                         long start, byte[] presetBody,
+                         AiGatewayGuard.Reservation reservation) {
         String method = request.getMethod();
         String clientIp = clientIp(request);
         HttpURLConnection conn = null;
@@ -520,6 +531,9 @@ public class AiGatewayService {
         // 提升到 try 外：客户端中途断开时 catch 里要用它记审计，
         // 记录「上游当时到底回了什么状态」，而不是笼统的 502
         Integer upstreamStatus = null;
+        // 成功且上游返回 usage 时的真实用量；finally 里据此结算预扣
+        long actualTokens = 0L;
+        boolean billable = false;
 
         try {
             String target = config.getApiUrl() + "/" + upstreamEndpoint;
@@ -614,7 +628,13 @@ public class AiGatewayService {
             // 注意：正常响应里若带了 error 字段（部分模型会在 200 里塞错误信息），
             // 同样按失败处理，不计费。
             if (!failed && parser.getTotalTokens() != null) {
-                guard.addTokens(userId, module, parser.getTotalTokens());
+                actualTokens = parser.getTotalTokens();
+                billable = true;
+                // 已预扣的请求由 settle 按真实用量多退少补；
+                // 未预扣（配额不限或 Redis 降级）才在这里直接累计
+                if (reservation == null || !reservation.isActive()) {
+                    guard.addTokens(userId, module, actualTokens);
+                }
             } else if (failed && parser.getTotalTokens() != null) {
                 log.warn("[AiGateway] 上游失败，本次用量不计入配额: uid={}, module={}, tokens={}, httpStatus={}",
                         userId, module, parser.getTotalTokens(), upstreamStatus);
@@ -641,6 +661,10 @@ public class AiGatewayService {
                     aborted ? upstreamStatus : HttpServletResponse.SC_BAD_GATEWAY,
                     null, start, error, clientIp);
         } finally {
+            // 成功按真实用量结算；失败、异常或客户端中断全额释放，没拿到结果不占额度
+            if (reservation != null && reservation.isActive()) {
+                guard.settle(reservation, billable ? actualTokens : 0L);
+            }
             closeQuietly(upstream);
             if (conn != null) {
                 conn.disconnect();
