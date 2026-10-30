@@ -183,7 +183,7 @@ cd frontend
 npm run typecheck      # TypeScript 类型检查
 npm run check:icons    # 图标注册检查（模板图标必须 import 或全局注册）
 npm run test            # 单元测试（Vitest），9 个文件 / 147 项
-npm run test:component  # 组件测试（真实渲染），18 个文件 / 147 项
+npm run test:component  # 组件测试（真实渲染），19 个文件 / 156 项
 npm run check:streaming # 流式超时/取消回归，14 项
 npm run check:markdown  # Markdown 与 XSS 消毒回归，10 项
 npm run build            # 生产构建
@@ -200,7 +200,7 @@ npm run check:bundle     # 首屏 gzip 体积预算（需先 build）
 | 前端 TypeScript 检查 | 通过 |
 | 前端图标注册检查 | 通过（56 个在用图标全部可解析） |
 | 前端单元测试 | 9 个文件 / **147 项通过** |
-| 前端组件测试 | 18 个文件 / **147 项通过**（@vue/test-utils 真实渲染 LoginView / ChatComposer / ChatMessageList / ChatSidebar / KbSearchView / MyUsageView / ShareView / AiGatewayView / UserView / RoleView / UnitView / ModelsConfigView / DifyConfigView / LogView / KnowledgeBaseMngView / ModelsView / ApplicationsView / CapabilitiesView） |
+| 前端组件测试 | 19 个文件 / **156 项通过**（@vue/test-utils 真实渲染 LoginView / ChatComposer / ChatMessageList / ChatSidebar / KbSearchView / MyUsageView / ShareView / AiGatewayView / UserView / RoleView / UnitView / ModelsConfigView / DifyConfigView / LogView / KnowledgeBaseMngView / ModelsView / ApplicationsView / CapabilitiesView / DatasetView） |
 | 前端流式回归 | 14 项通过 |
 | 前端 Markdown / XSS 回归 | 10 项通过（**2026-10-29 前该脚本一直是失败的，见文档**） |
 | 前端生产构建 | 通过（element-plus 按路由分包，入口 gzip 152.5 kB，已无 >500 kB 分包警告） |
@@ -228,7 +228,7 @@ npm run check:bundle     # 首屏 gzip 体积预算（需先 build）
    旧分块因向量维度不一致会被跳过（此前是静默跳过），现在检索结果返回 `skipped`
    与 `warning`，检索页直接提示重新上传，并分开统计「维度不一致 / 向量数据损坏」。
 6. **组件级测试**：引入 `@vue/test-utils` 与独立的 `vitest.component.config.ts`，
-   直接渲染登录页、聊天页三个核心组件、知识检索页、个人用量页、分享页、模型仓库页、场景应用页、能力广场页、AI 调用治理后台、用户/角色/部门管理、模型配置、Dify 配置、调用日志与知识库管理后台（共 147 项）：
+   直接渲染登录页、聊天页三个核心组件、知识检索页、个人用量页、分享页、模型仓库页、场景应用页、能力广场页、数据集市场页、AI 调用治理后台、用户/角色/部门管理、模型配置、Dify 配置、调用日志与知识库管理后台（共 156 项）：
    输入区的 Enter / 输入法组词、发送与停止、模型菜单、知识库切换、附件移除；消息区的
    Markdown 渲染、思考块折叠、引用来源、历史分页、点赞反馈与重新生成；侧栏的 Tab 切换、
    置顶/今天分组、置顶/重命名/删除、分享空会话拦截、会话分页、助手菜单与搜索、移动端
@@ -245,11 +245,13 @@ npm run check:bundle     # 首屏 gzip 体积预算（需先 build）
    搜索/标签筛选/四种排序、新建编辑校验、管理权限的部门树与角色勾选（超管角色
    不出现）、损坏权限 JSON 兜底与 `javascript:` 地址拦截；能力广场页的图标上传
    （base64 / 2MB 限制 / 移除释放）、SSO 会话与授权地址跳转、接口失败提示与
-   非 SSO 地址消毒；免登录分享页的失效提示与用户消息转义 / 助手 Markdown 消毒，
+   非 SSO 地址消毒；数据集市场的搜索/排序/标签筛选、新建编辑校验、删除提示与
+   下载预览；免登录分享页的失效提示与用户消息转义 / 助手 Markdown 消毒，
    已接入 CI 与 `scripts/verify.ps1`。写测试时顺带修掉三类真实缺陷：
-   登录页、模型仓库、场景应用、能力广场与预览面板依赖 Vite 自动导入的
-   `ElMessage` / `ElLoading` / Vue API（脱离构建环境即 ReferenceError）、
-   目录页删除接口返回非 0 时静默无提示、个人用量页快速切换区间时旧响应覆盖新数据。
+   登录页、模型仓库、场景应用、能力广场、数据集市场与预览面板依赖 Vite
+   自动导入的 `ElMessage` / `ElLoading` / Vue API（脱离构建环境即
+   ReferenceError）、目录页删除接口返回非 0 时静默无提示、个人用量页
+   快速切换区间时旧响应覆盖新数据。
 7. **首屏只加载当前路由需要的组件**：element-plus 原先被 `manualChunks` 固定成
    单一 vendor 包，管理台才用的 Table / DatePicker / Tree 也随首屏预加载。
    移除该固定分组后由 Rollup 按路由动态 import 切分，首屏 JS gzip 417.0 → 202.8 kB
