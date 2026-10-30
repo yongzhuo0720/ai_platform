@@ -3,10 +3,13 @@ package com.aiproject.ai.service.holde;
 import com.aiproject.ai.service.bean.KbChunkBean;
 import com.aiproject.ai.service.bean.KbDocBean;
 import com.aiproject.ai.service.gateway.EmbeddingClient;
+import com.aiproject.ai.service.gateway.dto.KbDocUpload;
 import com.aiproject.ai.service.gateway.dto.KbSearchItem;
 import com.aiproject.ai.service.mapper.KbChunkBeanMapper;
 import com.aiproject.ai.service.mapper.KbDocBeanMapper;
 import com.heneng.hnsp.common.croe.model.Result;
+import com.heneng.hnsp.common.db.utils.PageRequest;
+import com.heneng.hnsp.common.db.utils.PageResult;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
@@ -288,8 +291,53 @@ class KbRagHolderTest {
         verify(kbChunkBeanMapper, never()).select(isNull(), any(KbChunkBean.class));
     }
 
-    // ==================== 混合检索 + RRF 融合 ====================
+    /**
+     * 分块写入失败必须回收已写入的文档与分块：否则文档列表会展示
+     * 一个 chunkCount 正常、实际检索不到任何内容的「空壳文档」。
+     */
+    @Test
+    void uploadDoc_shouldRollbackWhenChunkInstallFails() throws Exception {
+        when(embeddingClient.resolve()).thenReturn(embeddingConfig());
+        when(embeddingClient.embed(any(EmbeddingClient.ResolvedEmbedding.class), any(List.class)))
+                .thenReturn(Arrays.asList(new double[]{1.0, 0.0}, new double[]{0.0, 1.0}));
+        when(kbDocBeanMapper.install(any(KbDocBean.class))).thenReturn(1);
 
+        KbDocBean existing = new KbDocBean();
+        existing.setIid(9L);
+        PageResult<KbDocBean> page = new PageResult<KbDocBean>();
+        page.setContent(Collections.singletonList(existing));
+        when(kbDocBeanMapper.selectPage(any(PageRequest.class), any(KbDocBean.class)))
+                .thenReturn(Result.succeed(page, "查询成功"));
+
+        // 第一块成功，第二块失败
+        when(kbChunkBeanMapper.install(any(KbChunkBean.class))).thenReturn(1, 0);
+        when(kbChunkBeanMapper.delete(any(KbChunkBean.class))).thenReturn(2);
+        when(kbDocBeanMapper.delete(any(KbDocBean.class))).thenReturn(1);
+
+        KbDocUpload data = new KbDocUpload();
+        data.setName("制度.txt");
+        data.setKbName("默认知识库");
+        // 超过单块上限的长段落会被滑动窗口切成两块
+        data.setContent(fill('甲', 600));
+
+        Result<KbDocBean> result = holder.uploadDoc("u1", data);
+
+        assertNull(result.getDatas(), "分块失败时整篇文档都不应视为入库成功");
+        assertNotNull(result.getResp_msg());
+        assertTrue(result.getResp_msg().contains("已回滚"));
+
+        ArgumentCaptor<KbChunkBean> chunkCaptor = ArgumentCaptor.forClass(KbChunkBean.class);
+        verify(kbChunkBeanMapper).delete(chunkCaptor.capture());
+        assertEquals(9L, chunkCaptor.getValue().getDocIid(), "回滚必须清掉已写入的分块");
+        assertEquals("u1", chunkCaptor.getValue().getLastuser());
+
+        ArgumentCaptor<KbDocBean> docCaptor = ArgumentCaptor.forClass(KbDocBean.class);
+        verify(kbDocBeanMapper).delete(docCaptor.capture());
+        assertEquals(9L, docCaptor.getValue().getIid());
+        assertEquals("u1", docCaptor.getValue().getLastuser(), "回滚删除同样要带归属条件");
+    }
+
+    // ==================== 混合检索 + RRF 融合 ====================
     /**
      * 混合检索必须同时发起两路：
      * 向量路走 2 参 {@code select(pageRequest, bean)}，
@@ -437,5 +485,11 @@ class KbRagHolderTest {
         List<String> terms = KbRagHolder.tokenize("报");
         assertEquals(1, terms.size());
         assertEquals("报", terms.get(0));
+    }
+
+    private static String fill(char c, int count) {
+        char[] chars = new char[count];
+        Arrays.fill(chars, c);
+        return new String(chars);
     }
 }
