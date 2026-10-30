@@ -1,4 +1,5 @@
-import { ref, computed, nextTick } from 'vue'
+import { ref, computed, nextTick, onMounted, reactive } from 'vue'
+import { ElLoading, ElMessage, ElMessageBox } from 'element-plus'
 import { isConfirmCancelled } from '@/utils/confirm'
 import { debug } from '@/utils/debug'
 import { safeJsonParse } from '@/utils/json'
@@ -147,6 +148,8 @@ export function useIndex() {
       if (res.resp_code == 0) {
         ElMessage.success('删除成功')
         getDataList()
+      } else {
+        ElMessage.error(res.resp_msg || '删除失败')
       }
     } catch (error) {
       // 用户取消不提示；真失败要提示并关掉 loading（原来两者都被吞了）
