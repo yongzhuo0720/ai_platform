@@ -80,6 +80,8 @@ class ModelRoutingTest {
 
     private ModelsConfigBean model(String protocol, Boolean enabled) {
         ModelsConfigBean config = new ModelsConfigBean();
+        // 真实库行一定有主键；直连路由按 iid 建索引，测试数据也要带上
+        config.setIid(1L);
         config.setProtocol(protocol);
         config.setEnable(enabled);
         config.setBaseUrl("http://localhost/v1");

@@ -5,9 +5,12 @@ import com.aiproject.ai.service.holde.ModelsConfigBeanHolder;
 import lombok.Getter;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.context.event.EventListener;
 import org.springframework.stereotype.Component;
 
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
 /**
  * 模型直连路由：按 modelsconfigbean 的 iid 解析出上游 OpenAI 兼容服务。
@@ -23,45 +26,86 @@ public class ModelGatewayResolver {
     public static final String MODULE_NAME = "模型直连";
     public static final String PROTOCOL_OPENAI = "openai";
 
+    /** 配置快照 TTL：后台写入会发 ModelConfigChangedEvent 立即失效，TTL 只兜底直改库 */
+    private static final long CONFIG_CACHE_TTL_MS = 5 * 60 * 1000L;
+
     @Autowired
     ModelsConfigBeanHolder modelsConfigBeanHolder;
+
+    private volatile Map<Long, ResolvedModel> modelsCache;
+    private volatile long cacheAt;
+    private volatile boolean cacheLoaded;
 
     /**
      * @return 解析结果；模型不存在、未配置直连或配置不全时返回 null
      */
     public ResolvedModel resolve(long iid) {
-        ModelsConfigBean where = new ModelsConfigBean();
-        where.setIid(iid);
-        try {
-            List<ModelsConfigBean> list = modelsConfigBeanHolder.queryList(where, null);
-            if (list == null || list.isEmpty()) {
-                return null;
-            }
-            return build(list.get(0));
-        } catch (Exception e) {
-            log.warn("[AiGateway] 读取直连模型配置失败, iid={}: {}", iid, e.getMessage());
-            return null;
+        Map<Long, ResolvedModel> models = allModels();
+        return models == null ? null : models.get(iid);
+    }
+
+    /**
+     * 一次读全表建快照：直连对话每次请求都要按 iid 取配置，
+     * 逐条查库在热门路径上纯属浪费；配置表规模很小。
+     */
+    private Map<Long, ResolvedModel> allModels() {
+        long now = System.currentTimeMillis();
+        if (cacheLoaded && now - cacheAt < CONFIG_CACHE_TTL_MS) {
+            return modelsCache;
         }
+        try {
+            return refresh(now);
+        } catch (Exception e) {
+            // 读库失败回退上一次快照：一次抖动不应该让所有对话不可用
+            log.warn("[AiGateway] 读取直连模型配置失败: {}", e.getMessage());
+            return modelsCache;
+        }
+    }
+
+    private synchronized Map<Long, ResolvedModel> refresh(long now) {
+        // 双重检查：并发首访时只让一个线程查库
+        if (cacheLoaded && now - cacheAt < CONFIG_CACHE_TTL_MS) {
+            return modelsCache;
+        }
+        Map<Long, ResolvedModel> loaded = loadFromDb();
+        modelsCache = loaded;
+        cacheAt = now;
+        cacheLoaded = true;
+        return loaded;
+    }
+
+    private Map<Long, ResolvedModel> loadFromDb() {
+        Map<Long, ResolvedModel> models = new HashMap<Long, ResolvedModel>();
+        List<ModelsConfigBean> list = modelsConfigBeanHolder.queryList(new ModelsConfigBean(), null);
+        if (list == null) {
+            return models;
+        }
+        for (ModelsConfigBean item : list) {
+            ResolvedModel resolved = build(item);
+            if (resolved != null && item.getIid() != null) {
+                models.put(item.getIid(), resolved);
+            }
+        }
+        return models;
+    }
+
+    /** 后台保存模型配置后立即丢快照，不必等 TTL */
+    @EventListener
+    public void onModelConfigChanged(ModelConfigChangedEvent event) {
+        invalidateCache();
+    }
+
+    /** synchronized 与 refresh 互斥，避免失效瞬间被并发刷新写回旧值 */
+    public synchronized void invalidateCache() {
+        modelsCache = null;
+        cacheAt = 0L;
+        cacheLoaded = false;
     }
 
     /** 后台配置状态用：是否存在至少一个可直连的模型 */
     public boolean hasDirectModels() {
-        ModelsConfigBean where = new ModelsConfigBean();
-        where.setProtocol(PROTOCOL_OPENAI);
-        try {
-            List<ModelsConfigBean> list = modelsConfigBeanHolder.queryList(where, null);
-            if (list == null) {
-                return false;
-            }
-            for (ModelsConfigBean item : list) {
-                if (build(item) != null) {
-                    return true;
-                }
-            }
-        } catch (Exception e) {
-            log.warn("[AiGateway] 扫描直连模型失败: {}", e.getMessage());
-        }
-        return false;
+        Map<Long, ResolvedModel> models = allModels();
+        return models != null && !models.isEmpty();
     }
 
     private ResolvedModel build(ModelsConfigBean bean) {

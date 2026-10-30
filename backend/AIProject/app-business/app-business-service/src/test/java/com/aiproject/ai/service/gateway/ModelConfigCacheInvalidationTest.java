@@ -9,8 +9,10 @@ import org.springframework.context.annotation.AnnotationConfigApplicationContext
 import java.util.Collections;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.mock;
@@ -114,6 +116,50 @@ class ModelConfigCacheInvalidationTest {
         }
     }
 
+    /**
+     * 直连模型路由在每个聊天请求上都会 resolve 一次，必须命中缓存；
+     * 后台停用/改密钥后要立即生效，否则「已停用」的模型在 TTL 内仍可调用。
+     */
+    @Test
+    void gatewayModelLookupShouldBeCachedAndInvalidatedOnChange() {
+        ModelsConfigBeanHolder holder = mock(ModelsConfigBeanHolder.class);
+        when(holder.queryList(any(ModelsConfigBean.class), isNull()))
+                .thenReturn(Collections.singletonList(directModel(7L, "key-old")));
+
+        try (AnnotationConfigApplicationContext ctx = context(holder, mockMapper())) {
+            ModelGatewayResolver resolver = ctx.getBean(ModelGatewayResolver.class);
+            assertEquals("key-old", resolver.resolve(7L).getApiKey());
+
+            when(holder.queryList(any(ModelsConfigBean.class), isNull()))
+                    .thenReturn(Collections.singletonList(directModel(7L, "key-new")));
+            assertEquals("key-old", resolver.resolve(7L).getApiKey(), "TTL 内仍是旧配置");
+            verify(holder, times(1)).queryList(any(ModelsConfigBean.class), isNull());
+
+            ctx.publishEvent(new ModelConfigChangedEvent());
+            assertEquals("key-new", resolver.resolve(7L).getApiKey(), "轮换密钥应立即生效");
+        }
+    }
+
+    @Test
+    void deletedGatewayModelShouldStopResolvingImmediately() {
+        ModelsConfigBeanHolder holder = mock(ModelsConfigBeanHolder.class);
+        when(holder.queryList(any(ModelsConfigBean.class), isNull()))
+                .thenReturn(Collections.singletonList(directModel(7L, "key-old")));
+
+        try (AnnotationConfigApplicationContext ctx = context(holder, mockMapper())) {
+            ModelGatewayResolver resolver = ctx.getBean(ModelGatewayResolver.class);
+            assertNotNull(resolver.resolve(7L));
+            assertNull(resolver.resolve(8L), "未配置的 iid 直接返回 null");
+            assertTrue(resolver.hasDirectModels());
+
+            when(holder.queryList(any(ModelsConfigBean.class), isNull()))
+                    .thenReturn(Collections.<ModelsConfigBean>emptyList());
+            ctx.publishEvent(new ModelConfigChangedEvent());
+            assertNull(resolver.resolve(7L), "删除后必须立即不可用");
+            assertFalse(resolver.hasDirectModels());
+        }
+    }
+
     private AnnotationConfigApplicationContext context(ModelsConfigBeanHolder holder,
                                                        ModelsConfigBeanMapper<ModelsConfigBean> mapper) {
         AnnotationConfigApplicationContext ctx = new AnnotationConfigApplicationContext();
@@ -123,6 +169,7 @@ class ModelConfigCacheInvalidationTest {
         ctx.registerBean(RerankResolver.class);
         ctx.registerBean(ModelPriceResolver.class);
         ctx.registerBean(EmbeddingClient.class);
+        ctx.registerBean(ModelGatewayResolver.class);
         ctx.refresh();
         return ctx;
     }
@@ -157,6 +204,18 @@ class ModelConfigCacheInvalidationTest {
         c.setBaseUrl("http://127.0.0.1:9");
         c.setEmbedModel(embedModel);
         c.setName("embed");
+        return c;
+    }
+
+    private ModelsConfigBean directModel(Long iid, String apiKey) {
+        ModelsConfigBean c = new ModelsConfigBean();
+        c.setIid(iid);
+        c.setProtocol("openai");
+        c.setEnable(true);
+        c.setBaseUrl("http://127.0.0.1:9");
+        c.setApiKey(apiKey);
+        c.setUpstreamModel("gpt-4o-mini");
+        c.setName("gpt");
         return c;
     }
 }
