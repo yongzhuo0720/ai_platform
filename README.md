@@ -68,7 +68,7 @@ Dify                              本平台 PostgreSQL
 ### 环境要求
 
 - **JDK 8**（Java 21 与项目 Lombok 版本不兼容）
-- Node.js 18+
+- Node.js 22+（单测使用的 jsdom 30 官方要求 ≥22.22）
 - PostgreSQL 9+/Redis（仓库内 `hd_redis/` 提供本地可运行的 PG 与 Redis）
 
 ### 后端
@@ -181,6 +181,7 @@ mvn -s $settings "-Dmaven.repo.local=$repo" test
 ```bash
 cd frontend
 npm run typecheck      # TypeScript 类型检查
+npm run test            # 逻辑层单元测试（Vitest），7 个文件 / 137 项
 npm run check:streaming # 流式超时/取消回归，14 项
 npm run check:markdown  # Markdown 与 XSS 消毒回归，10 项
 npm run build           # 生产构建
@@ -197,6 +198,10 @@ npm run build           # 生产构建
 | 前端流式回归 | 14 项通过 |
 | 前端 Markdown / XSS 回归 | 10 项通过（**本次修复前该脚本一直是失败的，见下**） |
 | 前端生产构建 | 通过（仍有 element-plus 1.05MB 分包警告） |
+
+2026-10-30 新增：前端逻辑层单元测试（Vitest + jsdom，覆盖 ChatView 拆分后的
+格式化 / 存储 / 选择器 / 表单 / 助手权限 / 分页竞态 / 发送逻辑），7 个文件
+**137 项通过**，已接入 CI 与 `scripts/verify.ps1`。
 
 2026-10-29 补充的测试类：
 

@@ -22,8 +22,10 @@ export const formatUserContent = (content: string): string => {
 export const getFileTypeEmoji = (mimeType: string): string => {
   if (mimeType.startsWith('image/')) return '🖼️';
   if (mimeType === 'application/pdf') return '📕';
-  if (mimeType.includes('word') || mimeType.includes('document')) return '📄';
+  // OpenXML 的 xlsx/docx/pptx 都带 "officedocument" 字样，
+  // Excel 必须先判，否则会被 Word 分支抢先命中
   if (mimeType.includes('excel') || mimeType.includes('spreadsheet')) return '📊';
+  if (mimeType.includes('word') || mimeType.includes('document')) return '📄';
   if (mimeType.includes('zip') || mimeType.includes('rar') || mimeType.includes('compressed')) return '📦';
   if (mimeType.startsWith('text/')) return '📝';
   if (mimeType.startsWith('video/')) return '🎬';
