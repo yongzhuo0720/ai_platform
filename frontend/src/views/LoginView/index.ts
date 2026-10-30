@@ -1,5 +1,6 @@
 import { reactive, ref } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
+import { ElMessage } from 'element-plus'
 import { Lock, Star } from '@element-plus/icons-vue'
 import Cookies from 'js-cookie'
 import { isSuperAdmin } from '@/config/constants'
