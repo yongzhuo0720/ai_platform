@@ -43,7 +43,11 @@ import {
   syncAssistantPromptInput,
 } from "./chatAssistantState";
 import { readDifyPinned, writeDifyPinned } from "./useChatSelectors";
-import { getCurrentUser } from "./chatStorage";
+import {
+  addDeletedConversationId,
+  getCurrentUser,
+  removeDeletedConversationId,
+} from "./chatStorage";
 import { chatRuntime, setStartNewConversationHandler } from "./chatRuntime";
 import { loadConversationMessages } from "./useChatHistory";
 import { loadDirectConversation } from "./useChatDirect";
@@ -267,8 +271,18 @@ export const handleDeleteHistory = async (itemId: string) => {
       cancelConversationSync(itemId);
       directConversations.value = directConversations.value.filter((c) => c.id !== itemId);
       persistDirectConversations();
-      await cloudSyncRequests.get(itemId);
-      await chatConversationApi.delete(itemId);
+      const owner = chatRuntime.ownerUserId;
+      if (owner !== "guest") {
+        // 先立墓碑：即使云端删除失败，下次登录合并时也不会把会话合并回来
+        addDeletedConversationId(owner, itemId);
+        await cloudSyncRequests.get(itemId);
+        try {
+          await chatConversationApi.delete(itemId);
+          removeDeletedConversationId(owner, itemId);
+        } catch (error) {
+          console.warn("云端会话删除失败，已记录待下次合并重试:", error);
+        }
+      }
       if (activeDirectConversationId.value === itemId) {
         activeDirectConversationId.value = "";
         messages.value = [];
