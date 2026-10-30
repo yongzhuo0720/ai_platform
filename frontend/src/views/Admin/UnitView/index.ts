@@ -1,3 +1,5 @@
+import { reactive, ref, onMounted } from 'vue'
+import { ElLoading, ElMessage, ElMessageBox } from 'element-plus'
 import type { FormInstance } from 'element-plus'
 import { unitApi } from '@/api/unit'
 import Cookies from 'js-cookie'
@@ -70,19 +72,30 @@ export function useIndex() {
     }
   }
 
-  const showDelete = (row: any) => {
-    ElMessageBox.confirm('您确定要删除吗?', '提示', {
-      confirmButtonText: '确定',
-      cancelButtonText: '取消',
-      type: 'warning',
-    }).then(async () => {
+  const showDelete = async (row: any) => {
+    try {
+      await ElMessageBox.confirm('您确定要删除吗?', '提示', {
+        confirmButtonText: '确定',
+        cancelButtonText: '取消',
+        type: 'warning',
+      })
+    } catch {
+      // 取消 / 关闭确认框：直接返回，避免 .then 链产生未处理拒绝
+      return
+    }
+    try {
       const reqdata = { data: { iid: row.iid } }
       const { data: res } = await unitApi.delete(reqdata)
       if (res.resp_code == 0) {
         getDataList()
         ElMessage.success('删除成功')
+      } else {
+        ElMessage.error('删除失败')
       }
-    })
+    } catch (err) {
+      debug.error('删除部门失败', err)
+      ElMessage.error('删除失败，请稍后重试')
+    }
   }
 
   const onSave = () => {
