@@ -1,0 +1,321 @@
+import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from "vitest";
+import { enableAutoUnmount, flushPromises, mount } from "@vue/test-utils";
+import { ElLoading, ElMessage, ElMessageBox } from "element-plus";
+
+const mocks = vi.hoisted(() => ({ rid: "99999" }));
+
+vi.mock("js-cookie", () => ({
+  default: { get: vi.fn((key: string) => (key === "rid" ? mocks.rid : undefined)) },
+}));
+vi.mock("@/api/modelsMng", () => ({
+  modelsMngApi: {
+    query: vi.fn(),
+    create: vi.fn(),
+    update: vi.fn(),
+    delete: vi.fn(),
+    getDownloadUrl: vi.fn(),
+    queryWeeklyDownloadsTotal: vi.fn(),
+  },
+}));
+vi.mock("@/api/tags", () => ({
+  tagsApi: { query: vi.fn(), create: vi.fn(), update: vi.fn(), delete: vi.fn() },
+}));
+vi.mock("@/api/tagsbind", () => ({
+  tagsBindApi: { query: vi.fn(), create: vi.fn(), delete: vi.fn() },
+  default: { query: vi.fn(), create: vi.fn(), delete: vi.fn() },
+}));
+vi.mock("@/api/datasetsMng", () => ({ datasetsMngApi: {} }));
+
+import ModelsView from "../index.vue";
+import { modelsMngApi } from "@/api/modelsMng";
+import { tagsApi } from "@/api/tags";
+import { tagsBindApi } from "@/api/tagsbind";
+
+/**
+ * 模型仓库：列表/搜索/标签筛选/排序、超管门控、增改删与下载预览。
+ * 子组件（标签下拉、预览面板）渲染真实实现，API 全部 mock。
+ */
+
+enableAutoUnmount(afterEach);
+
+const query = modelsMngApi.query as Mock;
+const create = modelsMngApi.create as Mock;
+const update = modelsMngApi.update as Mock;
+const remove = modelsMngApi.delete as Mock;
+const getDownloadUrl = modelsMngApi.getDownloadUrl as Mock;
+const weeklyTotal = modelsMngApi.queryWeeklyDownloadsTotal as Mock;
+const tagsQuery = tagsApi.query as Mock;
+const bindQuery = tagsBindApi.query as Mock;
+
+const ok = (datas: unknown, resp_msg = "ok") => ({
+  data: { resp_code: 0, resp_msg, datas },
+});
+const fail = (resp_msg: string) => ({ data: { resp_code: 500, resp_msg } });
+
+const models = [
+  {
+    iid: 3,
+    name: "GPT-4o mini",
+    provider: "OpenAI",
+    description: "性价比模型",
+    size: "300 MB",
+    downloads: 120,
+    createtime: "2026-10-01 10:00:00",
+  },
+  {
+    iid: 2,
+    name: "BGE-M3",
+    provider: "BAAI",
+    description: "中文向量模型",
+    size: "1.5 GB",
+    downloads: 30,
+    createtime: "2026-09-01 10:00:00",
+  },
+  {
+    iid: 1,
+    name: "DeepSeek-V3",
+    provider: "DeepSeek",
+    description: "通用大模型",
+    size: "600 MB",
+    downloads: 900,
+    createtime: "2026-08-01 10:00:00",
+  },
+];
+
+const tags = [
+  { iid: 5, name: "推荐" },
+  { iid: 6, name: "向量" },
+];
+
+const bindings = [{ hash: "1", lableBeans: [{ iid: 5, name: "推荐" }] }];
+
+const createMessageSpies = () => ({
+  success: vi.spyOn(ElMessage, "success").mockReturnValue({ close: () => {} } as never),
+  error: vi.spyOn(ElMessage, "error").mockReturnValue({ close: () => {} } as never),
+  warning: vi.spyOn(ElMessage, "warning").mockReturnValue({ close: () => {} } as never),
+});
+
+const mountView = () => mount(ModelsView);
+
+const cardTitles = (wrapper: ReturnType<typeof mountView>) =>
+  wrapper.findAll(".list-card-title").map((item) => item.text());
+
+const clickFooter = async (wrapper: ReturnType<typeof mountView>, text: string) => {
+  const button = wrapper
+    .findAll(".el-dialog__footer button")
+    .find((item) => item.text().includes(text));
+  expect(button, `footer ${text}`).toBeTruthy();
+  await button!.trigger("click");
+  await flushPromises();
+};
+
+beforeEach(() => {
+  mocks.rid = "99999";
+  query.mockResolvedValue(ok([...models]));
+  weeklyTotal.mockResolvedValue(ok(321));
+  tagsQuery.mockResolvedValue(ok(tags));
+  bindQuery.mockResolvedValue(ok(bindings));
+  getDownloadUrl.mockResolvedValue(ok("https://example.com/model.bin"));
+});
+
+describe("ModelsView", () => {
+  it("首屏加载模型、周下载量与标签绑定，按 iid 倒序展示", async () => {
+    const wrapper = mountView();
+    await flushPromises();
+
+    expect(query).toHaveBeenCalledWith({ data: {} });
+    expect(tagsQuery).toHaveBeenCalledWith({ data: { type: "models" } });
+    expect(bindQuery).toHaveBeenCalledWith({ data: { type: "models" } });
+    expect(weeklyTotal).toHaveBeenCalled();
+
+    expect(cardTitles(wrapper)).toEqual(["GPT-4o mini", "BGE-M3", "DeepSeek-V3"]);
+    const heroStats = wrapper.findAll(".hero-stat strong").map((item) => item.text());
+    expect(heroStats).toEqual(["3", "321"]);
+    const cards = wrapper.findAll(".list-card");
+    expect(cards[0].text()).toContain("OpenAI");
+    expect(cards[0].text()).toContain("创建时间：2026-10-01 10:00:00");
+    expect(cards[2].find(".ima-card-tag").text()).toContain("推荐");
+  });
+
+  it("搜索按名称、描述、提供商匹配且忽略大小写", async () => {
+    const wrapper = mountView();
+    await flushPromises();
+
+    const input = wrapper.find('input[placeholder="搜索模型..."]');
+    await input.setValue("openai");
+    expect(cardTitles(wrapper)).toEqual(["GPT-4o mini"]);
+
+    await input.setValue("向量");
+    expect(cardTitles(wrapper)).toEqual(["BGE-M3"]);
+
+    await input.setValue("不存在");
+    expect(cardTitles(wrapper)).toEqual([]);
+  });
+
+  it("排序与标签筛选：下载量/文件大小升降序、按标签过滤", async () => {
+    const wrapper = mountView();
+    await flushPromises();
+
+    (wrapper.vm as any).sortBy = "downloads";
+    await flushPromises();
+    expect(cardTitles(wrapper)).toEqual(["DeepSeek-V3", "GPT-4o mini", "BGE-M3"]);
+
+    (wrapper.vm as any).sortBy = "downloads_asc";
+    await flushPromises();
+    expect(cardTitles(wrapper)).toEqual(["BGE-M3", "GPT-4o mini", "DeepSeek-V3"]);
+
+    (wrapper.vm as any).sortBy = "size";
+    await flushPromises();
+    expect(cardTitles(wrapper)).toEqual(["BGE-M3", "DeepSeek-V3", "GPT-4o mini"]);
+
+    (wrapper.vm as any).sortBy = "";
+    (wrapper.vm as any).selectedCategory = ["5"];
+    await flushPromises();
+    expect(cardTitles(wrapper)).toEqual(["DeepSeek-V3"]);
+  });
+
+  it("普通用户看不到新建/修改/删除，只能下载与查看标签", async () => {
+    mocks.rid = "2";
+    const wrapper = mountView();
+    await flushPromises();
+
+    expect(wrapper.text()).not.toContain("新建模型");
+    expect(wrapper.find(".action-btn-edit").exists()).toBe(false);
+    expect(wrapper.find(".action-btn-delete").exists()).toBe(false);
+    expect(wrapper.find(".action-btn-download").exists()).toBe(true);
+    expect(wrapper.find(".tag-dropdown").exists()).toBe(false);
+    expect(wrapper.findAll(".ima-card-tag")[0].text()).toContain("推荐");
+  });
+
+  it("新建模型：必填拦截，提交后关闭弹窗并刷新列表", async () => {
+    const spies = createMessageSpies();
+    create.mockResolvedValue(ok(true));
+    const wrapper = mountView();
+    await flushPromises();
+
+    await wrapper.find(".btn-primary").trigger("click");
+    await clickFooter(wrapper, "确 定");
+    expect(create).not.toHaveBeenCalled();
+    expect(wrapper.find(".el-dialog").html()).toContain("is-error");
+
+    await wrapper.find('input[placeholder="请输入模型名称"]').setValue("新模型");
+    await wrapper.find('input[placeholder="请输入提供商"]').setValue("OpenAI");
+    await wrapper.find('textarea[placeholder="请输入模型描述"]').setValue("描述文本");
+    await clickFooter(wrapper, "确 定");
+
+    expect(create).toHaveBeenCalledWith({
+      data: {
+        name: "新模型",
+        provider: "OpenAI",
+        description: "描述文本",
+        category: "",
+        size: "",
+        downloads: "",
+        downloadUrl: "",
+      },
+    });
+    expect(spies.success).toHaveBeenCalledWith("保存成功");
+    expect((wrapper.vm as any).state.params.dialogVisible).toBe(false);
+    expect(query).toHaveBeenCalledTimes(2);
+  });
+
+  it("编辑模型：回填、按 iid 更新并提交改名", async () => {
+    createMessageSpies();
+    update.mockResolvedValue(ok(true));
+    const wrapper = mountView();
+    await flushPromises();
+
+    const firstCard = wrapper.findAll(".list-card")[0];
+    await firstCard.find(".action-btn-edit").trigger("click");
+    await flushPromises();
+
+    expect(
+      (wrapper.find('input[placeholder="请输入模型名称"]').element as HTMLInputElement).value
+    ).toBe("GPT-4o mini");
+    await wrapper.find('input[placeholder="请输入模型名称"]').setValue("GPT-4o");
+    await clickFooter(wrapper, "确 定");
+
+    expect(update).toHaveBeenCalledWith({
+      data: expect.objectContaining({ iid: 3, name: "GPT-4o" }),
+      where: { iid: 3 },
+    });
+  });
+
+  it("删除：确认后按 iid 删除并刷新；取消不报错；错误码给出原因", async () => {
+    const spies = createMessageSpies();
+    const confirm = vi.spyOn(ElMessageBox, "confirm").mockResolvedValue("confirm" as never);
+    remove.mockResolvedValue(ok(true));
+    const wrapper = mountView();
+    await flushPromises();
+
+    await wrapper.findAll(".list-card")[0].find(".action-btn-delete").trigger("click");
+    await flushPromises();
+    expect(confirm).toHaveBeenCalledWith(
+      expect.stringContaining("GPT-4o mini"),
+      "确认删除",
+      expect.objectContaining({ type: "warning" })
+    );
+    expect(remove).toHaveBeenCalledWith({ data: { iid: 3 } });
+    expect(spies.success).toHaveBeenCalledWith("删除成功");
+    expect(query).toHaveBeenCalledTimes(2);
+
+    confirm.mockRejectedValueOnce("cancel");
+    await wrapper.findAll(".list-card")[1].find(".action-btn-delete").trigger("click");
+    await flushPromises();
+    expect(remove).toHaveBeenCalledTimes(1);
+    expect(spies.error).not.toHaveBeenCalled();
+
+    confirm.mockResolvedValueOnce("confirm" as never);
+    remove.mockResolvedValueOnce(fail("被引用无法删除"));
+    await wrapper.findAll(".list-card")[1].find(".action-btn-delete").trigger("click");
+    await flushPromises();
+    expect(spies.error).toHaveBeenCalledWith("被引用无法删除");
+  });
+
+  it("保存失败：错误码与异常都提示，弹窗保留且 loading 关闭", async () => {
+    const spies = createMessageSpies();
+    const close = vi.fn();
+    vi.spyOn(ElLoading, "service").mockReturnValue({ close } as never);
+    create.mockResolvedValueOnce(fail("名称重复"));
+    const wrapper = mountView();
+    await flushPromises();
+
+    await wrapper.find(".btn-primary").trigger("click");
+    await wrapper.find('input[placeholder="请输入模型名称"]').setValue("新模型");
+    await wrapper.find('input[placeholder="请输入提供商"]').setValue("OpenAI");
+    await wrapper.find('textarea[placeholder="请输入模型描述"]').setValue("描述");
+    await clickFooter(wrapper, "确 定");
+
+    expect(spies.error).toHaveBeenCalledWith("保存失败，请稍后重试");
+    expect((wrapper.vm as any).state.params.dialogVisible).toBe(true);
+    expect(close).toHaveBeenCalled();
+
+    create.mockRejectedValueOnce(new Error("network"));
+    await clickFooter(wrapper, "确 定");
+    expect(spies.error).toHaveBeenCalledTimes(2);
+    expect(close).toHaveBeenCalledTimes(2);
+  });
+
+  it("下载：进入预览面板，返回后回到列表", async () => {
+    const wrapper = mountView();
+    await flushPromises();
+
+    await wrapper.findAll(".list-card")[0].find(".action-btn-download").trigger("click");
+    await flushPromises();
+
+    expect(getDownloadUrl).toHaveBeenCalledWith({ data: { iid: 3 } });
+    expect(wrapper.find(".repo-preview-panel").exists()).toBe(true);
+    expect(wrapper.find(".repo-preview-title h3").text()).toBe("模型：GPT-4o mini");
+    expect(wrapper.find(".repo-preview-panel").text()).toContain(
+      "该资源暂不支持图形列表展示"
+    );
+    expect(wrapper.find(".repo-preview-panel").text()).toContain(
+      "https://example.com/model.bin"
+    );
+
+    await wrapper.find(".repo-preview-back").trigger("click");
+    await flushPromises();
+    expect(wrapper.find(".repo-preview-panel").exists()).toBe(false);
+    expect(cardTitles(wrapper)).toHaveLength(3);
+  });
+});
