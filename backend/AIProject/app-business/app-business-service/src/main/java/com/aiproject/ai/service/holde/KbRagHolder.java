@@ -145,6 +145,10 @@ public class KbRagHolder {
         // HNSP install 不回填 iid，用「同名 + 同库 + 同用户」取最新一条
         Long docIid = findDocIid(kbName, name, uid);
         if (docIid == null) {
+            // 拿不到 iid 就无法安全定位刚插入的行（同名旧文档可能已存在），
+            // 不能按名称盲删，只能留痕交由运维处理
+            log.error("[KbRag] 文档已写入但无法定位 iid，可能存在孤立的文档行, kbName={}, name={}, uid={}",
+                    kbName, name, uid);
             return Result.failed(null, "保存文档失败：无法定位新文档");
         }
 
@@ -160,10 +164,34 @@ public class KbRagHolder {
             chunk.setTokenCount(chunks.get(i).length());
             chunk.setLastuser(uid);
             if (kbChunkBeanMapper.install(chunk) <= 0) {
-                log.warn("[KbRag] 分块写入失败, docIid={}, index={}", docIid, i);
+                // 用补偿代替事务：文档已在上面提交，分块失败若不回收，
+                // 列表会显示一个 chunkCount 正常但实际检索不到的「空壳文档」
+                log.warn("[KbRag] 分块写入失败，开始回滚, docIid={}, index={}", docIid, i);
+                rollbackDoc(uid, docIid);
+                return Result.failed(null, "保存文档失败：第 " + (i + 1) + " 个分块写入失败，已回滚");
             }
         }
         return Result.succeed(doc, "文档已入库，共 " + chunks.size() + " 块");
+    }
+
+    /**
+     * 入库失败的补偿删除：先删分块再删文档，条件都带归属。
+     * 回滚自身失败只记录日志——此时仍要把原始写入失败返回给调用方，
+     * 不能因为清理异常改写成另一个错误、掩盖真正原因。
+     */
+    private void rollbackDoc(String uid, Long docIid) {
+        try {
+            KbChunkBean chunkWhere = new KbChunkBean();
+            chunkWhere.setDocIid(docIid);
+            chunkWhere.setLastuser(uid);
+            kbChunkBeanMapper.delete(chunkWhere);
+            KbDocBean docWhere = new KbDocBean();
+            docWhere.setIid(docIid);
+            docWhere.setLastuser(uid);
+            kbDocBeanMapper.delete(docWhere);
+        } catch (Exception e) {
+            log.error("[KbRag] 回滚失败，需人工清理 docIid={}: {}", docIid, e.getMessage());
+        }
     }
 
     /**
