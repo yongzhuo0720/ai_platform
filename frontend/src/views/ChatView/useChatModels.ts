@@ -87,7 +87,10 @@ export const loadAppParameters = async () => {
 
     const promptField =
       normalizedFields.find((field) => isPromptVariable(field.variable)) ||
-      normalizedFields.find((field) => field.type !== "select");
+      // 兜底只认文本类变量：文件变量是给附件占位的，写进助手提示词会把 file 变成字符串
+      normalizedFields.find(
+        (field) => field.type !== "select" && field.type !== "file-upload"
+      );
     const modelField = normalizedFields.find((field) =>
       isModelNameVariable(field.variable)
     );
