@@ -59,6 +59,33 @@ test.describe("浏览器冒烟", () => {
     expect(pageErrors).toEqual([]);
   });
 
+  test("配额用尽时对话展示服务端原因，而不是裸错误码", async ({ page }) => {
+    await installBackendMocks(page, {
+      difyChatError: {
+        status: 429,
+        body: {
+          code: "quota_exceeded",
+          message: "今日 AI 额度已用完（已用 1500 / 1500 tokens），请明天再试或联系管理员",
+          status: 429,
+          requestId: "e2e-quota",
+        },
+      },
+    });
+    await loginAsUser(page);
+
+    await page.goto("/#/chat");
+
+    // 不选模型 = Dify 通道，正是后端配额拦截覆盖的路径
+    const input = page.getByPlaceholder("请输入问题，开始对话...");
+    await expect(input).toBeVisible();
+    await input.fill("你好");
+    await page.getByRole("button", { name: "发送消息" }).click();
+
+    const assistant = page.locator(".chat-message-item.assistant").last();
+    await expect(assistant).toContainText("今日 AI 额度已用完");
+    await expect(assistant).not.toContainText("quota_exceeded");
+  });
+
   test("知识库文件模块未配置时展示引导，不再请求数据集", async ({ page }) => {
     const requested = await installBackendMocks(page, {
       modules: { chat: true, knowledgeChat: true, file: false, models: true },
