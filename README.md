@@ -203,8 +203,8 @@ npm run check:bundle     # 首屏 gzip 体积预算（需先 build）
 | 前端组件测试 | 4 个文件 / **37 项通过**（@vue/test-utils 真实渲染 ChatComposer / ChatMessageList / ChatSidebar / AiGatewayView） |
 | 前端流式回归 | 14 项通过 |
 | 前端 Markdown / XSS 回归 | 10 项通过（**2026-10-29 前该脚本一直是失败的，见文档**） |
-| 前端生产构建 | 通过（element-plus 分块 922.89 kB / gzip 296.83 kB，仍有体积警告） |
-| 产物体积预算 | 通过（首屏 JS 416.8 kB / 预算 470 kB，gzip） |
+| 前端生产构建 | 通过（element-plus 按路由分包，入口 gzip 152.5 kB，已无 >500 kB 分包警告） |
+| 产物体积预算 | 通过（首屏 JS 202.8 kB / 预算 260 kB，gzip） |
 
 2026-10-30 前端改进：
 
@@ -234,6 +234,11 @@ npm run check:bundle     # 首屏 gzip 体积预算（需先 build）
    置顶/重命名/删除、分享空会话拦截、会话分页、助手菜单与搜索、移动端抽屉；
    治理后台的概览卡片与图表比例、日志筛选/导出、配额增改删与部门共享池校验、周报生成，
    已接入 CI 与 `scripts/verify.ps1`。
+7. **首屏只加载当前路由需要的组件**：element-plus 原先被 `manualChunks` 固定成
+   单一 vendor 包，管理台才用的 Table / DatePicker / Tree 也随首屏预加载。
+   移除该固定分组后由 Rollup 按路由动态 import 切分，首屏 JS gzip 417.0 → 202.8 kB
+   （-51%），构建不再有 >500 kB 分包警告；体积预算同步从 470 kB 收紧到 260 kB，
+   防止回退。
 
 2026-10-29 补充的测试类：
 
