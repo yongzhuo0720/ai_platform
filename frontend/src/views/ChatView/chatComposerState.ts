@@ -31,8 +31,8 @@ const DIRECT_MODEL_SUGGESTIONS = [
 
 /** 空状态最终展示的建议问题：Dify 用应用参数，直连用通用开场 */
 export const displaySuggestedQuestions = computed(() => {
-  if (suggestedQuestions.value.length > 0) return suggestedQuestions.value;
-  return isDirectMode.value ? DIRECT_MODEL_SUGGESTIONS : [];
+  if (isDirectMode.value) return DIRECT_MODEL_SUGGESTIONS;
+  return suggestedQuestions.value;
 });
 
 export const normalizeUserInputFields = (
@@ -195,11 +195,18 @@ export const modelOptions = computed<ChatSelectOption[]>(() =>
   ])
 );
 
-export const composerInputFields = computed<NormalizedUserInputField[]>(() =>
-  chatInputFields.value.filter(
+export const composerInputFields = computed<NormalizedUserInputField[]>(() => {
+  /*
+   * 直连模式不发送 Dify 的 inputs：这些应用变量（含必填项）与直连请求无关，
+   * 展示出来还会挡住发送，所以整组隐藏。
+   */
+  if (isDirectMode.value) {
+    return [];
+  }
+  return chatInputFields.value.filter(
     (field) => !isModelNameVariable(field.variable) && !isPromptVariable(field.variable)
-  )
-);
+  );
+});
 
 export const composerSelectOptionsMap = computed<Record<string, ChatSelectOption[]>>(() => {
   const optionMap: Record<string, ChatSelectOption[]> = {};

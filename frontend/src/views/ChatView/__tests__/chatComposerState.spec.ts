@@ -267,6 +267,22 @@ describe("chatComposerState", () => {
       ]);
     });
 
+    it("直连模式隐藏 Dify 应用参数表单（这些变量不会随直连请求发送）", () => {
+      baseInputFields.value = [
+        {
+          type: "text-input",
+          variable: "topic",
+          label: "主题",
+          required: true,
+          defaultValue: "",
+        },
+      ];
+      defaultModels.value = [{ ...DIRECT_MODEL }];
+      activeModelId.value = "direct-5";
+
+      expect(composerInputFields.value).toEqual([]);
+    });
+
     it("model_name 下拉合并助手模型与自定义选项并去重", () => {
       difyModels.value = [
         { id: "m1", name: "GPT-4o", provider: "OpenAI" },
@@ -397,6 +413,16 @@ describe("chatComposerState", () => {
         "应用建议 1",
         "应用建议 2",
       ]);
+    });
+
+    it("直连模式始终使用通用开场问题，不混用 Dify 应用建议", () => {
+      suggestedQuestions.value = ["应用建议 1"];
+      defaultModels.value = [{ ...DIRECT_MODEL }];
+      activeModelId.value = "direct-5";
+
+      const questions = displaySuggestedQuestions.value;
+      expect(questions).toHaveLength(4);
+      expect(questions).not.toContain("应用建议 1");
     });
   });
 
