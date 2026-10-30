@@ -250,7 +250,36 @@ describe("useChatSend", () => {
         conversation,
         "a1",
         "u1",
-        "旧问题"
+        "旧问题",
+        []
+      );
+    });
+
+    it("重新生成时把原消息的图片附件一并重发，非图片附件不进入多模态", async () => {
+      const image = {
+        id: "local-1",
+        name: "a.png",
+        type: "image/png",
+        size: 10,
+        dataUrl: "data:image/jpeg;base64,xxx",
+      };
+      messages.value[0] = {
+        ...messages.value[0],
+        requestFiles: [
+          image,
+          { id: "f2", name: "b.pdf", type: "application/pdf", size: 20 },
+        ],
+      };
+
+      await handleRegenerateMessage("a1");
+
+      const conversation = directConversations.value[0];
+      expect(vi.mocked(runDirectStream)).toHaveBeenCalledWith(
+        conversation,
+        "a1",
+        "u1",
+        "旧问题",
+        [{ url: image.dataUrl, name: image.name }]
       );
     });
 

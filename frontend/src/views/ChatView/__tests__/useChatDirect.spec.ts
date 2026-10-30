@@ -103,6 +103,22 @@ describe("useChatDirect", () => {
       expect(loading.value).toBe(true);
     });
 
+    it("用户消息记录本轮附件，供重新生成时重发图片", () => {
+      enableDirectMode();
+      const image = {
+        id: "local-1",
+        name: "a.png",
+        type: "image/png",
+        size: 10,
+        dataUrl: "data:image/jpeg;base64,xxx",
+      };
+
+      sendDirectMessage("看图", [image]);
+
+      const userMessage = messages.value.find((item) => item.role === "user");
+      expect(userMessage?.requestFiles).toEqual([image]);
+    });
+
     it("没有可用的直连模型时不发起请求", () => {
       const error = vi.spyOn(ElMessage, "error");
 

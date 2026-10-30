@@ -232,6 +232,8 @@ export const sendDirectMessage = (queryContent: string, files: UploadedChatFile[
     content: queryContent,
     requestQueryContent: queryContent,
     requestDisplayContent: queryContent,
+    // 记下本轮附件（含压缩后的 dataUrl），重新生成时才能把图片一起重发
+    requestFiles: [...files],
   });
   // 直连图片：取本地 dataUrl 附件随本次请求发送（多模态数组仅在请求体中构造，
   // 本地历史存纯文本——旧图在后续轮次没有再利用的价值，还占存储）

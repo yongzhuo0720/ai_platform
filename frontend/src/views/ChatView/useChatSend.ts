@@ -432,7 +432,17 @@ export const handleRegenerateMessage = async (messageId: string) => {
       }
     }
     persistDirectConversations();
-    runDirectStream(conversation, messageId, sourceUserMessage.id, queryContent);
+    // 原消息带的图片要一并重发，否则第二次回答会悄悄少了图片上下文
+    const images = requestFiles
+      .filter((file) => file.dataUrl)
+      .map((file) => ({ url: file.dataUrl as string, name: file.name }));
+    runDirectStream(
+      conversation,
+      messageId,
+      sourceUserMessage.id,
+      queryContent,
+      images
+    );
     return;
   }
 
