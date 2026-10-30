@@ -251,6 +251,8 @@ describe("useChatConversations", () => {
       ]);
       expect(directConversations.value[0].messages).toEqual(turns.slice(0, 2));
       expect(persistedDirect()[0].messages).toHaveLength(2);
+      // 截断后安排云端同步，其它设备才能看到被丢弃的轮次
+      expect(cloudSyncTimers.has("d1")).toBe(true);
     });
 
     it("Dify 模式只回填输入框，不改写消息列表", () => {
@@ -344,10 +346,14 @@ describe("useChatConversations", () => {
       expect(chatConversationApi.delete).not.toHaveBeenCalled();
     });
 
-    it("Dify 会话删除调用接口并从列表移除", async () => {
+    it("Dify 会话删除调用接口、从列表移除并清理置顶记录", async () => {
       conversations.value = [{ id: "c1" }, { id: "c2" }] as Conversation[];
       activeConversationId.value = "c1";
       messages.value = [{ id: "x", role: "user", content: "问题" }];
+      togglePinConversation("c1");
+      expect(
+        JSON.parse(localStorage.getItem("chat-pinned-conversations-u1") || "[]")
+      ).toEqual(["c1"]);
       vi.mocked(chatApi.deleteConversation).mockResolvedValue({} as never);
 
       await handleDeleteHistory("c1");
@@ -356,6 +362,9 @@ describe("useChatConversations", () => {
       expect(conversations.value.map((c) => c.id)).toEqual(["c2"]);
       expect(activeConversationId.value).toBe("");
       expect(messages.value).toEqual([]);
+      expect(
+        JSON.parse(localStorage.getItem("chat-pinned-conversations-u1") || "[]")
+      ).toEqual([]);
     });
   });
 
