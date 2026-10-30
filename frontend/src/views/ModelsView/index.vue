@@ -163,7 +163,7 @@ import { SUPER_ADMIN_RID } from '@/config/constants'
 import TagDropdown from '@/components/TagDropdown/index.vue'
 import TagFilterDropdown from '@/components/TagFilterDropdown/index.vue'
 import RepoPreviewPanel from '@/components/RepoPreviewPanel/index.vue'
-import { Plus, Edit, Delete, Download } from '@element-plus/icons-vue'
+import { Plus, Edit, Delete, Download, Search, PriceTag } from '@element-plus/icons-vue'
 const {
   state,
   ruleFormRef,

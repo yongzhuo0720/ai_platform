@@ -183,7 +183,7 @@ cd frontend
 npm run typecheck      # TypeScript 类型检查
 npm run check:icons    # 图标注册检查（模板图标必须 import 或全局注册）
 npm run test            # 单元测试（Vitest），9 个文件 / 147 项
-npm run test:component  # 组件测试（真实渲染），15 个文件 / 115 项
+npm run test:component  # 组件测试（真实渲染），16 个文件 / 124 项
 npm run check:streaming # 流式超时/取消回归，14 项
 npm run check:markdown  # Markdown 与 XSS 消毒回归，10 项
 npm run build            # 生产构建
@@ -200,7 +200,7 @@ npm run check:bundle     # 首屏 gzip 体积预算（需先 build）
 | 前端 TypeScript 检查 | 通过 |
 | 前端图标注册检查 | 通过（56 个在用图标全部可解析） |
 | 前端单元测试 | 9 个文件 / **147 项通过** |
-| 前端组件测试 | 15 个文件 / **115 项通过**（@vue/test-utils 真实渲染 LoginView / ChatComposer / ChatMessageList / ChatSidebar / KbSearchView / MyUsageView / ShareView / AiGatewayView / UserView / RoleView / UnitView / ModelsConfigView / DifyConfigView / LogView / KnowledgeBaseMngView） |
+| 前端组件测试 | 16 个文件 / **124 项通过**（@vue/test-utils 真实渲染 LoginView / ChatComposer / ChatMessageList / ChatSidebar / KbSearchView / MyUsageView / ShareView / AiGatewayView / UserView / RoleView / UnitView / ModelsConfigView / DifyConfigView / LogView / KnowledgeBaseMngView / ModelsView） |
 | 前端流式回归 | 14 项通过 |
 | 前端 Markdown / XSS 回归 | 10 项通过（**2026-10-29 前该脚本一直是失败的，见文档**） |
 | 前端生产构建 | 通过（element-plus 按路由分包，入口 gzip 152.5 kB，已无 >500 kB 分包警告） |
@@ -228,7 +228,7 @@ npm run check:bundle     # 首屏 gzip 体积预算（需先 build）
    旧分块因向量维度不一致会被跳过（此前是静默跳过），现在检索结果返回 `skipped`
    与 `warning`，检索页直接提示重新上传，并分开统计「维度不一致 / 向量数据损坏」。
 6. **组件级测试**：引入 `@vue/test-utils` 与独立的 `vitest.component.config.ts`，
-   直接渲染登录页、聊天页三个核心组件、知识检索页、个人用量页、分享页、AI 调用治理后台、用户/角色/部门管理、模型配置、Dify 配置、调用日志与知识库管理后台（共 115 项）：
+   直接渲染登录页、聊天页三个核心组件、知识检索页、个人用量页、分享页、模型仓库页、AI 调用治理后台、用户/角色/部门管理、模型配置、Dify 配置、调用日志与知识库管理后台（共 124 项）：
    输入区的 Enter / 输入法组词、发送与停止、模型菜单、知识库切换、附件移除；消息区的
    Markdown 渲染、思考块折叠、引用来源、历史分页、点赞反馈与重新生成；侧栏的 Tab 切换、
    置顶/今天分组、置顶/重命名/删除、分享空会话拦截、会话分页、助手菜单与搜索、移动端
@@ -240,8 +240,12 @@ npm run check:bundle     # 首屏 gzip 体积预算（需先 build）
    部门与角色权限序列化、编辑补建权限记录与删除确认；登录页的 Cookie 回填、
    用户/超管登录态写入、非超管拒绝与滑动切换防抖；知识检索页的文档列表、
    文件选择（含 20MB 上限）、上传校验、删除确认与检索结果/降级提示；个人用量页的
-   配额水位告警、图表比例、明细状态与区间切换竞态；免登录分享页的失效提示与
-   用户消息转义 / 助手 Markdown 消毒，已接入 CI 与 `scripts/verify.ps1`。
+   配额水位告警、图表比例、明细状态与区间切换竞态；模型仓库页的搜索/标签筛选/
+   六种排序、超管新建与编辑、删除确认与失败提示、下载跳转预览面板；免登录分享页的
+   失效提示与用户消息转义 / 助手 Markdown 消毒，已接入 CI 与 `scripts/verify.ps1`。
+   写测试时顺带修掉三处真实缺陷：登录页与模型仓库页依赖 Vite 自动导入的
+   `ElMessage` / Vue API（脱离构建环境即 ReferenceError）、模型删除接口返回非 0
+   时静默无提示、个人用量页快速切换区间时旧响应覆盖新数据。
 7. **首屏只加载当前路由需要的组件**：element-plus 原先被 `manualChunks` 固定成
    单一 vendor 包，管理台才用的 Table / DatePicker / Tree 也随首屏预加载。
    移除该固定分组后由 Rollup 按路由动态 import 切分，首屏 JS gzip 417.0 → 202.8 kB
