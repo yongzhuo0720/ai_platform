@@ -31,5 +31,17 @@ export default defineConfig({
     include: ["src/**/*.component.spec.ts"],
     clearMocks: true,
     restoreMocks: true,
+    server: {
+      deps: {
+        /**
+         * element-plus 的表单校验 import 的是 async-validator 的 CJS 入口。
+         * Vitest 默认把 node_modules 外部化交给 Node ESM 加载，默认导入
+         * 拿到的是 { default: Schema } 而非构造函数，被 FormItem 的 catch
+         * 吞掉后表现为每个字段校验静默失败、el-form.validate 恒为 true。
+         * 由 Vite 内联转换后套用 CJS 默认导出互操作，校验行为与浏览器一致。
+         */
+        inline: ["element-plus"],
+      },
+    },
   },
 });
