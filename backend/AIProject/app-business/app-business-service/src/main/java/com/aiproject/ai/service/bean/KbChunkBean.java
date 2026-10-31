@@ -30,11 +30,11 @@ public class KbChunkBean extends DbEntityBase {
     @ApiModelProperty("块序号，从0开始")
     Integer chunkIndex;
 
-    @SqlColumn()
+    @SqlColumn(method = "text")
     @ApiModelProperty("分块正文")
     String content;
 
-    @SqlColumn()
+    @SqlColumn(method = "text")
     @ApiModelProperty("向量（JSON 浮点数组文本）")
     String embedding;
 

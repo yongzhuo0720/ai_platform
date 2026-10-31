@@ -31,7 +31,24 @@ public class TableSchemaInitializer implements ApplicationListener<ApplicationRe
         ensureKbChunkFullTextIndex();
         ensureKbChunkQueryIndexes();
         ensureKbChunkEmbeddingModelColumns();
+        ensureLongTextColumns();
         ensureCostAndTracingColumns();
+    }
+
+    /**
+     * 长文本列改为 text。
+     *
+     * <p>框架按 Java String 自动建表时默认映射 varchar(255)：
+     * 一段超过 255 字的会话快照 / RAG 分块正文 / 向量 JSON 都会直接插入失败。
+     * 实体上虽然已用 {@code @SqlColumn(method = "text")} 声明，但那只影响新建表；
+     * 已经按 varchar(255) 建好的表需要在这里显式放宽，否则升级后依旧报
+     * 「value too long for type character varying(255)」。</p>
+     */
+    private void ensureLongTextColumns() {
+        execute("ALTER TABLE kbchunkbean ALTER COLUMN \"content\" TYPE text");
+        execute("ALTER TABLE kbchunkbean ALTER COLUMN \"embedding\" TYPE text");
+        execute("ALTER TABLE chatconversationbean ALTER COLUMN \"payload\" TYPE text");
+        execute("ALTER TABLE chatsharebean ALTER COLUMN \"payload\" TYPE text");
     }
 
     /**

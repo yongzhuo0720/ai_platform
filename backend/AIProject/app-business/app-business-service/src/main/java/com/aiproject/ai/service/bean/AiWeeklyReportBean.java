@@ -1,5 +1,6 @@
 package com.aiproject.ai.service.bean;
 
+import blxt.qjava.autovalue.inter.SqlBean;
 import blxt.qjava.autovalue.inter.SqlColumn;
 import io.swagger.annotations.ApiModelProperty;
 import com.heneng.hnsp.common.db.model.DbEntityBase;
@@ -12,6 +13,8 @@ import lombok.Data;
  * 管理员无需进看板逐项核对就有留档的周期性结论。</p>
  */
 @Data
+// 同 ChatConversationBean：必须显式忽略 DbEntityBase 的 key1~key3，并声明主键名
+@SqlBean(keyId = "iid", ignores = {"key1", "key2", "key3"})
 /** 审计字段（iid/lastuser/createtime/updatetime/enable/app）继承自 DbEntityBase，由 @HnMapper 映射同名列 */
 public class AiWeeklyReportBean extends DbEntityBase {
 

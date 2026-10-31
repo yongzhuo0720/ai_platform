@@ -1,5 +1,6 @@
 package com.aiproject.ai.service.bean;
 
+import blxt.qjava.autovalue.inter.SqlBean;
 import blxt.qjava.autovalue.inter.SqlColumn;
 import io.swagger.annotations.ApiModelProperty;
 import com.heneng.hnsp.common.db.model.DbEntityBase;
@@ -12,6 +13,8 @@ import lombok.Data;
  * token 用随机 UUID，足够不可猜测；需要更强安全性时再加过期时间。</p>
  */
 @Data
+// 同 ChatConversationBean：必须显式忽略 DbEntityBase 的 key1~key3，并声明主键名
+@SqlBean(keyId = "iid", ignores = {"key1", "key2", "key3"})
 /** 审计字段（iid/lastuser/createtime/updatetime/enable/app）继承自 DbEntityBase，由 @HnMapper 映射同名列 */
 public class ChatShareBean extends DbEntityBase {
 
@@ -23,7 +26,7 @@ public class ChatShareBean extends DbEntityBase {
     @ApiModelProperty("分享标题")
     String title;
 
-    @SqlColumn()
+    @SqlColumn(method = "text")
     @ApiModelProperty("会话内容 JSON 快照（消息数组）")
     String payload;
 

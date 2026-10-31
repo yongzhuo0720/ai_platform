@@ -49,6 +49,9 @@ public class ChatConversationController {
         if (uid == null || uid.trim().isEmpty()) {
             return Result.failed(false, "请先登录");
         }
+        if (data == null) {
+            return Result.failed(false, "请求体格式不正确：需要 { \"data\": { ... } }");
+        }
         // 归属强制为当前用户，防止越权写别人的会话
         data.setUserId(uid);
         return holder.save(uid, data);
@@ -61,6 +64,9 @@ public class ChatConversationController {
                                   @RequestBody ChatConversationBean data) {
         if (uid == null || uid.trim().isEmpty()) {
             return Result.failed(false, "请先登录");
+        }
+        if (data == null) {
+            return Result.failed(false, "请求体格式不正确：需要 { \"data\": { ... } }");
         }
         return holder.delete(uid, data.getConvId());
     }

@@ -1,5 +1,6 @@
 package com.aiproject.ai.service.bean;
 
+import blxt.qjava.autovalue.inter.SqlBean;
 import blxt.qjava.autovalue.inter.SqlColumn;
 import io.swagger.annotations.ApiModelProperty;
 import com.heneng.hnsp.common.db.model.DbEntityBase;
@@ -13,6 +14,9 @@ import lombok.Data;
  * 前端登录后从云端拉取，实现多端同步。</p>
  */
 @Data
+// 必须显式声明 keyId 与 ignores：DbEntityBase 自带 key1~key3 且默认参与 SQL，
+// 不忽略会让查询引用表里不存在的列；不声明 keyId 则框架建表时主键名解析为 null。
+@SqlBean(keyId = "iid", ignores = {"key1", "key2", "key3"})
 /** 审计字段（iid/lastuser/createtime/updatetime/enable/app）继承自 DbEntityBase，由 @HnMapper 映射同名列 */
 public class ChatConversationBean extends DbEntityBase {
 
@@ -36,7 +40,7 @@ public class ChatConversationBean extends DbEntityBase {
     @ApiModelProperty("是否置顶")
     Boolean pinned;
 
-    @SqlColumn()
+    @SqlColumn(method = "text")
     @ApiModelProperty("会话内容 JSON 快照（消息、思考过程、引用来源）")
     String payload;
 
