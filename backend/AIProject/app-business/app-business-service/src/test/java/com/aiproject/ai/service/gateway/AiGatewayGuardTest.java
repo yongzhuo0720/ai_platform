@@ -24,7 +24,7 @@ import static org.mockito.Mockito.when;
 
 /**
  * 配额预扣：并发请求在「检查」与「完成后计费」之间不能一起击穿额度。
- * 这里锁住预扣、结算（多退少补）、失败释放与 Redis 降级四条路径。
+ * 这里锁住预扣、结算（多退少补）、失败释放，以及治理依赖不可用时的 fail-closed 行为。
  */
 class AiGatewayGuardTest {
 
@@ -154,14 +154,60 @@ class AiGatewayGuardTest {
     }
 
     @Test
-    void redisFailureFailsOpenWithoutBlocking() {
+    void redisFailureRejectsInsteadOfFailingOpen() {
         when(quotaHolder.effectiveQuota("u1")).thenReturn(10000L);
         when(redisServer.increment(anyString(), eq(1500L)))
                 .thenThrow(new RuntimeException("redis down"));
 
         AiGatewayGuard.Reservation reservation = guard.reserve("u1", "chat");
 
-        assertFalse(reservation.isBlocked());
+        // 2026-11-01 改成 fail-closed：预扣读不到就放行，等于一次 Redis 抖动期间额度控制完全失效
+        assertTrue(reservation.isBlocked());
         assertFalse(reservation.isActive());
+        assertEquals(AiGatewayGuard.CODE_GUARD_UNAVAILABLE, reservation.getBlockedCode());
+    }
+
+    @Test
+    void reserveWithoutIncrementCountRejects() {
+        when(quotaHolder.effectiveQuota("u1")).thenReturn(10000L);
+        // 自增没生效时 RedisServer 返回 null：既不能假装已占用，也不能当作没超额
+        when(redisServer.increment(anyString(), eq(1500L))).thenReturn(null);
+
+        AiGatewayGuard.Reservation reservation = guard.reserve("u1", "chat");
+
+        assertTrue(reservation.isBlocked());
+        assertEquals(AiGatewayGuard.CODE_GUARD_UNAVAILABLE, reservation.getBlockedCode());
+    }
+
+    @Test
+    void quotaReadFailureRejectsInsteadOfAllowing() {
+        when(quotaHolder.effectiveQuota("u1")).thenThrow(new RuntimeException("db down"));
+
+        AiGatewayGuard.Decision decision = guard.check("u1", "chat");
+
+        assertFalse(decision.isAllowed());
+        assertEquals(AiGatewayGuard.CODE_GUARD_UNAVAILABLE, decision.getCode());
+    }
+
+    @Test
+    void rateLimitFailureRejectsInsteadOfAllowing() {
+        when(redisServer.increment(anyString(), eq(1L))).thenThrow(new RuntimeException("redis down"));
+
+        AiGatewayGuard.Decision decision = guard.check("u1", "chat");
+
+        assertFalse(decision.isAllowed());
+        assertEquals(AiGatewayGuard.CODE_GUARD_UNAVAILABLE, decision.getCode());
+    }
+
+    @Test
+    void overQuotaStillReportsQuotaExceededCode() {
+        // 新增 guard_unavailable 码之后，正常超额不能被误标成「治理组件坏了」
+        when(quotaHolder.effectiveQuota("u1")).thenReturn(10000L);
+        when(redisServer.increment(anyString(), eq(1500L))).thenReturn(10001L);
+
+        AiGatewayGuard.Reservation reservation = guard.reserve("u1", "chat");
+
+        assertTrue(reservation.isBlocked());
+        assertEquals("quota_exceeded", reservation.getBlockedCode());
     }
 }

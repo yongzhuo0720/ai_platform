@@ -19,12 +19,23 @@ import java.util.concurrent.TimeUnit;
 /**
  * 网关限流与每日 Token 配额。
  * <p>
- * Redis 不可用时选择 fail-open：宁可暂时失去治理能力，也不能让整个 AI 入口不可用；
- * 失败会打 warn 日志，便于监控发现。
+ * 治理依赖（Redis / 配额表）不可用时选择 <b>fail-closed</b>：限流与配额是花钱的控制点，
+ * 「读不到就当没限制」等于把成本控制换成一次 Redis 抖动就能绕过。
+ * 具体到本项目：登录态（Sa-Token）本身就存 Redis，Redis 挂了请求连 Controller 都进不来，
+ * 所以「为保可用性而放行」保护的东西其实已经不存在了，放行只会静默失去治理能力。
+ * <p>
+ * 拒绝时统一用 {@link #CODE_GUARD_UNAVAILABLE}，与「超额」区分开：
+ * 前者运维要去看 Redis/配额表，后者是正常的用户额度问题。
  */
 @Slf4j
 @Component
 public class AiGatewayGuard {
+
+    /** 治理组件不可用（Redis 读写失败、配额表读不到）——不是用户超额 */
+    public static final String CODE_GUARD_UNAVAILABLE = "guard_unavailable";
+
+    private static final String GUARD_UNAVAILABLE_MSG =
+            "AI 网关暂时不可用（限流与配额依赖的服务未就绪），请稍后重试或联系管理员";
 
     private static final DateTimeFormatter MINUTE = DateTimeFormatter.ofPattern("yyyyMMddHHmm");
     private static final DateTimeFormatter DAY = DateTimeFormatter.ofPattern("yyyyMMdd");
@@ -71,7 +82,8 @@ public class AiGatewayGuard {
                         "请求过于频繁，每分钟最多 " + limit + " 次，请稍后再试");
             }
         } catch (Exception e) {
-            log.warn("[AiGateway] 限流检查失败，已放行, uid={}: {}", userId, e.getMessage());
+            log.error("[AiGateway] 限流计数失败，按不可用拒绝, uid={}", userId, e);
+            return Decision.block(CODE_GUARD_UNAVAILABLE, GUARD_UNAVAILABLE_MSG);
         }
         return Decision.allow();
     }
@@ -84,8 +96,8 @@ public class AiGatewayGuard {
         try {
             userQuota = quotaHolder.effectiveQuota(userId);
         } catch (Exception e) {
-            log.warn("[AiGateway] 读取用户配额失败，已放行, uid={}: {}", userId, e.getMessage());
-            return Decision.allow();
+            log.error("[AiGateway] 读取用户配额失败，按不可用拒绝, uid={}", userId, e);
+            return Decision.block(CODE_GUARD_UNAVAILABLE, GUARD_UNAVAILABLE_MSG);
         }
         if (userQuota > 0) {
             long used = usedTokens(userId);
@@ -110,7 +122,8 @@ public class AiGatewayGuard {
                     }
                 }
             } catch (Exception e) {
-                log.warn("[AiGateway] 读取部门配额失败，已放行, uid={}: {}", userId, e.getMessage());
+                log.error("[AiGateway] 读取部门配额失败，按不可用拒绝, uid={}", userId, e);
+                return Decision.block(CODE_GUARD_UNAVAILABLE, GUARD_UNAVAILABLE_MSG);
             }
         }
         return Decision.allow();
@@ -121,8 +134,8 @@ public class AiGatewayGuard {
      * 并发窗口压缩到一次 Redis 自增。
      * <p>
      * 用户池与部门池都可能生效：两个池都要预扣，任一超额就回滚并拒绝。
-     * Redis 异常时返回「未预扣」，仍走完成后的 addTokens——治理能力降级，
-     * 但不阻断 AI 入口。
+     * 读不到配额或 Redis 自增没生效时<b>拒绝本次请求</b>（{@link #CODE_GUARD_UNAVAILABLE}），
+     * 而不是退回「不预扣、完成后累计」——后者等于治理依赖一旦异常就无限制放行。
      */
     public Reservation reserve(String userId, String module) {
         if (userId == null || userId.isEmpty() || !tokenQuotaApplies(module)) {
@@ -141,8 +154,8 @@ public class AiGatewayGuard {
             try {
                 userQuota = quotaHolder.effectiveQuota(userId);
             } catch (Exception e) {
-                log.warn("[AiGateway] 读取用户配额失败，跳过预扣, uid={}: {}", userId, e.getMessage());
-                return Reservation.none();
+                log.error("[AiGateway] 读取用户配额失败，拒绝本次调用, uid={}", userId, e);
+                return Reservation.blocked(CODE_GUARD_UNAVAILABLE, GUARD_UNAVAILABLE_MSG);
             }
             String gid = gidOf(userId);
             String unitOwner = gid == null || gid.trim().isEmpty() ? null : UNIT_PREFIX + gid.trim();
@@ -159,8 +172,9 @@ public class AiGatewayGuard {
             userKey = todayTokenKey(userId);
             Long userUsed = redisServer.increment(userKey, tokens);
             if (userUsed == null) {
-                // Redis 未返回计数说明自增没生效，放弃预扣而不是假装已占用
-                return Reservation.none();
+                // Redis 未返回计数说明自增没生效：此时既不能假装已占用，也不能当作没超额
+                log.error("[AiGateway] 预扣自增未生效（Redis 无返回），拒绝本次调用, uid={}", userId);
+                return Reservation.blocked(CODE_GUARD_UNAVAILABLE, GUARD_UNAVAILABLE_MSG);
             }
             userReserved = true;
             redisTemplate.expire(userKey, 2, TimeUnit.DAYS);
@@ -178,7 +192,8 @@ public class AiGatewayGuard {
                 if (unitUsed == null) {
                     redisServer.decrement(userKey, tokens);
                     userReserved = false;
-                    return Reservation.none();
+                    log.error("[AiGateway] 部门池预扣自增未生效（Redis 无返回），拒绝本次调用, uid={}", userId);
+                    return Reservation.blocked(CODE_GUARD_UNAVAILABLE, GUARD_UNAVAILABLE_MSG);
                 }
                 unitReserved = true;
                 redisTemplate.expire(unitKey, 2, TimeUnit.DAYS);
@@ -210,8 +225,8 @@ public class AiGatewayGuard {
                     // 回滚失败只能依赖次日 key 过期
                 }
             }
-            log.warn("[AiGateway] 预扣配额失败，已放行, uid={}: {}", userId, e.getMessage());
-            return Reservation.none();
+            log.error("[AiGateway] 预扣配额失败，拒绝本次调用, uid={}", userId, e);
+            return Reservation.blocked(CODE_GUARD_UNAVAILABLE, GUARD_UNAVAILABLE_MSG);
         }
     }
 
@@ -246,13 +261,14 @@ public class AiGatewayGuard {
         }
     }
 
-    /** 预扣结果：active 表示已占用额度；blocked 表示额度不足，调用方应直接拒绝 */
+    /** 预扣结果：active 表示已占用额度；blocked 表示额度不足或治理依赖不可用，调用方应直接拒绝 */
     @Getter
     public static class Reservation {
-        private static final Reservation NONE = new Reservation(false, false, null, 0L, null, null);
+        private static final Reservation NONE = new Reservation(false, false, null, null, 0L, null, null);
 
         private final boolean active;
         private final boolean blocked;
+        private final String blockedCode;
         private final String blockedMessage;
         private final long tokens;
         private final String userId;
@@ -261,10 +277,11 @@ public class AiGatewayGuard {
         private final java.util.concurrent.atomic.AtomicBoolean settled =
                 new java.util.concurrent.atomic.AtomicBoolean(false);
 
-        private Reservation(boolean active, boolean blocked, String blockedMessage,
+        private Reservation(boolean active, boolean blocked, String blockedCode, String blockedMessage,
                             long tokens, String userId, String unitOwner) {
             this.active = active;
             this.blocked = blocked;
+            this.blockedCode = blockedCode;
             this.blockedMessage = blockedMessage;
             this.tokens = tokens;
             this.userId = userId;
@@ -276,20 +293,25 @@ public class AiGatewayGuard {
         }
 
         public static Reservation blocked(String message) {
-            return new Reservation(false, true, message, 0L, null, null);
+            return blocked("quota_exceeded", message);
+        }
+
+        /** 超额之外的拒绝（如 Redis / 配额表不可用），必须带自己的错误码，前端与看板才能区分 */
+        public static Reservation blocked(String code, String message) {
+            return new Reservation(false, true, code, message, 0L, null, null);
         }
 
         public static Reservation active(String userId, String unitOwner, long tokens) {
-            return new Reservation(true, false, null, tokens, userId, unitOwner);
+            return new Reservation(true, false, null, null, tokens, userId, unitOwner);
         }
 
         boolean trySettle() {
             return settled.compareAndSet(false, true);
         }
 
-        /** 拒绝时统一使用 quota_exceeded，前端按 429 处理 */
+        /** 未显式给码时按 quota_exceeded 处理，前端按 429 提示 */
         public String getBlockedCode() {
-            return "quota_exceeded";
+            return blockedCode == null ? "quota_exceeded" : blockedCode;
         }
     }
 

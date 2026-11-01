@@ -2,6 +2,7 @@ package com.aiproject.ai.permission.holde;
 
 import blxt.qjava.utils.check.CheckUtils;
 import com.aiproject.ai.common.utils.ListToTreeUtil;
+import com.aiproject.ai.common.utils.SqlSortGuard;
 import com.aiproject.ai.permission.bean.UnitBean;
 import com.aiproject.ai.permission.mapper.UnitBeanMapper;
 import com.heneng.hnsp.business.user.bean.UserBaseDb;
@@ -191,7 +192,7 @@ public class UnitBeanHolder {
      */
 
     public List<UnitBean> queryList(UnitBean data, PageRequest pageRequest) {
-
+        SqlSortGuard.guard(pageRequest, UnitBean.class);
         return unitBeanMapper.select(pageRequest, data);
     }
 
@@ -200,7 +201,7 @@ public class UnitBeanHolder {
      */
 
     public Result<PageResult<UnitBean>> queryPage(UnitBean data, PageRequest pageRequest) {
-
+        SqlSortGuard.guard(pageRequest, UnitBean.class);
         return unitBeanMapper.selectPage(pageRequest, data);
     }
 

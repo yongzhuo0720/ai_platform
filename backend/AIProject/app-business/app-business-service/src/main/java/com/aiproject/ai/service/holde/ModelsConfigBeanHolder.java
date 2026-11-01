@@ -1,6 +1,7 @@
 package com.aiproject.ai.service.holde;
 
 import java.util.List;
+import com.aiproject.ai.common.utils.SqlSortGuard;
 import com.heneng.hnsp.common.db.utils.PageRequest;
 import lombok.extern.slf4j.Slf4j;
 import com.heneng.hnsp.common.db.utils.PageResult;
@@ -207,6 +208,8 @@ public  class ModelsConfigBeanHolder  {
      * baseUrl 属于内网拓扑信息，仅管理员可见。</p>
      */
     public List<ModelsConfigBean> queryListForCaller(String uid, ModelsConfigBean data, PageRequest pageRequest) {
+        // 对外入口的排序字段来自请求体，先过列名白名单（框架把 order/group 直接拼进 SQL）
+        SqlSortGuard.guard(pageRequest, ModelsConfigBean.class);
         List<ModelsConfigBean> list = queryList(data, pageRequest);
         maskSecrets(list, isAdminCaller(uid));
         return list;
@@ -216,6 +219,7 @@ public  class ModelsConfigBeanHolder  {
      * 同 {@link #queryListForCaller(String, ModelsConfigBean, PageRequest)}，分页版本。
      */
     public Result<PageResult<ModelsConfigBean>> queryPageForCaller(String uid, ModelsConfigBean data, PageRequest pageRequest) {
+        SqlSortGuard.guard(pageRequest, ModelsConfigBean.class);
         Result<PageResult<ModelsConfigBean>> result = queryPage(data, pageRequest);
         if (result != null && result.getDatas() != null) {
             maskSecrets(result.getDatas().getContent(), isAdminCaller(uid));

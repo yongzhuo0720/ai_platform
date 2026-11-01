@@ -1,5 +1,6 @@
 package com.aiproject.ai.permission.holde;
 
+import com.aiproject.ai.common.utils.SqlSortGuard;
 import com.aiproject.ai.permission.bean.MyRoleBean;
 import com.aiproject.ai.permission.bean.MyUserBaseDb;
 import com.aiproject.ai.permission.mapper.MyRoleBeanMapper;
@@ -166,6 +167,8 @@ public class MyRoleBeanHolder {
      * @param uid 调用者（来自 @LoginUserId，服务端注入，不信任前端传参）
      */
     public Result<PageResult<MyRoleBean>> queryForCaller(String uid, MyRoleBean bean, PageRequest pageRequest) {
+        // 外部可控的排序/分组字段先过白名单（框架是字符串拼接进 ORDER BY 的）
+        SqlSortGuard.guard(pageRequest, MyRoleBean.class);
         if (uid == null || uid.trim().isEmpty()) {
             return Result.failed(null, "请先登录");
         }

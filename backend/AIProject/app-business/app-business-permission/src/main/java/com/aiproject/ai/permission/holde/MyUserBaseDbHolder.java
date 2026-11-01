@@ -1,6 +1,7 @@
 package com.aiproject.ai.permission.holde;
 
 import blxt.qjava.utils.TimeHelper;
+import com.aiproject.ai.common.utils.SqlSortGuard;
 import com.heneng.hnsp.business.user.bean.UserBaseDb;
 import com.heneng.hnsp.business.user.utils.UpwdTools;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -194,6 +195,9 @@ public  class MyUserBaseDbHolder  {
      * @return
      */
     public Result<PageResult<MyUserBaseDb>> querys(String uid, MyUserBaseDb bean, PageRequest pageRequest){
+        // pageRequest 的 order/group/desc 由框架原样拼进 SQL 尾部，必须先按列名白名单校验；
+        // rname / gname 是联表 SELECT 出来的别名列，允许排序。
+        SqlSortGuard.guard(pageRequest, MyUserBaseDb.class, "rname", "gname");
         // 分页查询
         Result<PageResult<MyUserBaseDb>> result = userbaseMapper.selectPageLike(pageRequest, bean);
 
