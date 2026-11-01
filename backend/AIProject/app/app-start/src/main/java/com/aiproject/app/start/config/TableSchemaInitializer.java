@@ -34,6 +34,22 @@ public class TableSchemaInitializer implements ApplicationListener<ApplicationRe
         ensureLongTextColumns();
         ensureCostAndTracingColumns();
         ensureApiTokenTable();
+        ensureControllerLogIndex();
+    }
+
+    /**
+     * 操作日志表（框架写入的 {@code usercontrollerlog}）的时间索引。
+     *
+     * <p>后台「操作日志」页按 {@code createtime} 区间过滤、按 {@code iid} 倒序分页。
+     * 只按 {@code iid} 倒着扫意味着「查三个月前某一天」要从最新一路回退几千行；
+     * 建了这个索引，区间过滤走位图扫描再排序，翻页成本与表的总行数不再线性相关。</p>
+     *
+     * <p>这张表由框架建、由框架写，本项目只读；表不存在时（首次启动前还没有任何
+     * 接口调用）这条 DDL 会失败并被忽略，与上面几处一致。</p>
+     */
+    private void ensureControllerLogIndex() {
+        execute("CREATE INDEX IF NOT EXISTS idx_usercontrollerlog_createtime "
+                + "ON usercontrollerlog (\"createtime\")");
     }
 
     /**

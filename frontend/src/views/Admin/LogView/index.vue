@@ -3,8 +3,8 @@
         <div class="user-search-bar">
             <el-form :inline="true" :model="state.formInline" class="search-form">
                 <el-form-item label="操作时间" >
-                    <el-date-picker v-model="state.formInline.timeS" type="date" placeholder="选择开始时间"  value-format="YYYY-MM-DD 00:00:00"/>&nbsp-&nbsp 
-                    <el-date-picker v-model="state.formInline.timeE" type="date" placeholder="选择结束时间"  value-format="YYYY-MM-DD 23:59:59"/>
+                    <el-date-picker v-model="state.formInline.timeS" type="date" placeholder="选择开始日期"  value-format="YYYY-MM-DD"/>&nbsp-&nbsp 
+                    <el-date-picker v-model="state.formInline.timeE" type="date" placeholder="选择结束日期"  value-format="YYYY-MM-DD"/>
                 </el-form-item>
                 <el-form-item>
                     <button type="button" class="btn btn-primary" @click="onQuery">
@@ -22,6 +22,7 @@
                     <span class="table-cell-strong">{{ scope.row.action }}</span>
                 </template>
               </el-table-column> 
+              <el-table-column prop="url" label="操作接口" align="center" min-width="200" show-overflow-tooltip></el-table-column>     
               <el-table-column prop="clientip" label="客户端IP" align="center"></el-table-column>     
               <el-table-column prop="res" label="操作结果" align="center"></el-table-column>
               <el-table-column prop="time" label="执行接口耗时" align="center">
@@ -29,9 +30,12 @@
                    {{scope.row.time}} ms
                 </template>
               </el-table-column> 
-              <el-table-column prop="user" label="操作者" align="center"></el-table-column>
               <el-table-column prop="uaccount" label="操作者账号" align="center"></el-table-column>
-              <el-table-column prop="createtime" label="操作时间" align="center"></el-table-column>
+              <el-table-column prop="createtime" label="操作时间" align="center" min-width="160">
+                <template #default="scope">
+                   {{ formatTime(scope.row.createtime) }}
+                </template>
+              </el-table-column>
         </el-table>
         </div>
         <div class="page-block">
@@ -51,7 +55,8 @@ const {
         state,
         onQuery,
         handleSizeChange,
-        handleCurrentChange
+        handleCurrentChange,
+        formatTime
         }= useIndex()
 </script>
 <style lang="less" scoped>

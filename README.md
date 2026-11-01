@@ -202,6 +202,7 @@ frontend/src/
 | 越权防护 | 平台级目录（能力/数据集/模型/应用/Dify 配置）的写操作限超管；用户归属资源逐条校验所有者 |
 | 文件下载 | 路径需落在已登记的数据集根目录内，规范化后前缀比对，越界返回 403 |
 | 密钥治理 | 默认网关模式下，Dify / 直连模型密钥仅由服务端使用；网关覆盖客户端传入的认证头；平台 API 密钥只存 SHA-256 哈希，明文仅在创建时返回一次，且 `create` 不写操作日志（否则响应体里的明文会落进 `usercontrollerlog`） |
+| 操作日志 | 框架写的 `usercontrollerlog` 由本项目自己的 `POST /ai/api/controllerLog/query` 只读暴露：仅超管可查，日期区间严格解析成 `yyyy-MM-dd`，排序固定 `iid desc` 不接受前端传值，实体不映射 `params` 列（请求参数快照，可能含口令），所以那条链路上取不到请求体 |
 | AI 调用治理 | Dify、OpenAI 兼容模型与 `/v1` 外部调用共用网关：按用户限流，记录 tokens、耗时、请求 ID 与成本；支持用户与部门 Token 配额；客户端停止生成时立即关闭上游连接 |
 | 上传限制 | 单文件 50MB / 整请求 120MB；超限直接返回 413 `payload_too_large` 并记审计，不再伪装成 502 上游故障 |
 | 上游地址 | Dify 与直连模型的目标地址取服务端配置，由管理员维护 |
@@ -232,8 +233,8 @@ mvn -s $settings "-Dmaven.repo.local=$repo" test
 cd frontend
 npm run typecheck      # TypeScript 类型检查
 npm run check:icons    # 图标注册检查（模板图标必须 import 或全局注册）
-npm run test            # 单元测试（Vitest），16 个文件 / 205 项
-npm run test:component  # 组件测试（真实渲染），24 个文件 / 195 项
+npm run test            # 单元测试（Vitest），17 个文件 / 207 项
+npm run test:component  # 组件测试（真实渲染），24 个文件 / 197 项
 npm run test:e2e        # 浏览器冒烟（真实 Chromium + 接口 mock），8 项
 npm run check:streaming # 流式超时/取消回归，14 项
 npm run check:markdown  # Markdown 与 XSS 消毒回归，10 项
@@ -249,11 +250,11 @@ npm run check:bundle     # 首屏 gzip 体积预算（需先 build）
 
 | 项目 | 结果 |
 |---|---|
-| 后端单元测试 | **303 项通过（30 个测试类），0 失败 / 0 错误 / 0 跳过** |
+| 后端单元测试 | **320 项通过（32 个测试类），0 失败 / 0 错误 / 0 跳过** |
 | 前端 TypeScript 检查 | 通过 |
 | 前端图标注册检查 | 通过（56 个在用图标全部可解析） |
-| 前端单元测试 | 16 个文件 / **205 项通过** |
-| 前端组件测试 | 24 个文件 / **195 项通过**（@vue/test-utils 真实渲染 LoginView / ChatComposer / ChatMessageList / ChatSidebar / KbSearchView / MyUsageView / ApiKeysView / ShareView / AiGatewayView / UserView / RoleView / UnitView / ModelsConfigView / DifyConfigView / LogView / KnowledgeBaseMngView / ModelsView / ApplicationsView / CapabilitiesView / DatasetView / KnowledgeBaseSquareView / KnowledgeBaseView / PreviewView / NotFoundView） |
+| 前端单元测试 | 17 个文件 / **207 项通过** |
+| 前端组件测试 | 24 个文件 / **197 项通过**（@vue/test-utils 真实渲染 LoginView / ChatComposer / ChatMessageList / ChatSidebar / KbSearchView / MyUsageView / ApiKeysView / ShareView / AiGatewayView / UserView / RoleView / UnitView / ModelsConfigView / DifyConfigView / LogView / KnowledgeBaseMngView / ModelsView / ApplicationsView / CapabilitiesView / DatasetView / KnowledgeBaseSquareView / KnowledgeBaseView / PreviewView / NotFoundView） |
 | 浏览器冒烟（Playwright） | **8 项通过**（真实 Chromium：登录守卫与登录跳转、聊天页启动无异常、直连模型 SSE 流式回答、直连图片附件带压缩 dataURL、直连模式隐藏 Dify 应用参数、配额 429 展示服务端原因、知识库模块未配置引导、404 兜底；接口层由 `page.route` 拦截；webServer 固定用 4317 + `--strictPort`，不会撞上你开着的 5173 dev server） |
 | 前端流式回归 | 14 项通过 |
 | 前端 Markdown / XSS 回归 | 10 项通过（**2026-10-29 前该脚本一直是失败的，见文档**） |

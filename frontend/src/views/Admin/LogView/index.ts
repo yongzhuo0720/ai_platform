@@ -14,8 +14,6 @@ export function useIndex() {
       pageSize: 20,
       pageNum: 1,
       total: 0,
-      order: 'iid',
-      desc: 'desc',
     },
   })
 
@@ -24,18 +22,27 @@ export function useIndex() {
   })
 
   const getDataList = async () => {
+    const timeS = state.formInline.timeS
+    const timeE = state.formInline.timeE
+    // 后端按「区间」过滤，只填一头无法构成合法条件，与其悄悄查出一个全量
+    // 让用户以为这就是筛选结果，不如直接说明
+    if ((timeS && !timeE) || (!timeS && timeE)) {
+      ElMessage.warning('请同时选择开始日期与结束日期')
+      return
+    }
     try {
-      const reqdata = {
-        data: {},
-        ...state.formInline,
-        pageRequest: state.pagination,
-      }
-      const { data: res } = await logApi.getLogList(reqdata)
-      if (res.resp_code == 0) {
-        state.tableData = res.datas.content
-        state.pagination.total = res.datas.totalSize
+      const { data: res } = await logApi.getLogList({
+        pageNum: state.pagination.pageNum,
+        pageSize: state.pagination.pageSize,
+        startDate: timeS || undefined,
+        endDate: timeE || undefined,
+      })
+      if (res.resp_code === 0) {
+        state.tableData = res.datas?.content ?? []
+        state.pagination.total = res.datas?.totalSize ?? 0
       } else {
-        ElMessage.error('获取日志列表失败')
+        // 直接透出后端原因：非超管、「日期格式不正确」这类提示只有后端知道
+        ElMessage.error(res.resp_msg || '获取日志列表失败')
       }
     } catch (err) {
       debug.error('获取日志列表失败', err)
@@ -58,5 +65,24 @@ export function useIndex() {
     getDataList()
   }
 
-  return { state, onQuery, handleSizeChange, handleCurrentChange }
+  /**
+   * 日志表的 createtime 由 Jackson 序列化成毫秒时间戳，
+   * 直接塞进单元格里就是一串 13 位数字，所以这里统一转成
+   * 「年-月-日 时:分:秒」。拿到字符串（框架历史数据）也能解析。
+   */
+  const formatTime = (value: number | string | null | undefined): string => {
+    if (value === null || value === undefined || value === '') return '-'
+    const date =
+      typeof value === 'number'
+        ? new Date(value)
+        : new Date(String(value).replace(/\//g, '-').replace(' ', 'T'))
+    if (Number.isNaN(date.getTime())) return String(value)
+    const pad = (num: number) => String(num).padStart(2, '0')
+    return (
+      `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ` +
+      `${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`
+    )
+  }
+
+  return { state, onQuery, handleSizeChange, handleCurrentChange, formatTime }
 }

@@ -56,11 +56,15 @@ public class LoginAuthInterceptor implements HandlerInterceptor {
      *       「按 uid / uaccess 强制登出」的运维能力，普通用户拿到就能踢任何人下线。</li>
      *   <li>{@code /userControllerlog/getControllerLogByTimeAdmin}：框架里唯一「不按 uid 过滤」
      *       的日志查询——同名非 Admin 版本会先 {@code bean.setUaccount(uid)} 只查自己，
-     *       Admin 版本直接把条件透传，实测一个普通用户账号能读出全站 1.1 万条操作记录
-     *       （含 uaccount、action、params、res、url、clientip），等于全站行为审计库对外敞开。
-     *       前端唯一的调用方是后台「操作日志」页，而该页的登录流程本身就只放行 rid=99999
-     *       （LoginView 里非超管直接「暂无权限」并清空 admin_* cookie），
-     *       所以后端补上这道判定是补齐「只有前端做了鉴权」的缺口，不改变任何合法用法。</li>
+     *       Admin 版本把请求条件原样透传，谁调都能读出全站操作记录
+     *       （uaccount、action、res、url、clientip 等），等于全站行为审计库对外敞开。
+     *       <p>当前状态：这个模块（{@code hnsp-public-business-controller}）在
+     *       {@code app-business-permission/pom.xml} 里是注释掉的，接口并没有注册——
+     *       所以这一条是「一旦有人重新启用该模块就立刻生效」的兜底。
+     *       后台「操作日志」页已改走本项目自己的 {@code POST /api/controllerLog/query}：
+     *       那里在 Holder 内部就判超管，且实体不映射 {@code params}
+     *       （请求参数快照；现存 1.1 万条里恰好全为空，但它随时可能落进口令之类的正文，
+     *       所以从列层面就不取）。</li>
      * </ul>
      */
     private static final Set<String> ADMIN_ONLY_PATHS = Collections.unmodifiableSet(
