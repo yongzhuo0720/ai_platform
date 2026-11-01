@@ -8,10 +8,12 @@
 # 用法：
 #   powershell -ExecutionPolicy Bypass -File scripts/verify.ps1
 #   powershell -ExecutionPolicy Bypass -File scripts/verify.ps1 -SkipBuild   # 跳过前端构建（快很多）
+#   powershell -ExecutionPolicy Bypass -File scripts/verify.ps1 -SkipE2E     # 跳过浏览器冒烟
 #
 # 需要预先装好：
 #   - JDK 8（Java 21 与项目 Lombok 版本不兼容，README 已说明）
 #   - Node.js 22+（单测使用的 jsdom 30 官方要求 ≥22.22）
+#   - Playwright 浏览器：cd frontend; npx playwright install chromium
 #   - 仓库自带的离线 Maven 依赖 hd_redis/ai-maven/pro
 #     注意 hd_redis/ 整个目录被 .gitignore 排除、不入库，新机器必须先拷过去；
 #     后端也因此进不了 GitHub Actions，见 .github/workflows/ci.yml 里的注释。
@@ -29,7 +31,9 @@ param(
     # JDK 8 路径。默认取环境变量，可用 -JavaHome 覆盖
     [string]$JavaHome = $env:JAVA_HOME,
     # 跳过前端构建以加快迭代（typecheck 仍会跑）
-    [switch]$SkipBuild
+    [switch]$SkipBuild,
+    # 跳过浏览器冒烟（本机没装 Playwright 浏览器时用）
+    [switch]$SkipE2E
 )
 
 $ErrorActionPreference = "Stop"
@@ -171,6 +175,33 @@ Step "Markdown / XSS 消毒回归检查" {
         if ($LASTEXITCODE -ne 0) { throw "markdown 检查退出码 $LASTEXITCODE" }
     } finally {
         Pop-Location
+    }
+}
+
+# ---------- 浏览器冒烟 ----------
+# playwright.config.ts 本地默认 channel=msedge，用的是本机已装的 Edge，
+# 不下载 ms-playwright 浏览器；没有 Edge 时给明确提示，而不是让 Playwright
+# 抛一句 "Failed to launch: Chromium distribution 'msedge' is not found"。
+if ($SkipE2E) {
+    Write-Host ""
+    Write-Host "（已跳过浏览器冒烟）" -ForegroundColor DarkGray
+} else {
+    Step "浏览器冒烟（Playwright）" {
+        $edge = @(
+            "$env:ProgramFiles\Microsoft\Edge\Application\msedge.exe",
+            "${env:ProgramFiles(x86)}\Microsoft\Edge\Application\msedge.exe"
+        ) | Where-Object { Test-Path $_ } | Select-Object -First 1
+        if (-not $edge) {
+            throw "本机没找到 Microsoft Edge（Playwright 本地默认用它）。" +
+                  "要么装 Edge / 设 PLAYWRIGHT_CHANNEL 指向已装浏览器，要么加 -SkipE2E 跳过这一步。"
+        }
+        Push-Location "$root/frontend"
+        try {
+            npm run test:e2e
+            if ($LASTEXITCODE -ne 0) { throw "浏览器冒烟退出码 $LASTEXITCODE" }
+        } finally {
+            Pop-Location
+        }
     }
 }
 

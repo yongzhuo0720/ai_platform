@@ -7,11 +7,16 @@
 #   powershell -ExecutionPolicy Bypass -File scripts/start.ps1 -FrontendOnly
 #
 # 启动后：
-#   前端  http://localhost:5173       账号 admin / 123456（超管）、ss / 123456
+#   前端  http://localhost:5173       演示账号 admin / ss（口令见本地库种子）
 #   后端  http://localhost:8507/ai
 #
 # 前置要求：JDK 8（Java 21 与项目 Lombok 版本不兼容）、Node 18+。
 # 仓库自带的 hd_redis/ 已包含 PG 与需要离线依赖，无需联网。
+#
+# 本地口令不写在脚本里：Redis 口令复用后端那份 gitignored 的
+# application-dev.properties（hnsp.redis.password），也可用环境变量
+# NEXUSAI_REDIS_PASSWORD 覆盖。都拿不到时，Redis 检查退化为无鉴权 ping
+# ——服务端回 NOAUTH 同样说明它在运行，不影响启动。
 
 param(
     [string]$JavaHome = $env:JAVA_HOME,
@@ -24,6 +29,13 @@ $ErrorActionPreference = "Stop"
 $root = Split-Path -Parent $PSScriptRoot
 $pgDir = Join-Path $root "hd_redis\pgsql"
 $redisCli = Join-Path $root "hd_redis\redis321\redis-cli.exe"
+
+$devProps = Join-Path $root "backend\AIProject\app\app-start\src\main\resources\application-dev.properties"
+if (-not $RedisPassword -and (Test-Path $devProps)) {
+    $hit = Select-String -Path $devProps -Pattern '^\s*hnsp\.redis\.password\s*=\s*(.+)$' | Select-Object -Last 1
+    if ($hit) { $RedisPassword = $hit.Matches[0].Groups[1].Value.Trim() }
+}
+if (-not $RedisPassword) { $RedisPassword = $env:NEXUSAI_REDIS_PASSWORD }
 
 function Test-Port($port) {
     return [bool](netstat -ano | Select-String ":$port\s.*LISTENING")
@@ -45,11 +57,17 @@ function Wait-Port($port, $name, $timeoutSec = 120) {
 if (-not $FrontendOnly) {
     Write-Host "==> 检查 Redis（:6379）" -ForegroundColor Cyan
     if (Test-Path $redisCli) {
-        $pong = & $redisCli -a [REDACTED-PWD] -p 6379 ping 2>$null
-        if ($pong -notmatch "PONG") {
-            Write-Host "  Redis 未响应。请启动 hd_redis/redis321/redis-server.exe（需密码 [REDACTED-PWD]）" -ForegroundColor Yellow
+        if ($RedisPassword) {
+            $pong = & $redisCli -a $RedisPassword -p 6379 ping 2>$null
         } else {
+            $pong = & $redisCli -p 6379 ping 2>$null
+        }
+        if ($pong -match "PONG") {
             Write-Host "  Redis 正常" -ForegroundColor Green
+        } elseif ($pong -match "NOAUTH") {
+            Write-Host "  Redis 正常（要求口令，但没从 application-dev.properties 拿到，跳过鉴权检查）" -ForegroundColor Yellow
+        } else {
+            Write-Host "  Redis 未响应。请启动 hd_redis/redis321/redis-server.exe（口令取自后端 application-dev.properties 的 hnsp.redis.password）" -ForegroundColor Yellow
         }
     } else {
         Write-Host "  未找到 redis-cli，跳过检查" -ForegroundColor Yellow
@@ -164,11 +182,11 @@ Write-Host "  前端    http://localhost:5173"
 Write-Host "  后端    http://localhost:8507/ai"
 Write-Host "  Swagger http://localhost:8507/ai/swagger-ui.html"
 Write-Host ""
-Write-Host "  账号    admin / 123456   （超级管理员）"
-Write-Host "          ss    / 123456   （普通用户，rid=1）"
+Write-Host "  账号    admin（超级管理员 rid=99999）、ss（普通用户 rid=1）"
+Write-Host "          演示口令是本地库里的种子值，不写进脚本和文档"
 Write-Host ""
-Write-Host "  数据库  postgres / [REDACTED-PWD]  库名 ai  端口 5432"
-Write-Host "  Redis   127.0.0.1:6379  密码 [REDACTED-PWD]"
+Write-Host "  数据库  库名 ai  端口 5432  后端用低权限账号 ai_app（口令在 application-dev.properties）"
+Write-Host "  Redis   127.0.0.1:6379  口令取自 application-dev.properties"
 Write-Host ""
 Write-Host "  改完后端代码后需重新打包并重启（本脚本会自动处理）。"
 Write-Host "  提交前跑一遍 scripts/verify.ps1 做全量校验。"

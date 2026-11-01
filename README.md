@@ -121,7 +121,56 @@ DIFY_KB_FILE_KEY=dataset-你的知识库密钥
 服务地址、API Key 与上游模型名，前端聊天页选择该模型即经 `/ai/api/aiGateway/models/{iid}/**` 调用。
 请求体中的 `model` 以服务端配置为准，流式响应自动注入 `stream_options.include_usage` 以统计 Token。
 
-前端默认走网关，`frontend/.env.local` 里的 `VITE_DIFY_*` 不再生效；只有在排障或兼容旧行为时才设置 `VITE_AI_GATEWAY=0` 切回浏览器直连（此时凭据会下发浏览器，且没有限流/配额/审计）。
+前端默认走网关。Dify 凭据只在服务端持有：浏览器直连模式（`VITE_AI_GATEWAY=0`）的密钥也已改为只从后端 `difyconfigbean` 取，**不再读取任何 `VITE_DIFY_*_KEY`**——Vite 会把 `VITE_*` 原样内联进 `dist`，写在 `.env.local` 里不提交只挡住 git、挡不住构建内联。提交前 `npm run check:secrets`（已进 `scripts/verify.ps1` 与 CI）会在构建产物上兜底扫描。
+
+### OpenAI 兼容端点与平台 API 密钥
+
+想用自己的程序（脚本、IDE 插件、任何 OpenAI SDK）调平台模型，不必模拟浏览器登录：
+在「用量中心 → API 密钥」自助签发一枚 `sk-` 密钥，然后直接打 `/ai/v1/*`。
+页面上能设名称 / 有效期 / 可用模型白名单，列表只回显前缀（`sk-1a2b3c4d…`）与最后使用时间，
+创建成功时那一次明文旁边直接给出可复制的 curl 示例；停用与删除都是即时生效的（下一次调用就 401）。
+
+| 端点 | 说明 |
+|---|---|
+| `GET /ai/v1/models` | 列出该密钥允许调用的直连模型（`id` 可直接填进对话请求的 `model`） |
+| `POST /ai/v1/chat/completions` | 标准对话补全，`stream=true` 时逐块透传 SSE，并透传上游的 usage |
+| `POST /ai/api/aiApiToken/{list,create,update,delete}` | 密钥管理，走浏览器登录态（`x-access-token`），不是 Bearer |
+
+与浏览器对话同一套账：命中密钥后以 `userId` 的身份走限流、每日 Token 配额与审计（`module=models`、`endpoint=v1/chat/completions`），
+密钥停用或过期立刻表现为 401；`model` 支持三种写法——平台 iid、平台模型名、上游模型名，重复名按 iid 最小者。
+可选的 `allowModels`（逗号分隔）给单枚密钥限定模型范围，越界返回 403 `model_not_allowed`。
+
+```bash
+BASE=http://localhost:8507          # 后端地址，含 context path /ai
+
+# 1) 浏览器登录态换会话 token（/uaccess/login 需要验证码，自助签发用 logintest）
+LT=$(curl -s -X POST "$BASE/ai/uaccess/logintest" -H 'Content-Type: application/json' \
+     -d '{"uaccess":"<你的本地账号>","upwd":"<你的本地口令>","keepUser":false}' | jq -r .datas.token)
+
+# 2) 签一枚密钥。请求体形状是 {"data":{...}}：框架按参数名映射请求体，
+#    裸传 {"name":"..."} 会解析成 null。明文只在这一次响应里出现，库里只有 SHA-256。
+KEY=$(curl -s -X POST "$BASE/ai/api/aiApiToken/create" \
+      -H 'Content-Type: application/json' -H "x-access-token: $LT" \
+      -d '{"data":{"name":"ci-runner"}}' | jq -r .datas.plaintext)
+
+# 3) OpenAI 协议实测（模型名取 /v1/models 里的 id）
+curl -s "$BASE/ai/v1/models" -H "Authorization: Bearer $KEY"
+curl -s -X POST "$BASE/ai/v1/chat/completions" -H 'Content-Type: application/json' \
+     -H "Authorization: Bearer $KEY" \
+     -d '{"model":"mock-chat-model","messages":[{"role":"user","content":"say hi"}]}'
+
+# 流式
+curl -N -X POST "$BASE/ai/v1/chat/completions" -H 'Content-Type: application/json' \
+     -H "Authorization: Bearer $KEY" \
+     -d '{"model":"mock-chat-model","stream":true,"messages":[{"role":"user","content":"say hi"}]}'
+```
+
+鉴权失败给的是**真 HTTP 状态码 + OpenAI 错误体**（`{"error":{"message","type","code","request_id"}}`，并回 `X-Request-Id`），
+不是平台内部的 HTTP 200 + `resp_code`——OpenAI SDK 靠状态码判断是否重试，套平台的形状会让客户端把 401 当成功。
+`/v1/**` 不进 `LoginAuthInterceptor`，由 `ApiTokenAuthInterceptor` 单独把关：缺头 / 格式错 / 校验抛异常一律 fail-closed 拒绝。
+
+> 已知取舍：配额按**用户**计，不按密钥计——一枚用户名下多把密钥共享同一份额度；
+> 每密钥配额与用量细分需要新表，尚未实现。
 
 ---
 
@@ -152,8 +201,9 @@ frontend/src/
 |---|---|
 | 越权防护 | 平台级目录（能力/数据集/模型/应用/Dify 配置）的写操作限超管；用户归属资源逐条校验所有者 |
 | 文件下载 | 路径需落在已登记的数据集根目录内，规范化后前缀比对，越界返回 403 |
-| 密钥治理 | 默认网关模式下，Dify / 直连模型密钥仅由服务端使用；网关覆盖客户端传入的认证头 |
-| AI 调用治理 | Dify 与 OpenAI 兼容模型共用网关：按用户限流，记录 tokens、耗时、请求 ID 与成本；支持用户与部门 Token 配额；客户端停止生成时立即关闭上游连接 |
+| 密钥治理 | 默认网关模式下，Dify / 直连模型密钥仅由服务端使用；网关覆盖客户端传入的认证头；平台 API 密钥只存 SHA-256 哈希，明文仅在创建时返回一次，且 `create` 不写操作日志（否则响应体里的明文会落进 `usercontrollerlog`） |
+| AI 调用治理 | Dify、OpenAI 兼容模型与 `/v1` 外部调用共用网关：按用户限流，记录 tokens、耗时、请求 ID 与成本；支持用户与部门 Token 配额；客户端停止生成时立即关闭上游连接 |
+| 上传限制 | 单文件 50MB / 整请求 120MB；超限直接返回 413 `payload_too_large` 并记审计，不再伪装成 502 上游故障 |
 | 上游地址 | Dify 与直连模型的目标地址取服务端配置，由管理员维护 |
 | XSS | 助手回答中的原始 HTML 做转义，图片 URL 做协议校验 |
 
@@ -182,8 +232,8 @@ mvn -s $settings "-Dmaven.repo.local=$repo" test
 cd frontend
 npm run typecheck      # TypeScript 类型检查
 npm run check:icons    # 图标注册检查（模板图标必须 import 或全局注册）
-npm run test            # 单元测试（Vitest），15 个文件 / 203 项
-npm run test:component  # 组件测试（真实渲染），23 个文件 / 184 项
+npm run test            # 单元测试（Vitest），16 个文件 / 205 项
+npm run test:component  # 组件测试（真实渲染），24 个文件 / 195 项
 npm run test:e2e        # 浏览器冒烟（真实 Chromium + 接口 mock），8 项
 npm run check:streaming # 流式超时/取消回归，14 项
 npm run check:markdown  # Markdown 与 XSS 消毒回归，10 项
@@ -191,22 +241,26 @@ npm run build            # 生产构建
 npm run check:bundle     # 首屏 gzip 体积预算（需先 build）
 ```
 
-本地一键验证使用 `scripts/verify.ps1 -JavaHome '<你的 JDK 8 路径>'`。
+本地一键验证使用 `scripts/verify.ps1 -JavaHome '<你的 JDK 8 路径>'`（11 步，含后端；
+跑完会打印 `后端单测汇总：N 项 / M 份报告`，一份报告都没生成就直接判失败——这是为了
+堵住「测试被静默跳过但 BUILD SUCCESS」这类最危险的绿色）。日志统一 UTF-8，可直接重定向存档。
 
-### 当前测试结果（2026-10-30 实测）
+### 当前测试结果（2026-11-01 实测，`scripts/verify.ps1` 全绿）
 
 | 项目 | 结果 |
 |---|---|
-| 后端单元测试 | **211 项通过，0 失败** |
+| 后端单元测试 | **303 项通过（30 个测试类），0 失败 / 0 错误 / 0 跳过** |
 | 前端 TypeScript 检查 | 通过 |
 | 前端图标注册检查 | 通过（56 个在用图标全部可解析） |
-| 前端单元测试 | 15 个文件 / **203 项通过** |
-| 前端组件测试 | 23 个文件 / **184 项通过**（@vue/test-utils 真实渲染 LoginView / ChatComposer / ChatMessageList / ChatSidebar / KbSearchView / MyUsageView / ShareView / AiGatewayView / UserView / RoleView / UnitView / ModelsConfigView / DifyConfigView / LogView / KnowledgeBaseMngView / ModelsView / ApplicationsView / CapabilitiesView / DatasetView / KnowledgeBaseSquareView / KnowledgeBaseView / PreviewView / NotFoundView） |
-| 浏览器冒烟（Playwright） | **8 项通过**（真实 Chromium：登录守卫与登录跳转、聊天页启动无异常、直连模型 SSE 流式回答、直连图片附件带压缩 dataURL、直连模式隐藏 Dify 应用参数、配额 429 展示服务端原因、知识库模块未配置引导、404 兜底；接口层由 `page.route` 拦截） |
+| 前端单元测试 | 16 个文件 / **205 项通过** |
+| 前端组件测试 | 24 个文件 / **195 项通过**（@vue/test-utils 真实渲染 LoginView / ChatComposer / ChatMessageList / ChatSidebar / KbSearchView / MyUsageView / ApiKeysView / ShareView / AiGatewayView / UserView / RoleView / UnitView / ModelsConfigView / DifyConfigView / LogView / KnowledgeBaseMngView / ModelsView / ApplicationsView / CapabilitiesView / DatasetView / KnowledgeBaseSquareView / KnowledgeBaseView / PreviewView / NotFoundView） |
+| 浏览器冒烟（Playwright） | **8 项通过**（真实 Chromium：登录守卫与登录跳转、聊天页启动无异常、直连模型 SSE 流式回答、直连图片附件带压缩 dataURL、直连模式隐藏 Dify 应用参数、配额 429 展示服务端原因、知识库模块未配置引导、404 兜底；接口层由 `page.route` 拦截，`reuseExistingServer` 让它在本地复用你已开着的 dev server） |
 | 前端流式回归 | 14 项通过 |
 | 前端 Markdown / XSS 回归 | 10 项通过（**2026-10-29 前该脚本一直是失败的，见文档**） |
-| 前端生产构建 | 通过（element-plus 按路由分包，入口 gzip 152.5 kB，已无 >500 kB 分包警告） |
-| 产物体积预算 | 通过（首屏 JS 202.8 kB / 预算 260 kB，gzip） |
+| 前端生产构建 | 通过（element-plus 按路由分包，入口 gzip 152.2 kB，已无 >500 kB 分包警告） |
+| 产物体积预算 | 通过（首屏 JS 202.6 kB / 预算 260 kB，首屏 CSS 58.2 kB / 预算 80 kB，gzip） |
+| 产物密钥扫描 | 通过（构建后扫 106 个 dist 文件，防止 `VITE_*` 被 Vite 内联进产物） |
+| RAG 评估集自检 | 通过（黄金集与语料一致性 + JS 指标与 Java `RagEvaluator` 口径一致，离线） |
 
 2026-10-30 前端改进：
 
@@ -385,7 +439,7 @@ npm run check:bundle     # 首屏 gzip 体积预算（需先 build）
 ## 已知限制
 
 - **AI 能力依赖外部服务**：Dify 与直连模型各自依赖对应上游；本地 RAG 的向量化仍需可用的向量模型接口。
-- **网关需先配置上游**：Dify 需在数据库 `difyconfigbean`（后台「Dify 配置管理」）或服务端 `DIFY_*` 环境变量配置；直连模型需在「模型配置」里配齐地址与密钥。未配置时对应模块返回 503；前端 `.env.local` 的 `VITE_DIFY_*` 在默认网关模式下不生效。
+- **网关需先配置上游**：Dify 需在数据库 `difyconfigbean`（后台「Dify 配置管理」）或服务端 `DIFY_*` 环境变量配置；直连模型需在「模型配置」里配齐地址与密钥。未配置时对应模块返回 503。前端已不读取任何 `VITE_DIFY_*_KEY`，密钥不存在于浏览器侧。
 - **流式治理的边界**：Token 统计依赖上游返回 usage（Dify 聊天在 `message_end`，工作流在 `data.total_tokens`）；上游不返回时只统计调用次数与耗时，配额无法按 Token 精确扣减。
 - **验证边界**：自动测试不等于真实上游与数据库验收；网关与模型协议测试使用本机临时 HTTP 服务，数据库写入使用 Mapper mock，未连接真实 Dify / 向量服务 / 生产数据库。其余待改进项见本次检查记录。
 - **依赖版本需锁定**：私有框架 `hnsp-public-common-croe` 把 `mybatis` 声明为 `<version>LATEST</version>`。2026-10-29 实测当天 16:55 构建正常、16:57 拉到 `mybatis 3.6.0`（Java 11 编译）后 JDK 8 直接编译失败。已在根 `pom.xml` 用 `dependencyManagement` 锁定 `3.5.19`（离线仓库中最高的 Java 8 兼容版本）。**不要移除这个锁定。**

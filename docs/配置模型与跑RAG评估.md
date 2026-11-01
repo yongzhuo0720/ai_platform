@@ -110,7 +110,7 @@ DeepSeek 的 OpenAI 兼容层**只有 Chat Completions，没有 `/embeddings` �
 ```bash
 # 1) 灌语料 + 跑 55 题 + 出报告（一条命令）
 node scripts/rag-eval.mjs \
-  --account admin --password 123456 \
+  --account admin --password '<本地演示口令>' \
   --seed \
   --out docs/eval/report-$(date +%F).md
 ```
@@ -120,7 +120,7 @@ node scripts/rag-eval.mjs \
 
 ```bash
 # 2) 跑完清理语料（可选）
-node scripts/rag-eval.mjs --account admin --password 123456 --seed --cleanup
+node scripts/rag-eval.mjs --account admin --password '<本地演示口令>' --seed --cleanup
 ```
 
 拿到数字后填进 `docs/eval/README.md` 的「真实评估记录表」。
