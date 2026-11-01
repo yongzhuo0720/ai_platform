@@ -83,6 +83,12 @@ const router = createRouter({
           component: () => import("@/views/MyUsageView/index.vue"),
           meta: { title: "我的用量", group: "用量中心" },
         },
+        {
+          path: "api-keys",
+          name: "api-keys",
+          component: () => import("@/views/ApiKeysView/index.vue"),
+          meta: { title: "API 密钥", group: "用量中心" },
+        },
       ],
     },
     {

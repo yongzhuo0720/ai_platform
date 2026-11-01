@@ -60,6 +60,10 @@ jobs:
       # 2026-10-30 新增：首屏 gzip 体积设预算，防止再出现「全量注册图标」这类静默膨胀
       - name: 产物体积预算
         run: npm run check:bundle
+      # 2026-11-01 新增：Vite 会把 VITE_* 原样内联进 dist，曾经把 Dify 真密钥打进产物。
+      # 源码没有密钥不代表产物干净，必须在构建后的 dist 上扫。
+      - name: 产物密钥扫描
+        run: npm run check:secrets
 
   # 后端暂不进 CI：依赖私有框架 com.heneng.hnsp / blxt.qjava（不在 Maven Central），
   # 本地离线仓库 hd_redis/ai-maven/pro 也不入库。

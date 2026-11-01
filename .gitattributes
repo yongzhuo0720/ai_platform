@@ -1,0 +1,15 @@
+# 统一行尾策略：仓库内一律存 LF，检出时交给各自的 core.autocrlf 决定
+# （Windows 上 autocrlf=true 会拿到 CRLF，macOS/Linux 拿到 LF，两者都不算「已修改」）
+* text=auto
+
+# 二进制素材：跳过行尾转换，也不做文本 diff
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.webp binary
+*.woff binary
+*.woff2 binary
+*.ttf binary
+*.otf binary

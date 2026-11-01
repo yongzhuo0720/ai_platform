@@ -575,7 +575,8 @@ export const streamingRequest = (
             }
             try {
               const parsed = JSON.parse(data);
-              debug.log('[Dify SSE Event]', eventType || parsed.event, parsed);
+              // 逐条事件的跟踪日志：默认关，需要时在控制台 localStorage.debug_stream='1'
+              debug.stream('[Dify SSE Event]', eventType || parsed.event, parsed);
 
               // error 事件：模型调用失败（模型不可用/API Key 无效/配额不足/上下文超长等）时
               // Dify 返回 HTTP 200，但 SSE 流中发送 error 事件，必须显式处理并提示用户
@@ -594,7 +595,6 @@ export const streamingRequest = (
               // message 事件：对话类应用的流式输出，包含完整的answer字段
               // 注意：answer字段中可能包含<think>...<\/think>标签，需要提取并过滤
               if (parsed.event === 'message' && parsed.answer) {
-                debug.log('[onChunk trigger] message event');
                 // 从 message 事件捕获 message_id（用于后续推荐消息接口）
                 const msgId = parsed.message_id || parsed.id;
                 if (msgId) {
@@ -628,7 +628,6 @@ export const streamingRequest = (
               // text / text_chunk 事件：工作流的流式输出事件
               // 每个chunk要么是thinking内容，要么是正常文本，不会混合
               else if ((parsed.event === 'text' || parsed.event === 'text_chunk') && parsed.data?.text) {
-                debug.log('[onChunk trigger] text_chunk event');
                 if (isWorkflowMode) {
                   workflowChunkTriggered = true;
                 }
@@ -659,7 +658,6 @@ export const streamingRequest = (
               // assistant 事件：另一种助手消息事件格式
               // 重要：知识库对话（工作流模式）不在此处获取答案，只在 workflow_finished 获取
               else if (parsed.event === 'assistant' && parsed.answer && !isWorkflowMode) {
-                debug.log('[onChunk trigger] assistant event');
                 onChunk(parsed.answer);
               }
               // message_end 事件：消息结束，包含会话 ID 和检索资源
@@ -779,7 +777,6 @@ export const streamingRequest = (
                     // （结束标记兼容标准的 </think> 与 Dify 推理包装的 -->）
                     const { answer: cleanAnswer } = splitThinking(answer);
                     answer = cleanAnswer;
-                    debug.log('[onChunk trigger] workflow_finished with answer');
                     workflowChunkTriggered = true;
                     onChunk(answer);
                   }

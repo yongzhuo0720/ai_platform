@@ -5,8 +5,11 @@
  * 由 Spring Boot 网关在服务端拼接 Dify 地址并注入密钥。
  * 这样浏览器永远拿不到 Dify API Key，同时网关负责限流、配额与调用审计。
  *
- * 如需回退到旧的「浏览器直连 Dify」模式（例如网关尚未部署），
- * 在 .env.local 设置 VITE_AI_GATEWAY=0 即可，此时才会读取数据库配置 / 本地 env 密钥。
+ * 直连模式（VITE_AI_GATEWAY=0）只作为排障回退保留，且密钥一律来自后端接口。
+ * 禁止再从构建期 env 读密钥：Vite 会把 VITE_* 原样内联进 dist，「.env.local 不提交」
+ * 只挡住 git、挡不住构建内联——旧写法已实测把 app-/dataset- 真密钥打进产物。
+ * 后端 query 本身也不下发 apiKey（只给 apiKeyConfigured），所以这条 env 兜底
+ * 是该链路唯一能拿到密钥的口子，删掉不影响任何在用的功能。扫描见 npm run check:secrets。
  */
 
 import Cookies from 'js-cookie'
@@ -108,41 +111,6 @@ export function gatewayAuthHeaders(): Record<string, string> {
   return token ? { 'x-access-token': token } : {}
 }
 
-/**
- * 读取一组本地 env 覆盖变量，两个都配了才生效。
- */
-function localOverride(
-  urlVar: string,
-  keyVar: string
-): { apiUrl: string; apiKey: string } | null {
-  const apiUrl = (env[urlVar] ?? '').trim()
-  const apiKey = (env[keyVar] ?? '').trim()
-  if (!apiUrl || !apiKey) {
-    return null
-  }
-  return { apiUrl, apiKey }
-}
-
-/** 通用兜底：VITE_DIFY_API_URL + VITE_DIFY_API_KEY */
-const localFallback = localOverride('VITE_DIFY_API_URL', 'VITE_DIFY_API_KEY')
-
-/** 直连模式下的本地 env 覆盖表（未配置则为 null，走后端数据库） */
-const LOCAL: ConfigCache = {
-  chat: localOverride('VITE_DIFY_CHAT_URL', 'VITE_DIFY_CHAT_KEY') ?? localFallback,
-  knowledgeChat:
-    localOverride('VITE_DIFY_KB_CHAT_URL', 'VITE_DIFY_KB_CHAT_KEY') ?? localFallback,
-  knowledgeFile:
-    localOverride('VITE_DIFY_KB_FILE_URL', 'VITE_DIFY_KB_FILE_KEY') ?? localFallback,
-}
-
-/**
- * 三个模块是否被本地 env 完整覆盖。
- * 全覆盖时无需请求后端（请求结果会被本地覆盖掉）。
- */
-function hasFullLocalOverride(): boolean {
-  return !!(LOCAL.chat && LOCAL.knowledgeChat && LOCAL.knowledgeFile)
-}
-
 let loaded = false
 let loadingPromise: Promise<void> | null = null
 
@@ -155,15 +123,11 @@ async function fetchConfigs(): Promise<DifyConfigItem[]> {
 }
 
 /**
- * 直连模式：从数据库 / 本地 env 准备 Dify 地址与密钥。
+ * 直连模式：从后端数据库准备 Dify 地址与密钥。
  * 网关模式：无需任何准备，服务端才是配置的唯一来源。
  */
 export async function ensureLoaded(): Promise<void> {
   if (GATEWAY_MODE) {
-    loaded = true
-    return
-  }
-  if (hasFullLocalOverride()) {
     loaded = true
     return
   }
@@ -198,20 +162,12 @@ export async function ensureLoaded(): Promise<void> {
 }
 
 /**
- * 直连模式：本地 env 覆盖优先，其次后端数据库缓存。
+ * 直连模式：配置只来自后端。
  */
 function getConfig(
-  key: keyof ConfigCache,
-  entry: ConfigCache[keyof ConfigCache]
+  entry: { apiUrl: string; apiKey: string } | null
 ): { apiUrl: string; apiKey: string } {
-  const local = LOCAL[key]
-  if (local && local.apiUrl && local.apiKey) {
-    return local
-  }
-  if (entry && entry.apiUrl && entry.apiKey) {
-    return entry
-  }
-  return { apiUrl: '', apiKey: '' }
+  return entry && entry.apiUrl && entry.apiKey ? entry : { apiUrl: '', apiKey: '' }
 }
 
 /**
@@ -231,7 +187,7 @@ export function getChatConfig(): { apiUrl: string; apiKey: string } {
   if (GATEWAY_MODE) {
     return { apiUrl: `${GATEWAY_BASE}/chat`, apiKey: GATEWAY_KEY }
   }
-  return getConfig('chat', cache.chat)
+  return getConfig(cache.chat)
 }
 
 /** 知识库对话/工作流 配置 */
@@ -239,7 +195,7 @@ export function getKnowledgeChatConfig(): { apiUrl: string; apiKey: string } {
   if (GATEWAY_MODE) {
     return { apiUrl: `${GATEWAY_BASE}/knowledgeChat`, apiKey: GATEWAY_KEY }
   }
-  return getConfig('knowledgeChat', cache.knowledgeChat)
+  return getConfig(cache.knowledgeChat)
 }
 
 /** 知识库文件 配置 (datasets/documents/segments) */
@@ -247,7 +203,7 @@ export function getKnowledgeFileConfig(): { apiUrl: string; apiKey: string } {
   if (GATEWAY_MODE) {
     return { apiUrl: `${GATEWAY_BASE}/file`, apiKey: GATEWAY_KEY }
   }
-  return getConfig('knowledgeFile', cache.knowledgeFile)
+  return getConfig(cache.knowledgeFile)
 }
 
 /**

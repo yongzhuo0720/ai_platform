@@ -1,0 +1,95 @@
+.api-keys-page {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding-bottom: 24px;
+}
+
+.ak-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding: 14px 18px;
+  border-radius: 10px;
+  background: var(--glass-bg);
+  border: 1px solid var(--glass-border);
+  box-shadow: var(--glass-shadow);
+
+  .btn {
+    padding: 6px 16px;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+  }
+}
+
+.ak-toolbar-text {
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.ak-note {
+  border-radius: 10px;
+}
+
+.ak-prefix {
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.ak-empty {
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+.ak-hint {
+  margin-top: 6px;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--text-secondary);
+}
+
+.ak-issued-tip {
+  margin: 0 0 10px;
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+.ak-issued-key {
+  :deep(textarea) {
+    font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+    font-size: 12px;
+    letter-spacing: 0.2px;
+  }
+}
+
+.ak-issued-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 10px;
+
+  .btn {
+    padding: 6px 16px;
+  }
+}
+
+.ak-usage-title {
+  margin: 16px 0 6px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+.ak-usage {
+  margin: 0;
+  padding: 12px 14px;
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.04);
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: 12px;
+  line-height: 1.7;
+  white-space: pre-wrap;
+  word-break: break-all;
+}

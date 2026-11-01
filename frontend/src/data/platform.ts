@@ -62,6 +62,11 @@ export const navigationSections: any[] = [
         path: '/my-usage',
         routeName: 'my-usage',
       },
+      {
+        title: 'API 密钥',
+        path: '/api-keys',
+        routeName: 'api-keys',
+      },
     ],
   },
   {

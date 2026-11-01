@@ -14,10 +14,30 @@
  */
 const isDev = import.meta.env.DEV;
 
+/**
+ * 逐条流式事件日志的独立开关。
+ *
+ * 一条长回答会产生几百个 SSE 事件，每个都带完整 payload——即使只在开发环境打印，
+ * 也足够把控制台刷到没法用、并把每一帧对象都留在内存里。所以这类日志除了 DEV，
+ * 还要显式打开：浏览器控制台执行 `localStorage.debug_stream = '1'` 后刷新才输出。
+ */
+const isStreamDebug = (): boolean => {
+  try {
+    return typeof localStorage !== 'undefined' && localStorage.getItem('debug_stream') === '1';
+  } catch {
+    // 隐私模式下访问 localStorage 会抛，按关闭处理
+    return false;
+  }
+};
+
 export const debug = {
   /** 仅开发环境输出的调试日志 */
   log: (...args: unknown[]): void => {
     if (isDev) console.log(...args);
+  },
+  /** 逐条 SSE 事件 / chunk 的跟踪日志：默认关，需要时置 localStorage.debug_stream='1' */
+  stream: (...args: unknown[]): void => {
+    if (isDev && isStreamDebug()) console.log(...args);
   },
   /** 仅开发环境输出的调试告警 */
   warn: (...args: unknown[]): void => {

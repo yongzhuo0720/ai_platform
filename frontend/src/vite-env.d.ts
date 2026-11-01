@@ -6,26 +6,13 @@ declare module 'element-plus/dist/locale/zh-cn.mjs' {
 }
 
 interface ImportMetaEnv {
-  /**
-   * Dify 通用兜底配置。
-   * 在 frontend/.env.local 里配置后，可覆盖后端数据库中的 Dify 配置，
-   * 用于本机连不上已配置的 Dify 服务时，改用自己申请的 Dify（云端 dify.ai 或本地 docker）。
-   * 三个模块未单独配置时都回退到这一组。
-   */
-  readonly VITE_DIFY_API_URL?: string;
-  readonly VITE_DIFY_API_KEY?: string;
+  /** 网关开关。留空或 1 走服务端 AI 网关；0 为浏览器直连 Dify（仅排障）。 */
+  readonly VITE_AI_GATEWAY?: string;
 
-  /** 问答聊天对话模块（chat-messages / conversations 等） */
-  readonly VITE_DIFY_CHAT_URL?: string;
-  readonly VITE_DIFY_CHAT_KEY?: string;
-
-  /** 知识库对话 / 工作流模块 */
-  readonly VITE_DIFY_KB_CHAT_URL?: string;
-  readonly VITE_DIFY_KB_CHAT_KEY?: string;
-
-  /** 知识库文件模块（datasets / documents / segments，需 dataset 级密钥） */
-  readonly VITE_DIFY_KB_FILE_URL?: string;
-  readonly VITE_DIFY_KB_FILE_KEY?: string;
+  // 刻意不声明任何 VITE_*_KEY / TOKEN / SECRET：Vite 会把 VITE_* 原样内联进 dist，
+  // 在这里声明一次就等于重新打开「密钥被打进前端产物」这条路。
+  // Dify 密钥只在服务端持有；直连模式也只能从后端接口取，而该接口不下发 apiKey。
+  // 兜底扫描见 frontend/scripts/check-secrets.mjs（npm run check:secrets）。
 }
 
 interface ImportMeta {

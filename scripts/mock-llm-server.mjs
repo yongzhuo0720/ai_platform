@@ -184,9 +184,26 @@ async function handleChatCompletions(req, res) {
   const replyPieces = reply.match(/[\s\S]{1,6}/g) || []
   const pieces = [...thinkingPieces.map((t) => ({ kind: 'thinking', text: t })), ...replyPieces.map((t) => ({ kind: 'content', text: t }))]
   let i = 0
+  let stopped = false
+  /**
+   * 对端（浏览器经网关）提前断开时立刻停止生成。
+   * 只监听 req 的 close 不够：实测 curl -m 直连本服务也不会触发它，
+   * 所以还要看 socket 是否已被销毁。不停就会「假装还在生成」，
+   * 也就验证不了网关有没有真的关闭上游。
+   */
+  const stopEarly = () => {
+    if (stopped || res.writableFinished) return
+    stopped = true
+    clearInterval(timer)
+    log(`chat/completions stream stopped after ${i}/${pieces.length} chunks (peer gone)`)
+  }
   const timer = setInterval(() => {
     if (res.writableEnded) {
       clearInterval(timer)
+      return
+    }
+    if (res.destroyed || (res.socket && res.socket.destroyed)) {
+      stopEarly()
       return
     }
     if (i < pieces.length) {
@@ -205,10 +222,9 @@ async function handleChatCompletions(req, res) {
     log(`chat/completions stream done, ${pieces.length} chunks (thinking ${thinkingPieces.length})`)
   }, 40)
 
-  req.on('close', () => {
-    clearInterval(timer)
-    if (!res.writableEnded) res.end()
-  })
+  // i < pieces.length 就停，说明上游真的被网关打断了，而不是自己说完了
+  req.on('close', stopEarly)
+  res.on('close', stopEarly)
 }
 
 /**

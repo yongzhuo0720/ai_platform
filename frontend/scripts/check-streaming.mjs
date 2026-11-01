@@ -20,7 +20,9 @@ for (const name of ['directModel', 'request']) {
                export const ensureLoaded = async () => {};
                export const gatewayAuthHeaders = () => ({});
                export const getModelsGatewayBase = () => '/gateway/models';`
-            : `export const debug = { log() {}, warn() {}, error() {} };`,
+            // 桩必须与 src/utils/debug.ts 的导出形状同步：少一个方法，
+            // SSE 解析会在调用处抛错并被 catch 吞掉，表现为「一个 chunk 都没收到」。
+            : `export const debug = { log() {}, stream() {}, warn() {}, error() {} };`,
         }));
       },
     }],

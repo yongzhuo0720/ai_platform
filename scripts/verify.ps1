@@ -13,6 +13,17 @@
 #   - JDK 8（Java 21 与项目 Lombok 版本不兼容，README 已说明）
 #   - Node.js 22+（单测使用的 jsdom 30 官方要求 ≥22.22）
 #   - 仓库自带的离线 Maven 依赖 hd_redis/ai-maven/pro
+#     注意 hd_redis/ 整个目录被 .gitignore 排除、不入库，新机器必须先拷过去；
+#     后端也因此进不了 GitHub Actions，见 .github/workflows/ci.yml 里的注释。
+#
+# 输出编码：脚本会把 PowerShell 的输入输出编码切到 UTF-8，并给 Maven 的 JVM
+# 传 -Dfile.encoding=UTF-8。不改的话中文 Windows（GBK/936）下重定向出来的日志
+# 是 GBK 与 UTF-8 混排的——node 那侧输出 UTF-8、PowerShell 按 GBK 解码再写出去，
+# 会出现「Bundle: 浣…」这种乱码，事后根本读不了。
+#
+# ⚠️ 本文件必须保存为「UTF-8 with BOM」。Windows PowerShell 5.1 读没有 BOM 的
+# UTF-8 .ps1 时按系统代码页（GBK）解码，中文注释里的字节会破坏引号配对，
+# 脚本直接解析失败（报「表达式缺少右」这类看不懂的错误）。编辑器别把 BOM 去掉。
 
 param(
     # JDK 8 路径。默认取环境变量，可用 -JavaHome 覆盖
@@ -24,6 +35,17 @@ param(
 $ErrorActionPreference = "Stop"
 $root = Split-Path -Parent $PSScriptRoot
 $failed = @()
+
+# ---------- 统一输出编码 ----------
+# PowerShell 用系统代码页解码子进程 stdout、再按同一代码页写出，
+# 而 node / vitest 输出的本来就是 UTF-8，两者混在一份日志里就是乱码。
+# 切到 UTF-8 后子进程与脚本自身的中文输出才是同一种编码。
+try {
+    [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+    $OutputEncoding = [System.Text.Encoding]::UTF8
+} catch {
+    # 没有真实控制台时赋值会抛异常，忽略：脚本继续跑，只是编码没改
+}
 
 function Step($name, [scriptblock]$body) {
     Write-Host ""
@@ -48,14 +70,44 @@ Step "后端编译 + 单元测试" {
     }
     $env:JAVA_HOME = $JavaHome
 
+    # 这个目录不入库（.gitignore 排掉了 hd_redis/），换机器忘了拷，
+    # 报错会是 Resolve-Path 的一串英文异常，看不出真正缺什么，所以先给明确提示。
+    if (-not (Test-Path "$root/hd_redis/ai-maven/pro")) {
+        throw "离线 Maven 仓库缺失：hd_redis/ai-maven/pro。该目录被 .gitignore 排除、不随仓库分发，" +
+              "新机器需要先从开发机拷贝整个 hd_redis/ 目录（私有框架 com.heneng.hnsp / blxt.qjava 不在 Maven Central）。"
+    }
     $repo = (Resolve-Path "$root/hd_redis/ai-maven/pro").Path
     $settings = (Resolve-Path "$root/hd_redis/ai-maven/conf/settings.xml").Path
+
+    # JDK 8 的 Maven 进程按平台默认编码（中文 Windows 是 GBK）写 stdout，
+    # 与上面的 UTF-8 对不上。只在本脚本的进程树里追加，不动用户全局配置。
+    if ($env:MAVEN_OPTS -notmatch 'file\.encoding') {
+        $env:MAVEN_OPTS = (("$env:MAVEN_OPTS" + " -Dfile.encoding=UTF-8").Trim())
+    }
 
     Push-Location "$root/backend/AIProject"
     try {
         # -o 离线：私有依赖已在本地仓库，不需要联网
+        $mvnStartedAt = Get-Date
         mvn -s $settings "-Dmaven.repo.local=$repo" -o test
         if ($LASTEXITCODE -ne 0) { throw "mvn test 退出码 $LASTEXITCODE" }
+
+        # 闸门必须证明「测试真的执行了」。本项目踩过一次：测试方法名撞了 Surefire
+        # 的 <exclude> 规则，整个测试类静默不跑，BUILD SUCCESS 照样是绿的。
+        # 所以跑完按新生成的 surefire 报告汇总用例数，一份都没有就判失败。
+        $reports = @(Get-ChildItem "$root/backend/AIProject" -Recurse -Filter 'TEST-*.xml' `
+            -ErrorAction SilentlyContinue | Where-Object { $_.LastWriteTime -ge $mvnStartedAt })
+        if ($reports.Count -eq 0) {
+            throw "Surefire 没有产出任何测试报告：测试可能被静默跳过（检查测试类是否被 <exclude> 命中、方法名是否撞规则）"
+        }
+        $cases = 0
+        $badCases = 0
+        foreach ($report in $reports) {
+            [xml]$xml = Get-Content -Raw -Encoding UTF8 $report.FullName
+            $cases += [int]$xml.testsuite.tests
+            $badCases += [int]$xml.testsuite.failures + [int]$xml.testsuite.errors + [int]$xml.testsuite.skipped
+        }
+        Write-Host "后端单测汇总：$cases 项 / $($reports.Count) 份报告，失败+错误+跳过 $badCases" -ForegroundColor DarkGray
     } finally {
         Pop-Location
     }
@@ -138,6 +190,17 @@ if (-not $SkipBuild) {
         try {
             npm run check:bundle
             if ($LASTEXITCODE -ne 0) { throw "bundle 检查退出码 $LASTEXITCODE" }
+        } finally {
+            Pop-Location
+        }
+    }
+
+    # 源码里没有密钥不代表构建产物干净：Vite 会把 VITE_* 原样内联进 dist。
+    Step "产物密钥扫描" {
+        Push-Location "$root/frontend"
+        try {
+            npm run check:secrets
+            if ($LASTEXITCODE -ne 0) { throw "密钥扫描退出码 $LASTEXITCODE" }
         } finally {
             Pop-Location
         }
