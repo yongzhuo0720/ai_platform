@@ -33,6 +33,26 @@ public class TableSchemaInitializer implements ApplicationListener<ApplicationRe
         ensureKbChunkEmbeddingModelColumns();
         ensureLongTextColumns();
         ensureCostAndTracingColumns();
+        ensureApiTokenTable();
+    }
+
+    /**
+     * OpenAI 兼容端点的 API 令牌表（{@code /v1/**} 用的 sk- 开头密钥）。
+     *
+     * <p>表里只有 {@code "tokenHash"}（SHA-256 十六进制），没有明文：这张表会被备份、
+     * 会被调试查询，存明文等于「谁能读库谁就能白拿模型额度」。</p>
+     *
+     * <p>{@code tokenHash} 建唯一索引有两个作用：鉴权路径按它等值查询；
+     * 以及兜住极小概率的哈希碰撞，避免一个明文对应两条记录。</p>
+     */
+    private void ensureApiTokenTable() {
+        execute("CREATE TABLE IF NOT EXISTS aiapitokenbean (\"name\" varchar(100), \"tokenHash\" varchar(64), "
+                + "\"tokenPrefix\" varchar(32), \"userId\" varchar(255), \"allowModels\" text, "
+                + "\"expireAt\" int8, \"lastUsedAt\" int8, \"iid\" bigserial NOT NULL PRIMARY KEY, "
+                + "\"lastuser\" varchar(255), \"createtime\" timestamp DEFAULT now(), \"updatetime\" timestamp, "
+                + "\"enable\" boolean DEFAULT true, \"app\" varchar(255))");
+        execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_aiapitoken_hash ON aiapitokenbean (\"tokenHash\")");
+        execute("CREATE INDEX IF NOT EXISTS idx_aiapitoken_user ON aiapitokenbean (\"userId\")");
     }
 
     /**

@@ -61,8 +61,12 @@ spring:
       # 延迟解析：AI 网关需要把 multipart 请求体原样转发给 Dify，
       # 若 Spring 提前解析，原始输入流会被消费掉，文件上传会失败。
       resolve-lazily: true
-      max-file-size: 2000MB
-      max-request-size: 209715200
+      # 上限必须显式收紧：relayMultipart 会调 request.getParts()，
+      # 于是这两个值就是网关这条链路上真实的大小闸（超过即抛 FileSizeLimitExceeded）。
+      # 原来是 2000MB —— 一个登录用户提交几个大文件就能把 Tomcat 临时目录写满。
+      # 实际业务最大的是知识库文档，50MB 足够；后台图标 2MB、聊天图片压缩后 400KB。
+      max-file-size: 50MB
+      max-request-size: 120MB
 
   # 项目名
   application:

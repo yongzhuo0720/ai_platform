@@ -23,6 +23,16 @@ public class AiGatewayUsageParser {
     private String errorMessage;
 
     /**
+     * 记为「本次实际扣掉的额度」。
+     * <p>
+     * 客户端中途断开时上游不会给出 usage（Dify 只在 message_end 里给），但网关按预扣值结算，
+     * 若不回填，审计里的 totalTokens 会是空，看板的用量就和「今日已用额度」对不上。
+     */
+    public void markBilledTokens(long tokens) {
+        this.totalTokens = tokens;
+    }
+
+    /**
      * 处理一行 SSE 文本（非 data 行会被忽略）。
      *
      * @return 这一行是否携带了回答正文——用于把「首 token 延迟」算在真正的正文上，

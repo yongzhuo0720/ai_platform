@@ -167,6 +167,54 @@ class AiGatewayServiceTest {
         verify(service.guard, never()).addTokens(anyString(), anyString(), anyLong());
     }
 
+    /**
+     * 治理组件（Redis / 配额表）自己不可用时是 503，不是 429。
+     * 前端与看板要能分清「你额度用完了」和「管理员得去看看服务」。
+     */
+    @Test
+    void guardUnavailableRejectsWith503InsteadOf429() throws Exception {
+        when(service.guard.reserve("u1", "chat")).thenReturn(
+                AiGatewayGuard.Reservation.blocked(AiGatewayGuard.CODE_GUARD_UNAVAILABLE,
+                        "AI 网关暂时不可用（限流与配额依赖的服务未就绪），请稍后重试或联系管理员"));
+        MockHttpServletRequest request = request("POST", "chat", "chat-messages");
+        request.setContentType("application/json");
+        request.setContent("{\"query\":\"hi\"}".getBytes(StandardCharsets.UTF_8));
+
+        MockHttpServletResponse response = proxy("chat", request, "u1");
+
+        assertEquals(503, response.getStatus());
+        assertTrue(response.getContentAsString(StandardCharsets.UTF_8)
+                .contains(AiGatewayGuard.CODE_GUARD_UNAVAILABLE));
+        assertEquals(0, upstream.calls.get(), "治理不可用时也不能把请求打到上游");
+    }
+
+    /**
+     * 503 必须同样覆盖模型直连路径：它的限流拦截点和 Dify 路径是两处代码，
+     * 漏一处就会把「治理服务没就绪」报成「你被限流了」，看板也跟着误判。
+     */
+    @Test
+    void guardUnavailableOnModelDirectPathAlsoReturns503() throws Exception {
+        when(service.modelGatewayResolver.resolve(7L)).thenReturn(
+                new ModelGatewayResolver.ResolvedModel(upstream.baseUrl(), "test-key", "up-model", "demo"));
+        when(service.guard.check("u1", ModelGatewayResolver.MODULE_MODELS)).thenReturn(
+                AiGatewayGuard.Decision.block(AiGatewayGuard.CODE_GUARD_UNAVAILABLE,
+                        "AI 网关暂时不可用（限流与配额依赖的服务未就绪），请稍后重试或联系管理员"));
+
+        MockHttpServletRequest request = new MockHttpServletRequest(
+                "POST", "/api/aiGateway/models/7/chat/completions");
+        request.setContentType("application/json");
+        request.setContent("{\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}]}"
+                .getBytes(StandardCharsets.UTF_8));
+        MockHttpServletResponse response = new MockHttpServletResponse();
+
+        service.proxy(ModelGatewayResolver.MODULE_MODELS, "u1", request, response);
+
+        assertEquals(503, response.getStatus());
+        assertTrue(response.getContentAsString(StandardCharsets.UTF_8)
+                .contains(AiGatewayGuard.CODE_GUARD_UNAVAILABLE));
+        assertEquals(0, upstream.calls.get(), "治理不可用时不能把请求打到上游");
+    }
+
     /** 预扣成功后按真实 usage 结算：只调 settle，不能再走 addTokens 重复累计 */
     @Test
     void successfulCallSettlesReservationWithActualUsage() {
@@ -336,6 +384,82 @@ class AiGatewayServiceTest {
         assertTrue(upstream.streamedChunks.get() < AiUpstreamStub.SLOW_SSE_ITERATIONS,
                 "上游应在客户端断开后停止生成");
         verify(service.guard).settle(reservation, 0L);
+    }
+
+    /**
+     * 「看到半截回答再点停止」不能免费。
+     * <p>
+     * 上一个测试覆盖的是「一个字节都没送出去就断开」，那种确实该全额释放；
+     * 这里浏览器已经收到内容——上游真实生成过、也产生费用，而 SSE 的 usage 只在最后一帧
+     * （Dify 的 message_end）里给，中断时拿不到准确值，所以按预扣值结算。
+     * 修复前这里是 settle(0)，用户可以靠反复「快说完时点停止」无限白拿。
+     */
+    @Test
+    void abortAfterPartialOutputIsBilledAtReservedAmount() throws Exception {
+        upstream.slowSse = true;
+        when(service.configResolver.isSupported("chat")).thenReturn(true);
+        when(service.configResolver.resolve("chat")).thenReturn(
+                new AiGatewayConfigResolver.ResolvedConfig(upstream.baseUrl(), "test-key"));
+        when(service.guard.check("u1", "chat")).thenReturn(AiGatewayGuard.Decision.allow());
+        AiGatewayGuard.Reservation reservation =
+                AiGatewayGuard.Reservation.active("u1", null, 1500L);
+        when(service.guard.reserve("u1", "chat")).thenReturn(reservation);
+
+        MockHttpServletRequest request = request("POST", "chat", "chat-messages");
+        request.setContentType("application/json");
+        request.setContent("{\"query\":\"hi\",\"user\":\"u1\"}".getBytes(StandardCharsets.UTF_8));
+
+        service.proxy("chat", "u1", request, new PartialAbortResponse(2048));
+
+        verify(service.guard).settle(reservation, 1500L);
+        assertTrue(upstream.streamedChunks.get() > 0, "上游应已实际产出内容");
+
+        ArgumentCaptor<AiCallLogBean> captor = ArgumentCaptor.forClass(AiCallLogBean.class);
+        verify(service.callLogHolder).record(captor.capture());
+        assertEquals("aborted", captor.getValue().getStatus());
+        assertEquals(Long.valueOf(1500L), captor.getValue().getTotalTokens(),
+                "按预扣值计费后，审计里的用量必须等于真正扣掉的额度，否则看板显示空值而额度已被消耗");
+    }
+
+    /** 先正常送出 allowBytes 个字节，之后才模拟浏览器断开 */
+    private static class PartialAbortResponse extends MockHttpServletResponse {
+        private final long allowBytes;
+        private long written;
+        private boolean committed;
+
+        PartialAbortResponse(long allowBytes) {
+            this.allowBytes = allowBytes;
+        }
+
+        private final ServletOutputStream stream = new ServletOutputStream() {
+            @Override
+            public boolean isReady() {
+                return true;
+            }
+
+            @Override
+            public void setWriteListener(WriteListener listener) {
+            }
+
+            @Override
+            public void write(int b) throws IOException {
+                committed = true;
+                if (written >= allowBytes) {
+                    throw new IOException("Connection reset by peer");
+                }
+                written++;
+            }
+        };
+
+        @Override
+        public ServletOutputStream getOutputStream() {
+            return stream;
+        }
+
+        @Override
+        public boolean isCommitted() {
+            return committed;
+        }
     }
 
     /** 响应体第一次写入就抛连接重置，等价于浏览器已经关掉连接 */

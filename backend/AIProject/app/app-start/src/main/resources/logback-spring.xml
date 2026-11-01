@@ -78,6 +78,9 @@
         </rollingPolicy>
         <encoder>
             <pattern>${LOG_PATTERN}</pattern>
+            <!-- 与 FILE 保持一致：同一目录下的 app.log 是 UTF-8、app-error.log 却是
+                 平台默认（中文 Windows 为 GBK），排查时按 UTF-8 读错误日志会得到乱码。 -->
+            <charset>UTF-8</charset>
         </encoder>
     </appender>
 

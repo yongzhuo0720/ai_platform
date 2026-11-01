@@ -160,6 +160,38 @@ class ModelConfigCacheInvalidationTest {
         }
     }
 
+    /**
+     * {@code GET /v1/models} 只调 {@link ModelGatewayResolver#directConfigs()}，不经过 resolve()。
+     * 快照是懒建的：冷启动以及刚发过变更事件时，裸读缓存是 null，
+     * 表现就是「后台明明配好了模型，OpenAI 客户端查列表却一个都没有」——本机 curl 实测踩过。
+     */
+    @Test
+    void directConfigsShouldBuildSnapshotOnFirstCall() {
+        ModelsConfigBeanHolder holder = mock(ModelsConfigBeanHolder.class);
+        when(holder.queryList(any(ModelsConfigBean.class), isNull()))
+                .thenReturn(Collections.singletonList(directModel(7L, "key-1")));
+
+        try (AnnotationConfigApplicationContext ctx = context(holder, mockMapper())) {
+            ModelGatewayResolver resolver = ctx.getBean(ModelGatewayResolver.class);
+            assertEquals(1, resolver.directConfigs().size(), "首次调用必须自己把快照建出来");
+            assertEquals(Long.valueOf(7L), resolver.directConfigs().get(0).getIid());
+
+            // 列表与解析必须同一批数据：否则「列表里有、调用时 404」
+            assertNotNull(resolver.resolveByName("gpt"));
+
+            when(holder.queryList(any(ModelsConfigBean.class), isNull()))
+                    .thenReturn(Collections.<ModelsConfigBean>emptyList());
+            ctx.publishEvent(new ModelConfigChangedEvent());
+            assertTrue(resolver.directConfigs().isEmpty(), "模型全删后列表应为空");
+
+            when(holder.queryList(any(ModelsConfigBean.class), isNull()))
+                    .thenReturn(Collections.singletonList(directModel(9L, "key-2")));
+            ctx.publishEvent(new ModelConfigChangedEvent());
+            assertEquals(Long.valueOf(9L), resolver.directConfigs().get(0).getIid(),
+                    "失效后下一次调用要重建快照，而不是停在空列表");
+        }
+    }
+
     private AnnotationConfigApplicationContext context(ModelsConfigBeanHolder holder,
                                                        ModelsConfigBeanMapper<ModelsConfigBean> mapper) {
         AnnotationConfigApplicationContext ctx = new AnnotationConfigApplicationContext();

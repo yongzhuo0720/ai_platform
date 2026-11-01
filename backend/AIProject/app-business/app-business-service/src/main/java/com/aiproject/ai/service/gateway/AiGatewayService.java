@@ -1,8 +1,11 @@
 package com.aiproject.ai.service.gateway;
 
+import com.aiproject.ai.service.bean.AiApiTokenBean;
 import com.aiproject.ai.service.bean.AiCallLogBean;
+import com.aiproject.ai.service.bean.ModelsConfigBean;
 import com.aiproject.ai.service.gateway.dto.KbSearchItem;
 import com.aiproject.ai.service.gateway.dto.KbSearchResult;
+import com.aiproject.ai.service.holde.AiApiTokenHolder;
 import com.aiproject.ai.service.holde.AiCallLogHolder;
 import com.aiproject.ai.service.holde.KbRagHolder;
 import com.fasterxml.jackson.databind.DeserializationFeature;
@@ -15,6 +18,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
+import org.springframework.web.multipart.MaxUploadSizeExceededException;
 import org.springframework.web.server.ResponseStatusException;
 
 import javax.servlet.http.HttpServletRequest;
@@ -65,6 +69,12 @@ public class AiGatewayService {
     /** SSE 行缓冲上限，防止异常上游把内存撑爆 */
     private static final int MAX_SSE_LINE = 1024 * 1024;
 
+    /**
+     * multipart 请求体上限，与 application.yml 的 {@code servlet.multipart.max-request-size}
+     * 保持同一个数字；这里只是把「超限」提前到建连之前判定，好给出正确的 413。
+     */
+    private static final long MAX_MULTIPART_REQUEST_BYTES = 120L * 1024 * 1024;
+
     private static final Set<String> SKIP_RESPONSE_HEADERS = new HashSet<String>(Arrays.asList(
             "content-length", "transfer-encoding", "connection", "content-encoding",
             "keep-alive", "proxy-authenticate", "proxy-authorization", "te",
@@ -103,6 +113,9 @@ public class AiGatewayService {
     @Autowired
     ModelPriceResolver priceResolver;
 
+    @Autowired
+    AiApiTokenHolder apiTokenHolder;
+
     /**
      * 全链路请求 ID。
      *
@@ -129,6 +142,21 @@ public class AiGatewayService {
 
     /** 请求头名。小写是 HTTP/2 的规范形式，Tomcat 取值不区分大小写 */
     private static final String REQUEST_ID_HEADER = "X-Request-Id";
+
+    /** OpenAI 兼容端点的审计端点名（module 仍是 models，与浏览器直连同账） */
+    private static final String OPENAI_CHAT_ENDPOINT = "v1/chat/completions";
+
+    /**
+     * 错误响应是否改用 OpenAI 协议形状。
+     *
+     * <p>站内网关返回 {@code {code,message,status}}，前端按 code 分支；
+     * 而 {@code /v1/**} 的外部调用方是现成的 OpenAI SDK，它们只认
+     * {@code {"error":{"message","type","code"}}}，按 HTTP 状态码抛异常。
+     * 两种形状靠这一个开关在同一套 writeError 上切换，
+     * 目的是让 doProxy 内部十几处已有的 writeError 调用点在 v1 链路上
+     * 自动给出协议正确的错误，而不必为兼容端点复制一条转发链路。</p>
+     */
+    private final ThreadLocal<Boolean> openAiErrorShape = new ThreadLocal<Boolean>();
 
     public void proxy(String module, String userId,
                       HttpServletRequest request, HttpServletResponse response) {
@@ -197,16 +225,33 @@ public class AiGatewayService {
 
         AiGatewayGuard.Decision decision = guard.check(userId, module);
         if (!decision.isAllowed()) {
-            writeError(response, 429, decision.getCode(), decision.getMessage());
-            record(userId, module, endpoint, method, "blocked", 429, null, start,
+            int status = blockedHttpStatus(decision.getCode());
+            writeError(response, status, decision.getCode(), decision.getMessage());
+            record(userId, module, endpoint, method, "blocked", status, null, start,
                     decision.getMessage(), clientIp(request));
+            return;
+        }
+
+        // 2026-11-01：上传超限在建立上游连接之前判定。
+        // 修复前这里不看大小，超过 multipart 上限的请求会等到 relayMultipart 调
+        // request.getParts() 时才抛 MaxUploadSizeExceededException，落到 doProxy 的
+        // 兜底 catch，用户和看板看到的是 502「AI 服务调用失败」——
+        // 可上游根本没收到这个请求，故障被记到了别人头上，还得白等一次建连。
+        if (isOversizeUpload(request)) {
+            int tooLarge = HttpServletResponse.SC_REQUEST_ENTITY_TOO_LARGE;
+            String message = "上传内容超过 " + (MAX_MULTIPART_REQUEST_BYTES / (1024 * 1024))
+                    + "MB，请拆分文件或减少一次提交的文件数";
+            writeError(response, tooLarge, "payload_too_large", message);
+            record(userId, module, endpoint, method, "failed", tooLarge, null, start,
+                    message, clientIp(request));
             return;
         }
 
         AiGatewayGuard.Reservation reservation = guard.reserve(userId, module);
         if (reservation != null && reservation.isBlocked()) {
-            writeError(response, 429, reservation.getBlockedCode(), reservation.getBlockedMessage());
-            record(userId, module, endpoint, method, "blocked", 429, null, start,
+            int status = blockedHttpStatus(reservation.getBlockedCode());
+            writeError(response, status, reservation.getBlockedCode(), reservation.getBlockedMessage());
+            record(userId, module, endpoint, method, "blocked", status, null, start,
                     reservation.getBlockedMessage(), clientIp(request));
             return;
         }
@@ -271,9 +316,10 @@ public class AiGatewayService {
         AiGatewayGuard.Decision decision =
                 guard.check(userId, ModelGatewayResolver.MODULE_MODELS);
         if (!decision.isAllowed()) {
-            writeError(response, 429, decision.getCode(), decision.getMessage());
+            int status = blockedHttpStatus(decision.getCode());
+            writeError(response, status, decision.getCode(), decision.getMessage());
             record(userId, ModelGatewayResolver.MODULE_MODELS, endpoint, method, "blocked",
-                    429, null, start, decision.getMessage(), clientIp(request));
+                    status, null, start, decision.getMessage(), clientIp(request));
             return;
         }
 
@@ -288,9 +334,10 @@ public class AiGatewayService {
         AiGatewayGuard.Reservation reservation =
                 guard.reserve(userId, ModelGatewayResolver.MODULE_MODELS);
         if (reservation != null && reservation.isBlocked()) {
-            writeError(response, 429, reservation.getBlockedCode(), reservation.getBlockedMessage());
+            int status = blockedHttpStatus(reservation.getBlockedCode());
+            writeError(response, status, reservation.getBlockedCode(), reservation.getBlockedMessage());
             record(userId, ModelGatewayResolver.MODULE_MODELS, endpoint, method, "blocked",
-                    429, null, start, reservation.getBlockedMessage(), clientIp(request));
+                    status, null, start, reservation.getBlockedMessage(), clientIp(request));
             return;
         }
 
@@ -301,10 +348,9 @@ public class AiGatewayService {
                 reservation);
     }
 
-    /** 读取并改写 OpenAI 协议请求体；失败时写错误响应并记录审计，返回 null */
-    private byte[] readModelRequestBody(HttpServletRequest request, HttpServletResponse response,
-                                        String userId, ModelGatewayResolver.ResolvedModel model,
-                                        String endpoint, String method, long start) {
+    /** 读取 OpenAI 协议请求体（带大小上限）。失败时写响应与审计并返回 null */
+    private byte[] readRequestBodyBytes(HttpServletRequest request, HttpServletResponse response,
+                                        String userId, String endpoint, String method, long start) {
         try {
             ByteArrayOutputStream buffer = new ByteArrayOutputStream();
             try (InputStream in = request.getInputStream()) {
@@ -312,11 +358,11 @@ public class AiGatewayService {
                 int read;
                 while ((read = in.read(chunk)) != -1) {
                     if (buffer.size() + read > MAX_JSON_BUFFER) {
-                        writeError(response, HttpServletResponse.SC_BAD_REQUEST,
-                                "payload_too_large", "请求体过大");
+                        int tooLarge = HttpServletResponse.SC_REQUEST_ENTITY_TOO_LARGE;
+                        writeError(response, tooLarge, "payload_too_large",
+                                "请求体超过 " + (MAX_JSON_BUFFER / (1024 * 1024)) + "MB，请缩减图片或上下文长度");
                         record(userId, ModelGatewayResolver.MODULE_MODELS, endpoint, method, "failed",
-                                HttpServletResponse.SC_BAD_REQUEST, null, start,
-                                "请求体过大", clientIp(request));
+                                tooLarge, null, start, "请求体过大", clientIp(request));
                         return null;
                     }
                     buffer.write(chunk, 0, read);
@@ -330,12 +376,46 @@ public class AiGatewayService {
                         "请求体为空", clientIp(request));
                 return null;
             }
+            return buffer.toByteArray();
+        } catch (Exception e) {
+            String message = "请求体读取失败：" + rootMessage(e);
+            writeError(response, HttpServletResponse.SC_BAD_REQUEST, "invalid_request", message);
+            record(userId, ModelGatewayResolver.MODULE_MODELS, endpoint, method, "failed",
+                    HttpServletResponse.SC_BAD_REQUEST, null, start, message,
+                    clientIp(request));
+            return null;
+        }
+    }
 
-            JsonNode root = MAPPER.readTree(buffer.toByteArray());
+    /** 把请求体解析成 JSON 对象。失败时写响应与审计并返回 null */
+    private ObjectNode parseRequestBodyNode(byte[] raw, HttpServletRequest request,
+                                            HttpServletResponse response, String userId,
+                                            String endpoint, String method, long start) {
+        try {
+            JsonNode root = MAPPER.readTree(raw);
             if (root == null || !root.isObject()) {
                 throw new IllegalArgumentException("root is not an object");
             }
-            ObjectNode body = (ObjectNode) root;
+            return (ObjectNode) root;
+        } catch (Exception e) {
+            String message = "请求体必须是 OpenAI 协议 JSON（含 messages 字段）：" + rootMessage(e);
+            writeError(response, HttpServletResponse.SC_BAD_REQUEST,
+                    "invalid_request", message);
+            record(userId, ModelGatewayResolver.MODULE_MODELS, endpoint, method, "failed",
+                    HttpServletResponse.SC_BAD_REQUEST, null, start, message,
+                    clientIp(request));
+            return null;
+        }
+    }
+
+    /**
+     * 按服务端配置收敛请求体：model 以配置为准、stream=true 时注入 include_usage、
+     * 消费并剥离 kb_* 知识库增强字段。失败时写响应与审计并返回 null。
+     */
+    private byte[] normalizeModelBody(ObjectNode body, ModelGatewayResolver.ResolvedModel model,
+                                      HttpServletRequest request, HttpServletResponse response,
+                                      String userId, String endpoint, String method, long start) {
+        try {
             body.put("model", model.getUpstreamModel());
             if (body.path("stream").asBoolean(false)) {
                 body.putObject("stream_options").put("include_usage", true);
@@ -358,14 +438,32 @@ public class AiGatewayService {
             }
             return MAPPER.writeValueAsBytes(body);
         } catch (Exception e) {
-            String message = "请求体必须是 OpenAI 协议 JSON（含 messages 字段）：" + rootMessage(e);
-            writeError(response, HttpServletResponse.SC_BAD_REQUEST,
-                    "invalid_request", message);
+            String message = "请求体处理失败：" + rootMessage(e);
+            writeError(response, HttpServletResponse.SC_BAD_REQUEST, "invalid_request", message);
             record(userId, ModelGatewayResolver.MODULE_MODELS, endpoint, method, "failed",
                     HttpServletResponse.SC_BAD_REQUEST, null, start, message,
                     clientIp(request));
             return null;
         }
+    }
+
+    /**
+     * 浏览器直连通道的请求体处理：读 → 解析 → 收敛。
+     * 模型由 URL 里的 iid 决定，所以不看请求体的 model 字段。
+     */
+    private byte[] readModelRequestBody(HttpServletRequest request, HttpServletResponse response,
+                                        String userId, ModelGatewayResolver.ResolvedModel model,
+                                        String endpoint, String method, long start) {
+        byte[] raw = readRequestBodyBytes(request, response, userId, endpoint, method, start);
+        if (raw == null) {
+            return null;
+        }
+        ObjectNode body = parseRequestBodyNode(raw, request, response, userId,
+                endpoint, method, start);
+        if (body == null) {
+            return null;
+        }
+        return normalizeModelBody(body, model, request, response, userId, endpoint, method, start);
     }
 
     /**
@@ -518,6 +616,228 @@ public class AiGatewayService {
         }
     }
 
+    /** 是否是声明长度已超过 multipart 上限的上传请求（未声明长度的分块请求由下面的异常兜底） */
+    private static boolean isOversizeUpload(HttpServletRequest request) {
+        String contentType = request.getContentType();
+        if (contentType == null || !contentType.toLowerCase().startsWith("multipart/form-data")) {
+            return false;
+        }
+        return request.getContentLengthLong() > MAX_MULTIPART_REQUEST_BYTES;
+    }
+
+    /**
+     * OpenAI 兼容入口：{@code POST /v1/chat/completions}。
+     *
+     * <p><b>与站内直连网关的三点区别。</b>
+     * <ol>
+     *   <li>身份来自 Bearer 平台令牌（鉴权拦截器已校验并写进请求属性），
+     *       不是浏览器登录态 —— 这样外部程序（脚本、IDE 插件、SDK）才能用；
+     *       但落到网关内部仍以令牌归属的 uid 记账，限流、每日配额、审计一概不变。</li>
+     *   <li>模型来自请求体的 {@code model} 字段，不是 URL 里的 iid ——
+     *       所以这里要按名字解析，并且用令牌的白名单二次收敛，
+     *       否则一个令牌就能调用平台上配置的所有模型。</li>
+     *   <li>错误响应改成 OpenAI 协议形状，外部 SDK 才能按 {@code error.type} 正常抛错。</li>
+     * </ol>
+     *
+     * <p>转发本身完全复用 {@link #doProxy}：SSE 逐块透传、usage 嗅探、
+     * 中断计费、预扣结算这些行为与站内对话一模一样，不另写一份。
+     */
+    public void proxyOpenAiChat(HttpServletRequest request, HttpServletResponse response) {
+        long start = System.currentTimeMillis();
+        currentRequestId.set(resolveRequestId(request));
+        firstTokenAt.set(null);
+        openAiErrorShape.set(Boolean.TRUE);
+        try {
+            doProxyOpenAiChat(request, response, start);
+        } finally {
+            openAiErrorShape.remove();
+            currentRequestId.remove();
+            firstTokenAt.remove();
+        }
+    }
+
+    private void doProxyOpenAiChat(HttpServletRequest request, HttpServletResponse response, long start) {
+        String method = request.getMethod();
+        if (!properties.isEnabled()) {
+            writeError(response, HttpServletResponse.SC_SERVICE_UNAVAILABLE,
+                    "gateway_disabled", "AI 网关已关闭");
+            return;
+        }
+        // 令牌身份由拦截器写入；拿不到说明拦截器没生效或被绕过，一律按未认证处理
+        AiApiTokenBean token = tokenOf(request);
+        String userId = uidOf(request);
+        if (token == null || userId == null) {
+            writeError(response, HttpServletResponse.SC_UNAUTHORIZED,
+                    "invalid_api_key", "无效的 API 密钥");
+            return;
+        }
+
+        AiGatewayGuard.Decision decision =
+                guard.check(userId, ModelGatewayResolver.MODULE_MODELS);
+        if (!decision.isAllowed()) {
+            int status = blockedHttpStatus(decision.getCode());
+            writeError(response, status, decision.getCode(), decision.getMessage());
+            record(userId, ModelGatewayResolver.MODULE_MODELS, OPENAI_CHAT_ENDPOINT,
+                    method, "blocked", status, null, start, decision.getMessage(), clientIp(request));
+            return;
+        }
+
+        byte[] raw = readRequestBodyBytes(request, response, userId, OPENAI_CHAT_ENDPOINT, method, start);
+        if (raw == null) {
+            return;
+        }
+        ObjectNode body = parseRequestBodyNode(raw, request, response, userId,
+                OPENAI_CHAT_ENDPOINT, method, start);
+        if (body == null) {
+            return;
+        }
+        String requestedModel = body.path("model").asText("").trim();
+        if (requestedModel.isEmpty()) {
+            rejectOpenAiRequest(response, userId, method, start, request,
+                    HttpServletResponse.SC_BAD_REQUEST, "model_required",
+                    "缺少 model 字段，取值见 GET /v1/models");
+            return;
+        }
+        JsonNode messages = body.path("messages");
+        if (!messages.isArray() || messages.size() == 0) {
+            rejectOpenAiRequest(response, userId, method, start, request,
+                    HttpServletResponse.SC_BAD_REQUEST, "invalid_request",
+                    "messages 必须是非空数组");
+            return;
+        }
+        ModelGatewayResolver.ResolvedModel model = modelGatewayResolver.resolveByName(requestedModel);
+        if (model == null) {
+            rejectOpenAiRequest(response, userId, method, start, request,
+                    HttpServletResponse.SC_NOT_FOUND, "model_not_found",
+                    "模型 \"" + requestedModel + "\" 不存在或不支持 OpenAI 协议直连");
+            return;
+        }
+        if (!apiTokenHolder.allowsModel(token, requestedModel, model.getName(),
+                model.getUpstreamModel(), model.getIid() == null ? null : String.valueOf(model.getIid()))) {
+            rejectOpenAiRequest(response, userId, method, start, request,
+                    HttpServletResponse.SC_FORBIDDEN, "model_not_allowed",
+                    "该 API 密钥不允许调用模型 \"" + model.getName() + "\"");
+            return;
+        }
+
+        byte[] presetBody = normalizeModelBody(body, model, request, response, userId,
+                OPENAI_CHAT_ENDPOINT, method, start);
+        if (presetBody == null) {
+            return;
+        }
+
+        // 预扣放在请求体校验之后：非法请求不占用额度
+        AiGatewayGuard.Reservation reservation =
+                guard.reserve(userId, ModelGatewayResolver.MODULE_MODELS);
+        if (reservation != null && reservation.isBlocked()) {
+            int status = blockedHttpStatus(reservation.getBlockedCode());
+            writeError(response, status, reservation.getBlockedCode(), reservation.getBlockedMessage());
+            record(userId, ModelGatewayResolver.MODULE_MODELS, OPENAI_CHAT_ENDPOINT,
+                    method, "blocked", status, null, start, reservation.getBlockedMessage(),
+                    clientIp(request));
+            return;
+        }
+
+        AiGatewayConfigResolver.ResolvedConfig config =
+                new AiGatewayConfigResolver.ResolvedConfig(model.getBaseUrl(), model.getApiKey());
+        doProxy(ModelGatewayResolver.MODULE_MODELS, userId, "chat/completions",
+                OPENAI_CHAT_ENDPOINT, config, request, response, start, presetBody, reservation);
+    }
+
+    /**
+     * OpenAI 兼容入口：{@code GET /v1/models}。
+     * <p>
+     * 只列「可直连」的模型，且按令牌白名单过滤——列表里的 id 必须能直接拿去调
+     * {@code /v1/chat/completions}，否则外部程序按列表拼请求就会得到一串 403。
+     */
+    public void writeOpenAiModels(HttpServletRequest request, HttpServletResponse response) {
+        currentRequestId.set(resolveRequestId(request));
+        openAiErrorShape.set(Boolean.TRUE);
+        try {
+            doWriteOpenAiModels(request, response);
+        } finally {
+            openAiErrorShape.remove();
+            currentRequestId.remove();
+        }
+    }
+
+    private void doWriteOpenAiModels(HttpServletRequest request, HttpServletResponse response) {
+        if (!properties.isEnabled()) {
+            writeError(response, HttpServletResponse.SC_SERVICE_UNAVAILABLE,
+                    "gateway_disabled", "AI 网关已关闭");
+            return;
+        }
+        AiApiTokenBean token = tokenOf(request);
+        if (token == null || uidOf(request) == null) {
+            writeError(response, HttpServletResponse.SC_UNAUTHORIZED,
+                    "invalid_api_key", "无效的 API 密钥");
+            return;
+        }
+        ArrayNode data = MAPPER.createArrayNode();
+        for (ModelsConfigBean config : modelGatewayResolver.directConfigs()) {
+            String iid = config.getIid() == null ? null : String.valueOf(config.getIid());
+            if (!apiTokenHolder.allowsModel(token, iid, config.getName(), config.getUpstreamModel())) {
+                continue;
+            }
+            // id 用平台模型名：客户端把它原样填进 model 即可命中 resolveByName
+            ObjectNode item = data.addObject();
+            item.put("id", config.getName() == null || config.getName().trim().isEmpty()
+                    ? iid : config.getName().trim());
+            item.put("object", "model");
+            item.put("created", config.getCreatetime() == null
+                    ? 0L : config.getCreatetime().getTime() / 1000L);
+            item.put("owned_by", "ai-platform");
+        }
+        ObjectNode payload = MAPPER.createObjectNode();
+        payload.put("object", "list");
+        payload.set("data", data);
+        writeJson(response, HttpServletResponse.SC_OK, payload);
+    }
+
+    /** v1 链路上的请求级拒绝：写 OpenAI 形状的错误并记一条失败审计 */
+    private void rejectOpenAiRequest(HttpServletResponse response, String userId, String method,
+                                     long start, HttpServletRequest request,
+                                     int status, String code, String message) {
+        writeError(response, status, code, message);
+        record(userId, ModelGatewayResolver.MODULE_MODELS, OPENAI_CHAT_ENDPOINT,
+                method, "failed", status, null, start, message, clientIp(request));
+    }
+
+    /** 鉴权拦截器写入的令牌记录；不是 AiApiTokenBean 就当没有 */
+    private static AiApiTokenBean tokenOf(HttpServletRequest request) {
+        Object attr = request.getAttribute(AiApiTokenHolder.ATTR_TOKEN);
+        return attr instanceof AiApiTokenBean ? (AiApiTokenBean) attr : null;
+    }
+
+    private static String uidOf(HttpServletRequest request) {
+        Object attr = request.getAttribute(AiApiTokenHolder.ATTR_UID);
+        if (attr instanceof String) {
+            String uid = ((String) attr).trim();
+            return uid.isEmpty() ? null : uid;
+        }
+        return null;
+    }
+
+    private void writeJson(HttpServletResponse response, int status, Object body) {
+        try {
+            if (response.isCommitted()) {
+                return;
+            }
+            response.reset();
+            response.setStatus(status);
+            response.setCharacterEncoding("UTF-8");
+            response.setContentType("application/json;charset=UTF-8");
+            String rid = currentRequestId.get();
+            if (rid != null) {
+                response.setHeader(REQUEST_ID_HEADER, rid);
+            }
+            response.getOutputStream().write(MAPPER.writeValueAsBytes(body));
+            response.flushBuffer();
+        } catch (Exception e) {
+            log.warn("[AiGateway] 写 JSON 响应失败: {}", e.getMessage());
+        }
+    }
+
     private void doProxy(String module, String userId,
                          String upstreamEndpoint, String auditEndpoint,
                          AiGatewayConfigResolver.ResolvedConfig config,
@@ -534,7 +854,11 @@ public class AiGatewayService {
         // 成功且上游返回 usage 时的真实用量；finally 里据此结算预扣
         long actualTokens = 0L;
         boolean billable = false;
-
+        // 已经转发给浏览器的字节数。客户端中断时靠它判断「这个回答其实已经真实消耗过上游」，
+        // 而它必须在异常抛出后仍读得到，所以用持有者对象而不是局部变量。
+        Relayed relayed = new Relayed();
+        // 同样提到 try 外：中断时已解析到的模型名、会话 ID 和部分用量仍要记进审计
+        AiGatewayUsageParser parser = new AiGatewayUsageParser();
         try {
             String target = config.getApiUrl() + "/" + upstreamEndpoint;
             String query = request.getQueryString();
@@ -605,11 +929,10 @@ public class AiGatewayService {
                 }
             }
 
-            AiGatewayUsageParser parser = new AiGatewayUsageParser();
             if (sse) {
-                streamSse(upstream, response.getOutputStream(), parser);
+                streamSse(upstream, response.getOutputStream(), parser, relayed);
             } else {
-                relayBody(upstream, response.getOutputStream(), parser);
+                relayBody(upstream, response.getOutputStream(), parser, relayed);
             }
 
             boolean failed = upstreamStatus >= 400 || parser.getErrorMessage() != null;
@@ -639,6 +962,16 @@ public class AiGatewayService {
                 log.warn("[AiGateway] 上游失败，本次用量不计入配额: uid={}, module={}, tokens={}, httpStatus={}",
                         userId, module, parser.getTotalTokens(), upstreamStatus);
             }
+        } catch (MaxUploadSizeExceededException e) {
+            // 分块上传没有声明长度，躲得过上面的预检，只能在这里接住。
+            // 关键是不能让它落到兜底 catch 写成 502「上游错误」：
+            // 请求根本没出网关，超限的是浏览器传上来的文件。
+            int tooLarge = HttpServletResponse.SC_REQUEST_ENTITY_TOO_LARGE;
+            String message = "上传内容超过 " + (MAX_MULTIPART_REQUEST_BYTES / (1024 * 1024))
+                    + "MB，请拆分文件或减少一次提交的文件数";
+            writeError(response, tooLarge, "payload_too_large", message);
+            record(userId, module, auditEndpoint, method, "failed", tooLarge,
+                    null, start, message, clientIp);
         } catch (ResponseStatusException e) {
             int status = e.getStatus().value();
             writeError(response, status, "invalid_request", e.getReason());
@@ -649,6 +982,7 @@ public class AiGatewayService {
             boolean aborted = isClientAbort(e);
             String status = aborted ? "aborted" : "failed";
             String error = aborted ? "客户端已断开连接" : message;
+            boolean billedByReserve = false;
 
             if (!response.isCommitted()) {
                 writeError(response, HttpServletResponse.SC_BAD_GATEWAY,
@@ -657,11 +991,31 @@ public class AiGatewayService {
                 log.warn("[AiGateway] 透传中断, uid={}, module={}, endpoint={}, aborted={}: {}",
                         userId, module, auditEndpoint, aborted, message);
             }
+
+            // 2026-11-01：中断不再全额退额度。
+            // 修复前这里一律 settle(0)：用户点「停止」就一分不扣，于是可以反复
+            // 「让它说完再停」白拿回答——上游那半截输出是真花了钱的。
+            // SSE 的 usage 只在最后一帧（Dify 的 message_end）里给，中断时拿不到真实值，
+            // 因此按预扣值结算：多退少补都省掉，至少不退回零。
+            // 一个字节都没转发出去就断开的（比如刚连上就关页面）仍然全额释放。
+            if (aborted && relayed.bytes > 0 && !billable
+                    && reservation != null && reservation.isActive()) {
+                billable = true;
+                actualTokens = reservation.getTokens();
+                parser.markBilledTokens(actualTokens);
+                billedByReserve = true;
+                log.info("[AiGateway] 客户端中断，按预扣值计费: uid={}, module={}, relayedBytes={}, tokens={}",
+                        userId, module, relayed.bytes, actualTokens);
+            }
+
+            // 只有「按预扣值计费」这一条路径把 parser 写进审计：此刻它的 totalTokens 就是我们真正扣掉的额度。
+            // 其他异常分支传 null——上游没给完整 usage，写进去会让看板显示的用量和实际扣掉的额度对不上。
             record(userId, module, auditEndpoint, method, status,
                     aborted ? upstreamStatus : HttpServletResponse.SC_BAD_GATEWAY,
-                    null, start, error, clientIp);
+                    billedByReserve ? parser : null, start, error, clientIp);
         } finally {
-            // 成功按真实用量结算；失败、异常或客户端中断全额释放，没拿到结果不占额度
+            // 成功按真实 usage 结算；上游失败或「一个字节都没送出去就断开」全额释放；
+            // 已经送出内容的客户端中断按预扣值结算（见上面 catch 里的说明）
             if (reservation != null && reservation.isActive()) {
                 guard.settle(reservation, billable ? actualTokens : 0L);
             }
@@ -857,14 +1211,25 @@ public class AiGatewayService {
      * <p>首 token 延迟按「第一行带正文的 SSE」计时：上游常见先发 role 帧、
      * usage 帧或心跳注释，按首字节计时会把准备时间算成模型延迟。</p>
      */
-    private void streamSse(InputStream in, OutputStream out, AiGatewayUsageParser parser)
-            throws IOException {
+    /**
+     * 已转发给浏览器的字节数。
+     * <p>
+     * 之所以是对象而不是 long：客户端中断时转发循环会直接抛异常，局部变量的累计值随栈一起没了，
+     * 而计费判断需要在 catch 里读到「断开之前到底送出去多少」。
+     */
+    private static final class Relayed {
+        private long bytes;
+    }
+
+    private void streamSse(InputStream in, OutputStream out, AiGatewayUsageParser parser,
+                           Relayed relayed) throws IOException {
         byte[] buffer = new byte[8192];
         ByteArrayOutputStream line = new ByteArrayOutputStream(256);
         int read;
         while ((read = in.read(buffer)) != -1) {
             out.write(buffer, 0, read);
             out.flush();
+            relayed.bytes += read;
             for (int i = 0; i < read; i++) {
                 byte value = buffer[i];
                 if (value == '\n') {
@@ -895,8 +1260,8 @@ public class AiGatewayService {
      * 可被单条大响应绕过限额。这里改为：无论响应多大，都对已读取的字节做 usage 嗅探；
      * 在 MAX_JSON_PARSE 以内的响应可精确解析，超出则对头部 best-effort（仍优于完全漏记）。
      */
-    private void relayBody(InputStream in, OutputStream out, AiGatewayUsageParser parser)
-            throws IOException {
+    private void relayBody(InputStream in, OutputStream out, AiGatewayUsageParser parser,
+                           Relayed relayed) throws IOException {
         ByteArrayOutputStream parseBuf = new ByteArrayOutputStream(8192);
         byte[] chunk = new byte[8192];
         boolean parseSpilled = false;
@@ -904,6 +1269,7 @@ public class AiGatewayService {
         while ((read = in.read(chunk)) != -1) {
             out.write(chunk, 0, read);
             out.flush();
+            relayed.bytes += read;
             if (!parseSpilled) {
                 if (parseBuf.size() + read > MAX_JSON_PARSE) {
                     parseSpilled = true;
@@ -1022,6 +1388,16 @@ public class AiGatewayService {
         }
     }
 
+    /**
+     * 拦截类响应的状态码：额度/频率超限是 429，治理依赖本身不可用是 503。
+     * 两者都要限流语义的话前端会分不清「我该等一会儿」和「管理员得去看看 Redis」。
+     */
+    private static int blockedHttpStatus(String code) {
+        return AiGatewayGuard.CODE_GUARD_UNAVAILABLE.equals(code)
+                ? HttpServletResponse.SC_SERVICE_UNAVAILABLE
+                : 429;
+    }
+
     private void writeError(HttpServletResponse response, int status, String code, String message) {
         try {
             if (response.isCommitted()) {
@@ -1037,17 +1413,63 @@ public class AiGatewayService {
             if (rid != null) {
                 response.setHeader(REQUEST_ID_HEADER, rid);
             }
-            Map<String, Object> body = new LinkedHashMap<String, Object>();
-            body.put("code", code);
-            body.put("message", message);
-            body.put("status", status);
-            body.put("requestId", rid);
+            Object body = Boolean.TRUE.equals(openAiErrorShape.get())
+                    ? openAiErrorBody(code, message, status, rid)
+                    : platformErrorBody(code, message, status, rid);
             response.getOutputStream().write(
                     MAPPER.writeValueAsBytes(body));
             response.flushBuffer();
         } catch (Exception e) {
             log.warn("[AiGateway] 写错误响应失败: {}", e.getMessage());
         }
+    }
+
+    /** 站内网关的错误信封：前端 axios 按 code 分支 */
+    private static Map<String, Object> platformErrorBody(String code, String message,
+                                                         int status, String rid) {
+        Map<String, Object> body = new LinkedHashMap<String, Object>();
+        body.put("code", code);
+        body.put("message", message);
+        body.put("status", status);
+        body.put("requestId", rid);
+        return body;
+    }
+
+    /**
+     * OpenAI 协议的错误信封。
+     * <p>
+     * {@code error.code} 保留我们的机器码（OpenAI 允许自定义字符串），
+     * {@code error.type} 按协议分类，SDK 靠它选异常类型；
+     * 再额外带上 {@code error.request_id}，用户报障时不用猜时间。
+     */
+    private static ObjectNode openAiErrorBody(String code, String message, int status, String rid) {
+        ObjectNode error = MAPPER.createObjectNode();
+        error.put("message", message);
+        error.put("type", openAiErrorType(code, status));
+        error.put("code", code);
+        error.put("request_id", rid);
+        ObjectNode root = MAPPER.createObjectNode();
+        root.set("error", error);
+        return root;
+    }
+
+    /** 我们的错误码 → OpenAI 的 error.type */
+    private static String openAiErrorType(String code, int status) {
+        if ("invalid_api_key".equals(code) || "unauthorized".equals(code)) {
+            return "authentication_error";
+        }
+        if ("model_not_allowed".equals(code) || "access_denied".equals(code)) {
+            return "permission_error";
+        }
+        if ("rate_limited".equals(code) || "quota_exceeded".equals(code)) {
+            return "rate_limit_exceeded";
+        }
+        if ("upstream_error".equals(code) || "gateway_disabled".equals(code)
+                || AiGatewayGuard.CODE_GUARD_UNAVAILABLE.equals(code)) {
+            return "api_error";
+        }
+        // model_not_found / invalid_request / payload_too_large / 未知码：都归为请求本身的问题
+        return "invalid_request_error";
     }
 
     private String clientIp(HttpServletRequest request) {
