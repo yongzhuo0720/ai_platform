@@ -10,7 +10,6 @@ import lombok.Data;
 /**
  * 标签
  *
- * @author [REDACTED-NAME]
  */
 @Data
 @SqlBean(keyId = "iid", ignores = {"key1", "key2", "key3"})

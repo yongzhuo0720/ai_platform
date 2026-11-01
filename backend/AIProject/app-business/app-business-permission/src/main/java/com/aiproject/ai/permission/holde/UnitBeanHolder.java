@@ -22,7 +22,6 @@ import java.util.List;
 /**
  * [请在这里添加注释]
  *
- * @author [REDACTED-NAME]
  * @date 2023/02/22 15:24:56
  * 此代码由[HSNP]快速开发框架自动生成
  */
@@ -227,7 +226,6 @@ public class UnitBeanHolder {
      * @param uid
      * @param data
      * @return
-     * @author [REDACTED-NAME]
      * @date 2024/10/24 下午2:15
      */
     public Result<List<UnitBean>> queryChildTree(String uid, UnitBean data) {
@@ -301,7 +299,6 @@ public class UnitBeanHolder {
      * @param fieldName 字段名称
      * @param uid       uid
      * @return sql片段 如：unit in(1,2)
-     * @author [REDACTED-NAME]
      * @date 2023/3/31 14:11
      **/
     public String queryUnitidsByUid(String fieldName, String uid) {
@@ -343,7 +340,6 @@ public class UnitBeanHolder {
      *
      * @param list 集合
      * @param iids iid集合
-     * @author [REDACTED-NAME]
      * @date 2023/3/31 11:28
      **/
     private void queryChildIds(List<UnitBean> list, List<Long> iids) {

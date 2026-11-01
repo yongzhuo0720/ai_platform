@@ -7,7 +7,6 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * @author [REDACTED-NAME]
  * @ClassName FileTreeUtil
  * @description: TODO
  * @date 2026年07月24日

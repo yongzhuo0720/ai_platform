@@ -13,7 +13,6 @@ import java.util.List;
 /**
  * 功能描述: 部门管理.
  *
- * @author [REDACTED-NAME]
  * @date 2023/2/20 15:03
  **/
 @Data

@@ -9,7 +9,6 @@ import io.swagger.annotations.ApiModelProperty;
 import lombok.Data;
 
 /**
- * @author [REDACTED-NAME]
  * @ClassName ModelsBean
  * @description: TODO
  * @date 2026年05月13日
