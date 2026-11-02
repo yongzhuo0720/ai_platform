@@ -407,4 +407,60 @@ describe("ApplicationsView", () => {
     await clickCardAction(wrapper, 2, "查看");
     expect(open).toHaveBeenCalledTimes(1);
   });
+
+  it("请求未回来时是骨架屏，不提前喊「暂无应用」", async () => {
+    let resolveQuery: (value: unknown) => void = () => {};
+    query.mockReturnValue(new Promise((resolve) => { resolveQuery = resolve; }));
+
+    const wrapper = mountView();
+    await flushPromises();
+
+    expect(wrapper.find(".state-block__skeleton").exists()).toBe(true);
+    expect(wrapper.findAll(".capability-card")).toHaveLength(0);
+    expect(wrapper.find(".state-block__empty-text").exists()).toBe(false);
+
+    resolveQuery(ok([...apps]));
+    await flushPromises();
+
+    expect(wrapper.find(".state-block__skeleton").exists()).toBe(false);
+    expect(cardTitles(wrapper)).toEqual(["合同审查", "智能客服", "数据分析"]);
+  });
+
+  it("后端返回错误码时把原因留在页面上，点重试重新拉取", async () => {
+    query.mockResolvedValueOnce(fail("应用服务不可用"));
+    const wrapper = mountView();
+    await flushPromises();
+
+    expect(wrapper.find(".state-block__error-text").text()).toBe("应用服务不可用");
+    expect(wrapper.findAll(".capability-card")).toHaveLength(0);
+
+    await wrapper.find(".state-block__retry").trigger("click");
+    await flushPromises();
+
+    expect(query).toHaveBeenCalledTimes(2);
+    expect(wrapper.find(".state-block__error-text").exists()).toBe(false);
+    expect(cardTitles(wrapper)).toHaveLength(3);
+  });
+
+  it("请求异常时用兜底文案，不再静默留白", async () => {
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    query.mockRejectedValueOnce(new Error("network"));
+    const wrapper = mountView();
+    await flushPromises();
+
+    expect(wrapper.find(".state-block__error-text").text()).toBe("获取应用列表失败，请重试");
+    error.mockRestore();
+  });
+
+  it("空态文案区分「库里没有」和「被筛选筛没了」", async () => {
+    query.mockResolvedValueOnce(ok([]));
+    const emptyWrapper = mountView();
+    await flushPromises();
+    expect(emptyWrapper.find(".state-block__empty-text").text()).toBe("暂无应用");
+
+    const wrapper = mountView();
+    await flushPromises();
+    await wrapper.find('input[placeholder="搜索应用..."]').setValue("不存在的应用");
+    expect(wrapper.find(".state-block__empty-text").text()).toBe("没有符合当前搜索与筛选条件的应用");
+  });
 });

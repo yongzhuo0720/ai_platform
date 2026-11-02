@@ -27,6 +27,10 @@ jobs:
       # 2026-10-30 新增：图标改为按需注册后，模板里未 import 的图标会静默留白
       - name: 图标注册检查
         run: npm run check:icons
+      # 2026-11-02 新增：token 体系已建好但存量页面仍在抄字面色。
+      # 棘轮只要求「不比基线差」，把新增硬编码色挡在 CI，收敛可以按文件慢慢做。
+      - name: 硬编码色值棘轮检查
+        run: npm run check:styles
       # 2026-10-30 新增：ChatView 拆分后的逻辑模块单测（Vitest + jsdom）
       - name: 单元测试
         run: npm run test

@@ -15,6 +15,7 @@
     "check:markdown": "node scripts/check-markdown.mjs",
     "check:streaming": "node scripts/check-streaming.mjs",
     "check:icons": "node scripts/check-icons.mjs",
+    "check:styles": "node scripts/check-styles.mjs",
     "check:bundle": "node scripts/check-bundle.mjs",
     "check:secrets": "node scripts/check-secrets.mjs"
   },

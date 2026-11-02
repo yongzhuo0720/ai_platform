@@ -62,6 +62,15 @@
       </el-select>
     </div>
 
+    <StateBlock
+      :loading="state.loading"
+      :error="state.listError"
+      :empty="filteredDataList.length === 0"
+      :empty-text="emptyText"
+      variant="cards"
+      :count="6"
+      @retry="getDataList"
+    >
     <div class="model-list">
       <article v-for="item in filteredDataList" :key="item.name" class="list-card">
         <div class="list-card-content">
@@ -126,6 +135,7 @@
        
       </article>
     </div>
+    </StateBlock>
 
     <!-- 新建/编辑弹窗 -->
     <el-dialog :title="state.params.title" v-model="state.params.dialogVisible" width="700px" center :close-on-click-modal="false">
@@ -163,6 +173,7 @@ import { SUPER_ADMIN_RID } from '@/config/constants'
 import TagDropdown from '@/components/TagDropdown/index.vue'
 import TagFilterDropdown from '@/components/TagFilterDropdown/index.vue'
 import RepoPreviewPanel from '@/components/RepoPreviewPanel/index.vue'
+import StateBlock from '@/components/StateBlock/index.vue'
 import { Plus, Edit, Delete, Download, Search, PriceTag } from '@element-plus/icons-vue'
 const {
   state,
@@ -172,6 +183,8 @@ const {
   sortBy,
   searchKeyword,
   filteredDataList,
+  emptyText,
+  getDataList,
   showAdd,
   showEdit,
   handleDelete,

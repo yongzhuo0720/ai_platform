@@ -42,6 +42,15 @@
       </el-select>
     </div>
 
+    <StateBlock
+      :loading="state.loading"
+      :error="state.listError"
+      :empty="filteredDataList.length === 0"
+      :empty-text="emptyText"
+      variant="cards"
+      :count="6"
+      @retry="getDataList"
+    >
     <div class="grid grid-4">
       <article v-for="item in filteredDataList" :key="item.iid || item.title" class="card capability-card">
         <h3 class="card-title">{{ item.title }}</h3>
@@ -126,6 +135,7 @@
         </div>
       </article>
     </div>
+    </StateBlock>
 
     <!-- 新建/编辑弹窗 -->
     <el-dialog :title="state.params.title" v-model="state.params.dialogVisible" width="700px" center :close-on-click-modal="false">
@@ -200,6 +210,7 @@ import { safeOpenUrl } from '@/utils/url'
 import { SUPER_ADMIN_RID } from '@/config/constants'
 import TagDropdown from '@/components/TagDropdown/index.vue'
 import TagFilterDropdown from '@/components/TagFilterDropdown/index.vue'
+import StateBlock from '@/components/StateBlock/index.vue'
 import { Plus, Search, Edit, Delete, View, PriceTag, Tools } from '@element-plus/icons-vue'
 
 const {
@@ -215,6 +226,8 @@ const {
   handleDelete,
   onSave,
   filteredDataList,
+  emptyText,
+  getDataList,
   refreshTagBind,
   getAllTags,
   showMng,

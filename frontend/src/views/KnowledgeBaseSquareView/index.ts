@@ -8,6 +8,7 @@ import type { KnowledgeBase } from '@/types/knowledge'
 export function useIndex() {
   const knowledgeBases = ref<KnowledgeBase[]>([])
   const loading = ref(false)
+  const listError = ref('')
   const searchQuery = ref('')
   const selectedCategories = ref<string>('')
   const allTags = ref<any[]>([])
@@ -39,6 +40,11 @@ export function useIndex() {
     return filteredKnowledgeBases.value.filter(kb => kb.isRecommended)
   })
 
+  // 空态要分清「库里就没有」和「被筛选筛没了」：前者的下一步是新建，后者是放宽条件
+  const emptyText = computed(() =>
+    knowledgeBases.value.length === 0 ? '暂无可展示的知识库' : '没有符合当前搜索与筛选条件的知识库'
+  )
+
   onMounted(() => {
     fetchKnowledgeBases()
     getAllTags()
@@ -67,6 +73,7 @@ export function useIndex() {
 
   const fetchKnowledgeBases = async () => {
     loading.value = true
+    listError.value = ''
     try {
       const response = await datasetApi.getDatasets(1, 100)
       let visibleKbIds: Set<string> | null = null
@@ -95,12 +102,17 @@ export function useIndex() {
     } catch (err) {
       console.error('获取知识库列表失败:', err)
       knowledgeBases.value = []
+      // 拦截器已弹过 toast，这里只把原因留在页面上，让人能看到并点重试
+      listError.value = '获取知识库列表失败，请重试'
     } finally {
       loading.value = false
     }
   }
 
   return {
+    loading,
+    listError,
+    emptyText,
     searchQuery,
     selectedCategories,
     filteredKnowledgeBases,
@@ -108,5 +120,6 @@ export function useIndex() {
     allTags,
     refreshTagBind,
     getAllTags,
+    fetchKnowledgeBases,
   }
 }

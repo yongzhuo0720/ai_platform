@@ -48,6 +48,7 @@ declare module 'vue' {
     RepoPreviewPanel: typeof import('./src/components/RepoPreviewPanel/index.vue')['default']
     RouterLink: typeof import('vue-router')['RouterLink']
     RouterView: typeof import('vue-router')['RouterView']
+    StateBlock: typeof import('./src/components/StateBlock/index.vue')['default']
     TagDropdown: typeof import('./src/components/TagDropdown/index.vue')['default']
     TagFilterDropdown: typeof import('./src/components/TagFilterDropdown/index.vue')['default']
     TagManageDialog: typeof import('./src/components/TagManageDialog/index.vue')['default']

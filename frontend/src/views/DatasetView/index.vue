@@ -48,6 +48,15 @@
       </el-select>
     </div>
 
+    <StateBlock
+      :loading="state.loading"
+      :error="state.listError"
+      :empty="filteredDataList.length === 0"
+      :empty-text="emptyText"
+      variant="cards"
+      :count="6"
+      @retry="getDataList"
+    >
     <div class="dataset-list">
       <article v-for="item in filteredDataList" :key="item.name" class="list-card">
         <div class="list-card-content">
@@ -111,6 +120,7 @@
         </div>
       </article>
     </div>
+    </StateBlock>
     </template>
     <el-dialog :title="state.params.title"  v-model="state.params.dialogVisible"  width="700px"  center :close-on-click-modal="false" >
             <el-form ref="ruleFormRef" :model="state.params.form" label-width="100px"  :rules="state.rules" size="large">
@@ -147,6 +157,7 @@ import { SUPER_ADMIN_RID } from '@/config/constants'
 import TagDropdown from '@/components/TagDropdown/index.vue'
 import TagFilterDropdown from '@/components/TagFilterDropdown/index.vue'
 import RepoPreviewPanel from '@/components/RepoPreviewPanel/index.vue'
+import StateBlock from '@/components/StateBlock/index.vue'
 import { Upload, Search, PriceTag, Edit, Delete, Download } from '@element-plus/icons-vue'
 const {
   state,
@@ -160,6 +171,8 @@ const {
   handleDelete,
   onSave,
   filteredDataList,
+  emptyText,
+  getDataList,
   refreshTagBind,
   getAllTags,
   handleDownload,

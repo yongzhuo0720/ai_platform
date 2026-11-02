@@ -23,6 +23,8 @@ export function useIndex() {
   const state = reactive({
     dataList: [] as any[],
     allTags: [] as any[],
+    loading: false,
+    listError: '',
     params: {
       title: '新建应用',
       dialogVisible: false,
@@ -57,6 +59,8 @@ export function useIndex() {
   })
 
   const getDataList = async () => {
+    state.loading = true
+    state.listError = ''
     try {
       let reqdata = {
         data: {},
@@ -66,9 +70,15 @@ export function useIndex() {
       if (res.resp_code == 0) {
         state.dataList = res.datas || []
         refreshTagBind()
+      } else {
+        // 拦截器已弹过 toast，这里只把原因留在页面上
+        state.listError = res.resp_msg || '获取应用列表失败'
       }
     } catch (err) {
       console.error('获取应用列表失败:', err)
+      state.listError = '获取应用列表失败，请重试'
+    } finally {
+      state.loading = false
     }
   }
 
@@ -207,6 +217,9 @@ export function useIndex() {
 
     return result
   })
+
+  // 空态要分清「库里就没有」和「被筛选筛没了」：前者的下一步是新建，后者是放宽条件
+  const emptyText = computed(() => (state.dataList.length === 0 ? '暂无应用' : '没有符合当前搜索与筛选条件的应用'))
 
   const onSave = () => {
     ruleFormRef.value?.validate(async (valid: boolean) => {
@@ -393,6 +406,8 @@ export function useIndex() {
     handleDelete,
     onSave,
     filteredDataList,
+    emptyText,
+    getDataList,
     refreshTagBind,
     getAllTags,
     showMng,

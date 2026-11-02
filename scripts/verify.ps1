@@ -138,6 +138,16 @@ Step "图标注册检查" {
     }
 }
 
+Step "硬编码色值棘轮检查" {
+    Push-Location "$root/frontend"
+    try {
+        npm run check:styles
+        if ($LASTEXITCODE -ne 0) { throw "styles 检查退出码 $LASTEXITCODE" }
+    } finally {
+        Pop-Location
+    }
+}
+
 Step "前端单元测试（Vitest）" {
     Push-Location "$root/frontend"
     try {

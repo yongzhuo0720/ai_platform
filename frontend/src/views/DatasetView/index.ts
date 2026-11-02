@@ -19,6 +19,8 @@ export function useIndex() {
   const state = reactive({
     dataList: [] as any[],
     allTags: [] as any[],
+    loading: false,
+    listError: '',
     params: {
       title: '新建数据集',
       dialogVisible: false,
@@ -41,6 +43,8 @@ export function useIndex() {
   })
 
   const getDataList = async () => {
+    state.loading = true
+    state.listError = ''
     try {
       let reqdata = {
         data: {},
@@ -50,9 +54,15 @@ export function useIndex() {
       if (res.resp_code == 0) {
         state.dataList = (res.datas || []).sort((a: any, b: any) => (b.iid || 0) - (a.iid || 0))
         refreshTagBind()//刷新标签绑定
+      } else {
+        // 拦截器已弹过 toast，这里只把原因留在页面上
+        state.listError = res.resp_msg || '获取数据集列表失败'
       }
     } catch (err) {
-      console.error('获取模型列表失败:', err)
+      console.error('获取数据集列表失败:', err)
+      state.listError = '获取数据集列表失败，请重试'
+    } finally {
+      state.loading = false
     }
   }
 
@@ -215,6 +225,10 @@ export function useIndex() {
 
     return result
   })
+
+  // 空态要分清「库里就没有」和「被筛选筛没了」：前者的下一步是新建，后者是放宽条件
+  const emptyText = computed(() => (state.dataList.length === 0 ? '暂无数据集' : '没有符合当前搜索与筛选条件的数据集'))
+
   const onSave = () => {
     ruleFormRef.value?.validate(async (valid: boolean) => {
       if (valid) {
@@ -304,6 +318,8 @@ export function useIndex() {
     handleDelete,
     onSave,
     filteredDataList,
+    emptyText,
+    getDataList,
     refreshTagBind,
     getAllTags,
     handleDownload,

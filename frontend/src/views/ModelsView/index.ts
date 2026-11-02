@@ -18,6 +18,8 @@ export function useIndex() {
      dataList:[] as any[],  
      allTags: [] as any[],
      weeklyDownloads:0,
+     loading: false,
+     listError: '',
      rid: parseInt(Cookies.get('rid') || '0'),
     params: {
       title: '新建模型',
@@ -86,7 +88,12 @@ export function useIndex() {
     return result
   })
 
+  // 空态要分清「库里就没有」和「被筛选筛没了」：前者的下一步是新建，后者是放宽条件
+  const emptyText = computed(() => (state.dataList.length === 0 ? '暂无模型' : '没有符合当前搜索与筛选条件的模型'))
+
    const getDataList = async () => {
+    state.loading = true
+    state.listError = ''
     try {
       let reqdata={
         data: {},
@@ -96,9 +103,15 @@ export function useIndex() {
       if (res.resp_code == 0) {
         state.dataList = (res.datas || []).sort((a: any, b: any) => (b.iid || 0) - (a.iid || 0))
         refreshTagBind()//刷新标签绑定
+      } else {
+        // 拦截器已经弹过一次 toast，这里只把原因留在页面上，让人能看到并点重试
+        state.listError = res.resp_msg || '获取模型列表失败'
       }
     } catch (err) {
       console.error('获取模型列表失败:', err)
+      state.listError = '获取模型列表失败，请重试'
+    } finally {
+      state.loading = false
     }
   }
 
@@ -312,6 +325,8 @@ export function useIndex() {
     sortBy,
     searchKeyword,
     filteredDataList,
+    emptyText,
+    getDataList,
     showAdd,
     showEdit,
     handleDelete,

@@ -159,7 +159,10 @@ describe("KnowledgeBaseSquareView", () => {
 
     await wrapper.find('input[placeholder="搜索知识库..."]').setValue("不存在的知识库");
     expect(wrapper.findAll(".kb-square-card")).toHaveLength(0);
-    expect(wrapper.find(".kb-square-no-more").text()).toBe("暂无可展示的知识库");
+    // 筛没了和库里没有是两回事，文案要指向「放宽条件」
+    expect(wrapper.find(".state-block__empty-text").text()).toBe("没有符合当前搜索与筛选条件的知识库");
+    // 空态由 StateBlock 统一呈现，列表尾部的「没有更多数据了」不能同时冒出来
+    expect(wrapper.find(".kb-square-no-more").exists()).toBe(false);
   });
 
   it("无任何可见知识库时只显示空态，不再请求可见性过滤", async () => {
@@ -169,7 +172,7 @@ describe("KnowledgeBaseSquareView", () => {
 
     expect(filterVisible).not.toHaveBeenCalled();
     expect(wrapper.findAll(".kb-square-card")).toHaveLength(0);
-    expect(wrapper.find(".kb-square-no-more").text()).toBe("暂无可展示的知识库");
+    expect(wrapper.find(".state-block__empty-text").text()).toBe("暂无可展示的知识库");
   });
 
   it("可见性过滤异常或返回错误码时降级展示全部，不阻断广场", async () => {
@@ -225,7 +228,7 @@ describe("KnowledgeBaseSquareView", () => {
     expect(emitted?.[1]?.[0]).toMatchObject({ id: "kb-2", name: "客服问答" });
   });
 
-  it("知识库列表加载异常时清空列表并给出空态", async () => {
+  it("知识库列表加载异常时清空列表并给出可重试的错误态", async () => {
     const error = vi.spyOn(console, "error").mockImplementation(() => {});
     getDatasets.mockRejectedValueOnce(new Error("network"));
     const wrapper = mountView();
@@ -233,7 +236,37 @@ describe("KnowledgeBaseSquareView", () => {
 
     expect(error).toHaveBeenCalled();
     expect(wrapper.findAll(".kb-square-card")).toHaveLength(0);
-    expect(wrapper.find(".kb-square-no-more").text()).toBe("暂无可展示的知识库");
+    // 原来异常也被渲染成「暂无可展示的知识库」，把服务挂了说成没数据；现在必须露出原因
+    expect(wrapper.find(".state-block__error-text").text()).toBe("获取知识库列表失败，请重试");
+    expect(wrapper.find(".state-block__empty-text").exists()).toBe(false);
+
+    getDatasets.mockResolvedValueOnce({ data: [...knowledgeBases], has_more: false, total: 3, page: 1, limit: 100 });
+    const callsBefore = getDatasets.mock.calls.length;
+    await wrapper.find(".state-block__retry").trigger("click");
+    await flushPromises();
+
+    expect(getDatasets).toHaveBeenCalledTimes(callsBefore + 1);
+    expect(wrapper.find(".state-block__error-text").exists()).toBe(false);
+    expect(titles(allCards(wrapper))).toEqual(["产品手册", "客服问答"]);
     error.mockRestore();
+  });
+
+  it("请求未回来时是骨架屏，不提前喊「暂无可展示的知识库」", async () => {
+    let resolveDatasets: (value: unknown) => void = () => {};
+    getDatasets.mockReturnValue(new Promise((resolve) => { resolveDatasets = resolve; }));
+
+    const wrapper = mountView();
+    await flushPromises();
+
+    // loading 一直在算，但原先既没导出也没渲染，首屏是一片空白 + 「暂无可展示的知识库」
+    expect(wrapper.find(".state-block__skeleton").exists()).toBe(true);
+    expect(wrapper.findAll(".kb-square-card")).toHaveLength(0);
+    expect(wrapper.find(".state-block__empty-text").exists()).toBe(false);
+
+    resolveDatasets({ data: [...knowledgeBases], has_more: false, total: 3, page: 1, limit: 100 });
+    await flushPromises();
+
+    expect(wrapper.find(".state-block__skeleton").exists()).toBe(false);
+    expect(titles(allCards(wrapper))).toEqual(["产品手册", "客服问答"]);
   });
 });

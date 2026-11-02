@@ -19,6 +19,15 @@
       </div>
     </div>
 
+    <StateBlock
+      :loading="loading"
+      :error="listError"
+      :empty="filteredKnowledgeBases.length === 0"
+      :empty-text="emptyText"
+      variant="cards"
+      :count="6"
+      @retry="fetchKnowledgeBases"
+    >
     <!-- 推荐知识库 -->
     <div v-if="recommendedKnowledgeBases.length > 0" class="kb-square-section">
       <div class="kb-square-section-header">
@@ -197,9 +206,10 @@
           </div>
         </article>
       </div>
-      <div v-if="filteredKnowledgeBases.length === 0" class="kb-square-no-more">暂无可展示的知识库</div>
-      <div v-else class="kb-square-no-more">没有更多数据了</div>
+      <!-- 空态由外层 StateBlock 统一呈现，这里只保留「还有更多」的收尾提示 -->
+      <div v-if="filteredKnowledgeBases.length > 0" class="kb-square-no-more">没有更多数据了</div>
     </div>
+    </StateBlock>
   </section>
 </template>
 
@@ -207,6 +217,7 @@
 import { useIndex } from './index'
 import { Search, PriceTag } from '@element-plus/icons-vue'
 import TagDropdown from '@/components/TagDropdown/index.vue'
+import StateBlock from '@/components/StateBlock/index.vue'
 
 const defaultCover = new URL('@/assets/images/brand-cover-default.svg', import.meta.url).href
 
@@ -216,6 +227,9 @@ const props = defineProps<{
 }>()
 
 const {
+  loading,
+  listError,
+  emptyText,
   searchQuery,
   selectedCategories,
   filteredKnowledgeBases,
@@ -223,6 +237,7 @@ const {
   allTags,
   getAllTags,
   refreshTagBind,
+  fetchKnowledgeBases,
 } = useIndex()
 
 const emit = defineEmits(['select-kb'])

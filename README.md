@@ -233,29 +233,31 @@ mvn -s $settings "-Dmaven.repo.local=$repo" test
 cd frontend
 npm run typecheck      # TypeScript 类型检查
 npm run check:icons    # 图标注册检查（模板图标必须 import 或全局注册）
+npm run check:styles   # 硬编码色值棘轮检查（只减不增，基线在 scripts/check-styles.baseline.json）
 npm run test            # 单元测试（Vitest），17 个文件 / 207 项
-npm run test:component  # 组件测试（真实渲染），24 个文件 / 197 项
-npm run test:e2e        # 浏览器冒烟（真实 Chromium + 接口 mock），8 项
+npm run test:component  # 组件测试（真实渲染），25 个文件 / 216 项
+npm run test:e2e        # 浏览器冒烟（真实 Chromium + 接口 mock），13 项
 npm run check:streaming # 流式超时/取消回归，14 项
 npm run check:markdown  # Markdown 与 XSS 消毒回归，10 项
 npm run build            # 生产构建
 npm run check:bundle     # 首屏 gzip 体积预算（需先 build）
 ```
 
-本地一键验证使用 `scripts/verify.ps1 -JavaHome '<你的 JDK 8 路径>'`（11 步，含后端；
+本地一键验证使用 `scripts/verify.ps1 -JavaHome '<你的 JDK 8 路径>'`（13 步，含后端；
 跑完会打印 `后端单测汇总：N 项 / M 份报告`，一份报告都没生成就直接判失败——这是为了
 堵住「测试被静默跳过但 BUILD SUCCESS」这类最危险的绿色）。日志统一 UTF-8，可直接重定向存档。
 
-### 当前测试结果（2026-11-01 实测，`scripts/verify.ps1` 全绿）
+### 当前测试结果（2026-11-02 实测，`scripts/verify.ps1` 全绿）
 
 | 项目 | 结果 |
 |---|---|
-| 后端单元测试 | **320 项通过（32 个测试类），0 失败 / 0 错误 / 0 跳过** |
+| 后端单元测试 | **320 项通过（32 个测试类），0 失败 / 0 错误 / 0 跳过**（2026-11-01 实测，本批未改后端） |
 | 前端 TypeScript 检查 | 通过 |
 | 前端图标注册检查 | 通过（56 个在用图标全部可解析） |
+| 硬编码色值棘轮检查 | 通过（48 个文件 / 2102 处，等于基线；新增即失败，只允许减少） |
 | 前端单元测试 | 17 个文件 / **207 项通过** |
-| 前端组件测试 | 24 个文件 / **197 项通过**（@vue/test-utils 真实渲染 LoginView / ChatComposer / ChatMessageList / ChatSidebar / KbSearchView / MyUsageView / ApiKeysView / ShareView / AiGatewayView / UserView / RoleView / UnitView / ModelsConfigView / DifyConfigView / LogView / KnowledgeBaseMngView / ModelsView / ApplicationsView / CapabilitiesView / DatasetView / KnowledgeBaseSquareView / KnowledgeBaseView / PreviewView / NotFoundView） |
-| 浏览器冒烟（Playwright） | **8 项通过**（真实 Chromium：登录守卫与登录跳转、聊天页启动无异常、直连模型 SSE 流式回答、直连图片附件带压缩 dataURL、直连模式隐藏 Dify 应用参数、配额 429 展示服务端原因、知识库模块未配置引导、404 兜底；接口层由 `page.route` 拦截；webServer 固定用 4317 + `--strictPort`，不会撞上你开着的 5173 dev server） |
+| 前端组件测试 | 25 个文件 / **216 项通过**（@vue/test-utils 真实渲染 LoginView / ChatComposer / ChatMessageList / ChatSidebar / StateBlock / KbSearchView / MyUsageView / ApiKeysView / ShareView / AiGatewayView / UserView / RoleView / UnitView / ModelsConfigView / DifyConfigView / LogView / KnowledgeBaseMngView / ModelsView / ApplicationsView / CapabilitiesView / DatasetView / KnowledgeBaseSquareView / KnowledgeBaseView / PreviewView / NotFoundView） |
+| 浏览器冒烟（Playwright） | **13 项通过**（真实 Chromium：登录守卫与登录跳转、聊天页启动无异常、直连模型 SSE 流式回答、直连图片附件带压缩 dataURL、直连模式隐藏 Dify 应用参数、配额 429 展示服务端原因、知识库模块未配置引导、404 兜底，外加目录页三态 5 项：骨架屏、接口非 0 可重试、搜索无结果文案、加载异常、数据集页异常后重试恢复；接口层由 `page.route` 拦截；webServer 固定用 4317 + `--strictPort`，不会撞上你开着的 5173 dev server） |
 | 前端流式回归 | 14 项通过 |
 | 前端 Markdown / XSS 回归 | 10 项通过（**2026-10-29 前该脚本一直是失败的，见文档**） |
 | 前端生产构建 | 通过（element-plus 按路由分包，入口 gzip 152.2 kB，已无 >500 kB 分包警告） |
@@ -371,6 +373,33 @@ npm run check:bundle     # 首屏 gzip 体积预算（需先 build）
    会被写进文件输入，发消息时 `input_file` 变成字符串而不是文件。现在兜底只认文本
    类变量。新增 `useChatModels` 单测（文件变量不当提示词、显式 prompt 优先、加载
    失败降级），提示词选中做了变异验证。
+
+2026-11-02 前端改进：目录页三态与色值棘轮
+
+18. **目录页三态统一**（`StateBlock`）：模型仓库、数据集市场、场景应用、知识库广场
+    四个列表页此前只有「数据」这一种状态——请求进行中直接渲染空数组，看起来和
+    「真的没有数据」一模一样；接口返回非 0 或抛异常时更糟，列表静默留在原地，
+    用户以为后端就是这个结果。知识库广场还把 `loading` 声明了却没接到模板上，
+    空态文案写死「没有更多数据了」，搜索无结果与真的没数据共用一句提示。
+    现在四处共用一个组件：骨架屏（`aria-busy` + `aria-live`，行数/卡片数可配）
+    → 错误态（把服务端 `resp_msg` 留在页面上并给「重试」按钮；拦截器已经弹过
+    toast，不再重复弹窗）→ 空态（区分「暂无 X」与「没有符合当前搜索与筛选条件的 X」）
+    → 正常插槽。组件本身只用 `var(--xxx)` token，不引入任何字面色。
+    新增 `StateBlock` 组件测试 6 项 + 四页各 4 项断言（骨架屏、非 0 可重试、
+    异常清空、两种空态文案），浏览器冒烟补 5 项（真实 Chromium 里按住请求看骨架屏、
+    非 0 后点重试恢复、搜索无结果文案、加载异常文案、数据集页 abort 后重试成功），
+    每条都做过变异验证。
+19. **硬编码色值棘轮门禁**（`npm run check:styles`）：token 体系（`tokens.css`
+    深色 + `data-theme="light"`）早就建好了，但组件里仍在抄旧文件的字面色，
+    新写的越多、token 越收不拢。一次性换 2000 多处色值的风险远大于收益，
+    所以改成棘轮：按文件记基线，**任何文件变差即失败，新增文件带色值也失败**，
+    改干净了跑 `--write` 重算基线。当前 48 个文件 / 2102 处（`tokens.css` 是色值
+    定义处，豁免）。顺带纠正了审查文档里「488 处」这个无法复现的估计。
+    已接入 CI 与 `scripts/verify.ps1`。
+
+注：骨架屏只验证到「请求未回来时页面确实是骨架而非空态」——组件测试与浏览器冒烟
+的接口层都是 mock，真实后端的列表返回太快，人工点不出这一帧；加载/空态/错误重试
+的文案与卡片数量在真实超管会话里逐页确认过。
 
 2026-10-30 后端改进：并发请求的配额预扣
 
