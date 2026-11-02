@@ -66,9 +66,8 @@ export function useIndex() {
   }
 
   /**
-   * 日志表的 createtime 由 Jackson 序列化成毫秒时间戳，
-   * 直接塞进单元格里就是一串 13 位数字，所以这里统一转成
-   * 「年-月-日 时:分:秒」。拿到字符串（框架历史数据）也能解析。
+   * `createtime` 有两种形态：真库这条链路返回的是 `2026-11-02 16:33:59` 这样的字符串，
+   * 而按毫秒时间戳序列化时单元格里就是一串 13 位数字。两种都转成「年-月-日 时:分:秒」。
    */
   const formatTime = (value: number | string | null | undefined): string => {
     if (value === null || value === undefined || value === '') return '-'
