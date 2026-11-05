@@ -37,6 +37,7 @@ public class TableSchemaInitializer implements ApplicationListener<ApplicationRe
         ensureApiTokenTable();
         ensureControllerLogIndex();
         ensureRagEvalTables();
+        ensureAgentTables();
     }
 
     /**
@@ -298,6 +299,72 @@ public class TableSchemaInitializer implements ApplicationListener<ApplicationRe
         execute("CREATE INDEX IF NOT EXISTS idx_aicalllog_requestid ON aicalllogbean (\"requestId\")");
         execute("ALTER TABLE modelsconfigbean ADD COLUMN IF NOT EXISTS \"priceInputPerMillion\" int8");
         execute("ALTER TABLE modelsconfigbean ADD COLUMN IF NOT EXISTS \"priceOutputPerMillion\" int8");
+    }
+
+    /**
+     * Agent 工作台的四张表（阶段 1 · 子阶段 1）。
+     *
+     * <p>拆表理由：配置与工具是「写少读多」的定义数据；运行汇总要能按用户/Agent
+     * 分页查历史；步骤明细一次运行可能产生几十行，点开详情时才读。合成一张大表
+     * 会让列表页被迫拖着步骤正文。</p>
+     *
+     * <p>{@code idx_agentrun_active} 是并发闸门：同一用户的同一 Agent 同时只能有
+     * 一轮活动运行，避免重复消耗 Token。与 RAG 评估工作台的
+     * {@code idx_ragevalrun_active} 是同一套做法。</p>
+     *
+     * <p>本方法只建表与索引，不改任何既有表；执行循环（子阶段 2）需要按 runKey
+     * 归集成本时，再单独给 {@code aicalllogbean} 加两列。</p>
+     */
+    private void ensureAgentTables() {
+        execute("CREATE TABLE IF NOT EXISTS agentbean ("
+                + "\"agentKey\" varchar(64), \"name\" varchar(100), \"description\" text, "
+                + "\"systemPrompt\" text, \"modelIid\" int8, \"maxIterations\" int4, "
+                + "\"tokenBudget\" int8, \"toolTimeoutMs\" int8, \"roleiids\" text, "
+                + "\"unitsnos\" text, \"permissionType\" varchar(32), "
+                + "\"iid\" bigserial NOT NULL PRIMARY KEY, \"lastuser\" varchar(255), "
+                + "\"createtime\" timestamp DEFAULT now(), \"updatetime\" timestamp, "
+                + "\"enable\" boolean DEFAULT true, \"app\" varchar(255))");
+        execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_agent_key ON agentbean (\"agentKey\")");
+        execute("CREATE INDEX IF NOT EXISTS idx_agent_owner ON agentbean (\"lastuser\", \"iid\")");
+
+        execute("CREATE TABLE IF NOT EXISTS agenttoolbean ("
+                + "\"agentIid\" int8, \"name\" varchar(100), \"description\" text, "
+                + "\"jsonSchema\" text, \"toolType\" varchar(32), \"endpoint\" text, "
+                + "\"timeoutMs\" int4, \"maxRetries\" int4, \"roleiids\" text, "
+                + "\"unitsnos\" text, "
+                + "\"iid\" bigserial NOT NULL PRIMARY KEY, \"lastuser\" varchar(255), "
+                + "\"createtime\" timestamp DEFAULT now(), \"updatetime\" timestamp, "
+                + "\"enable\" boolean DEFAULT true, \"app\" varchar(255))");
+        execute("CREATE INDEX IF NOT EXISTS idx_agenttool_agent "
+                + "ON agenttoolbean (\"agentIid\", \"lastuser\")");
+
+        execute("CREATE TABLE IF NOT EXISTS agentrunbean ("
+                + "\"runKey\" varchar(64), \"agentIid\" int8, \"status\" varchar(16), "
+                + "\"question\" text, \"iterations\" int4, \"promptTokens\" int8, "
+                + "\"completionTokens\" int8, \"totalTokens\" int8, \"costCents\" int8, "
+                + "\"errorMessage\" text, \"requestId\" varchar(64), \"startedAt\" int8, "
+                + "\"finishedAt\" int8, \"durationMs\" int8, "
+                + "\"iid\" bigserial NOT NULL PRIMARY KEY, \"lastuser\" varchar(255), "
+                + "\"createtime\" timestamp DEFAULT now(), \"updatetime\" timestamp, "
+                + "\"enable\" boolean DEFAULT true, \"app\" varchar(255))");
+        execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_agentrun_key ON agentrunbean (\"runKey\")");
+        execute("CREATE INDEX IF NOT EXISTS idx_agentrun_user_agent "
+                + "ON agentrunbean (\"lastuser\", \"agentIid\", \"createtime\")");
+        execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_agentrun_active ON agentrunbean "
+                + "(\"agentIid\", \"lastuser\") WHERE \"status\" IN ('queued', 'running')");
+
+        execute("CREATE TABLE IF NOT EXISTS agentstepbean ("
+                + "\"runKey\" varchar(64), \"runIid\" int8, \"stepNo\" int4, "
+                + "\"iteration\" int4, \"stepType\" varchar(16), \"toolName\" varchar(100), "
+                + "\"toolArgs\" text, \"toolResult\" text, \"status\" varchar(16), "
+                + "\"promptTokens\" int8, \"completionTokens\" int8, \"costCents\" int8, "
+                + "\"latencyMs\" int8, \"errorMessage\" text, \"requestId\" varchar(64), "
+                + "\"callLogIid\" int8, "
+                + "\"iid\" bigserial NOT NULL PRIMARY KEY, \"lastuser\" varchar(255), "
+                + "\"createtime\" timestamp DEFAULT now(), \"updatetime\" timestamp, "
+                + "\"enable\" boolean DEFAULT true, \"app\" varchar(255))");
+        execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_agentstep_run_step "
+                + "ON agentstepbean (\"runKey\", \"stepNo\")");
     }
 
     /**
