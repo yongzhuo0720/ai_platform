@@ -35,6 +35,78 @@ public class TableSchemaInitializer implements ApplicationListener<ApplicationRe
         ensureCostAndTracingColumns();
         ensureApiTokenTable();
         ensureControllerLogIndex();
+        ensureRagEvalTables();
+    }
+
+    /**
+     * RAG 评估工作台的四张表与索引。
+     *
+     * <p>为什么不是一张大表：运行历史要能独立于数据集保留快照，
+     * 逐题结果又可能有一两百行；拆开才能在列表页只查运行汇总，
+     * 点开详情时再读逐题明细。</p>
+     *
+     * <p>活动运行唯一索引是并发闸门：同一个用户对同一数据集不能同时跑两次，
+     * 否则既浪费 embedding 额度，也会让「最新一次结果」语义不明确。
+     * 僵死运行由 RagEvalRunner 的定时任务回收，避免索引被永久占住。</p>
+     */
+    private void ensureRagEvalTables() {
+        execute("CREATE TABLE IF NOT EXISTS ragevaldatasetbean ("
+                + "\"datasetKey\" varchar(64), \"name\" varchar(100), \"kbName\" varchar(100), "
+                + "\"description\" text, \"caseCount\" int4, \"caseSetKey\" varchar(64), "
+                + "\"iid\" bigserial NOT NULL PRIMARY KEY, \"lastuser\" varchar(255), "
+                + "\"createtime\" timestamp DEFAULT now(), \"updatetime\" timestamp, "
+                + "\"enable\" boolean DEFAULT true, \"app\" varchar(255))");
+        execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_ragevaldataset_key "
+                + "ON ragevaldatasetbean (\"datasetKey\")");
+        execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_ragevaldataset_owner_name "
+                + "ON ragevaldatasetbean (\"lastuser\", \"name\")");
+
+        execute("CREATE TABLE IF NOT EXISTS ragevalcasebean ("
+                + "\"datasetKey\" varchar(64), \"caseSetKey\" varchar(64), \"question\" text, "
+                + "\"expectedDoc\" varchar(200), \"expectedKeywords\" text, \"category\" varchar(32), "
+                + "\"iid\" bigserial NOT NULL PRIMARY KEY, \"lastuser\" varchar(255), "
+                + "\"createtime\" timestamp DEFAULT now(), \"updatetime\" timestamp, "
+                + "\"enable\" boolean DEFAULT true, \"app\" varchar(255))");
+        execute("CREATE INDEX IF NOT EXISTS idx_ragevalcase_dataset_set "
+                + "ON ragevalcasebean (\"datasetKey\", \"caseSetKey\")");
+        execute("CREATE INDEX IF NOT EXISTS idx_ragevalcase_user "
+                + "ON ragevalcasebean (\"lastuser\")");
+
+        execute("CREATE TABLE IF NOT EXISTS ragevalrunbean ("
+                + "\"runKey\" varchar(64), \"datasetKey\" varchar(64), \"datasetName\" varchar(100), "
+                + "\"kbName\" varchar(100), \"topK\" int4, \"status\" varchar(16), "
+                + "\"total\" int4, \"processed\" int4, \"recall\" float8, \"precision\" float8, "
+                + "\"mrr\" float8, \"ndcg\" float8, \"keywordHitRate\" float8, "
+                + "\"missCount\" int4, \"keywordEvaluatedCount\" int4, "
+                + "\"embeddingModel\" varchar(128), \"errorMessage\" text, "
+                + "\"startedAt\" int8, \"finishedAt\" int8, \"durationMs\" int8, "
+                + "\"iid\" bigserial NOT NULL PRIMARY KEY, \"lastuser\" varchar(255), "
+                + "\"createtime\" timestamp DEFAULT now(), \"updatetime\" timestamp, "
+                + "\"enable\" boolean DEFAULT true, \"app\" varchar(255))");
+        execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_ragevalrun_key "
+                + "ON ragevalrunbean (\"runKey\")");
+        execute("CREATE INDEX IF NOT EXISTS idx_ragevalrun_user_dataset "
+                + "ON ragevalrunbean (\"lastuser\", \"datasetKey\", \"iid\")");
+        execute("CREATE INDEX IF NOT EXISTS idx_ragevalrun_status_time "
+                + "ON ragevalrunbean (\"status\", \"startedAt\")");
+        execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_ragevalrun_active "
+                + "ON ragevalrunbean (\"lastuser\", \"datasetKey\") "
+                + "WHERE \"status\" IN ('queued', 'running')");
+
+        execute("CREATE TABLE IF NOT EXISTS ragevalcaseresultbean ("
+                + "\"runKey\" varchar(64), \"caseIndex\" int4, \"question\" text, "
+                + "\"expectedDoc\" varchar(200), \"expectedKeywords\" text, \"category\" varchar(32), "
+                + "\"retrievedDocs\" text, \"topDoc\" varchar(200), \"firstHitRank\" int4, "
+                + "\"recall\" float8, \"precision\" float8, \"reciprocalRank\" float8, "
+                + "\"ndcg\" float8, \"keywordHit\" boolean, \"keywordEvaluated\" boolean, "
+                + "\"durationMs\" int8, \"errorMessage\" text, "
+                + "\"iid\" bigserial NOT NULL PRIMARY KEY, \"lastuser\" varchar(255), "
+                + "\"createtime\" timestamp DEFAULT now(), \"updatetime\" timestamp, "
+                + "\"enable\" boolean DEFAULT true, \"app\" varchar(255))");
+        execute("CREATE INDEX IF NOT EXISTS idx_ragevalresult_run "
+                + "ON ragevalcaseresultbean (\"runKey\", \"caseIndex\")");
+        execute("CREATE INDEX IF NOT EXISTS idx_ragevalresult_user "
+                + "ON ragevalcaseresultbean (\"lastuser\")");
     }
 
     /**

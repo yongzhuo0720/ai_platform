@@ -78,6 +78,12 @@ const router = createRouter({
           meta: { title: "知识检索", group: "知识库中心" },
         },
         {
+          path: "rag-eval",
+          name: "rag-eval",
+          component: () => import("@/views/RagEvalView/index.vue"),
+          meta: { title: "RAG 评估", group: "知识库中心" },
+        },
+        {
           path: "my-usage",
           name: "my-usage",
           component: () => import("@/views/MyUsageView/index.vue"),

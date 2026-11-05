@@ -212,6 +212,51 @@ test.describe("浏览器冒烟", () => {
     ).toBe(false);
   });
 
+  test("RAG 评估页展示真实接口数据，详情对比基线与请求包格式正确", async ({
+    page,
+  }) => {
+    const ragEvalStartRequests: unknown[] = [];
+    await installBackendMocks(page, { ragEvalStartRequests });
+    await loginAsUser(page);
+    const pageErrors: string[] = [];
+    page.on("pageerror", (error) => pageErrors.push(error.message));
+
+    await page.goto("/#/rag-eval");
+
+    await expect(page.locator(".rag-eval-dataset-item")).toContainText(
+      "制度黄金集"
+    );
+    await expect(page.locator(".rag-eval-dataset-item")).toContainText("2 条");
+    await expect(page.getByText("出差住宿每晚上限多少")).toBeVisible();
+    // 运行历史里的召回率按 4 位小数展示，避免把 0.6 显示成 0.50 之类的歧义
+    await expect(page.locator(".rag-eval-runs")).toContainText("1.0000");
+    await expect(page.locator(".rag-eval-runs")).toContainText("2.3s");
+
+    await page.getByRole("button", { name: "详情" }).click();
+    const dialog = page.getByRole("dialog");
+    await expect(dialog).toContainText("运行详情");
+    const recallCard = dialog.locator(".rag-eval-metric", { hasText: "Recall@K" });
+    await expect(recallCard).toContainText("1.0000");
+    await expect(recallCard).toContainText("+10.0pp");
+    await expect(dialog).toContainText("对比基线");
+    await expect(dialog).toContainText("第 1 位");
+    await expect(dialog).toContainText("第 2 位");
+    await expect(dialog.getByText("命中", { exact: true })).toBeVisible();
+    await expect(dialog.getByText("未命中", { exact: true })).toBeVisible();
+    expect(pageErrors).toEqual([]);
+
+    await page.keyboard.press("Escape");
+    await expect(dialog).toBeHidden();
+
+    await page.getByRole("button", { name: "发起评估" }).click();
+    await expect.poll(() => ragEvalStartRequests.length).toBe(1);
+    // HNSP 按方法参数名映射请求体：DTO 必须包在 data 里，topK 来自页面选择
+    expect(ragEvalStartRequests[0]).toEqual({
+      data: { datasetKey: "d-e2e", topK: 5 },
+    });
+    await expect(page.getByText("评估已启动，共 2 条用例")).toBeVisible();
+  });
+
   test("未知路由展示 404 兜底页并保留完整路径", async ({ page }) => {
     await installBackendMocks(page);
     await page.goto("/#/no-such-page?from=e2e");

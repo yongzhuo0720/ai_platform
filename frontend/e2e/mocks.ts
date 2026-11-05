@@ -1,13 +1,39 @@
 import type { Page } from "@playwright/test";
 
 /** 后端统一响应包（HNSP Result 结构） */
-const ok = (datas: unknown) => ({
+const ok = (datas: unknown, respMsg = "ok") => ({
   resp_code: 0,
-  resp_msg: "ok",
+  resp_msg: respMsg,
   datas,
 });
 
 const JSON_HEADERS = { "content-type": "application/json; charset=utf-8" };
+
+/**
+ * 一条成功的 RAG 评估运行。
+ * <p>列表与详情共用同一份数据，避免两处 mock 字段漂移后出现
+ * 「列表有指标、详情全空」这类只在假数据里成立的假象。</p>
+ */
+const ragEvalRun = () => ({
+  runKey: "r-main",
+  datasetKey: "d-e2e",
+  datasetName: "制度黄金集",
+  kbName: "默认知识库",
+  topK: 5,
+  status: "success" as const,
+  total: 2,
+  processed: 2,
+  recall: 1,
+  precision: 0.6,
+  mrr: 0.75,
+  ndcg: 0.81,
+  keywordHitRate: 0.75,
+  missCount: 0,
+  keywordEvaluatedCount: 2,
+  embeddingModel: "bge-m3",
+  startedAt: Date.UTC(2026, 10, 5, 9, 0, 0),
+  durationMs: 2300,
+});
 
 export interface BackendMockOptions {
   /** 网关模块是否已配置；知识库页用例需要 file: false */
@@ -30,6 +56,12 @@ export interface BackendMockOptions {
    * 可传入带必填项的 user_input_form。</p>
    */
   appParameters?: unknown;
+  /**
+   * 收集 RAG 评估启动请求体。
+   * <p>用于断言前端是否按 HNSP 约定把 DTO 包在 data 字段里，
+   * 以及 datasetKey/topK 是否真的来自当前页面状态。</p>
+   */
+  ragEvalStartRequests?: unknown[];
 }
 
 /**
@@ -153,6 +185,110 @@ export async function installBackendMocks(
     }
     if (path.endsWith("/ai/api/kbRag/listDocs")) {
       return respond(ok([]));
+    }
+    if (path.endsWith("/ai/api/ragEval/listDatasets")) {
+      return respond(
+        ok([
+          {
+            datasetKey: "d-e2e",
+            name: "制度黄金集",
+            kbName: "默认知识库",
+            description: "差旅与考勤制度问答",
+            caseCount: 2,
+          },
+        ])
+      );
+    }
+    if (path.endsWith("/ai/api/ragEval/getDataset")) {
+      return respond(
+        ok({
+          dataset: {
+            datasetKey: "d-e2e",
+            name: "制度黄金集",
+            kbName: "默认知识库",
+            description: "差旅与考勤制度问答",
+            caseCount: 2,
+          },
+          cases: [
+            {
+              question: "出差住宿每晚上限多少",
+              expectedDoc: "差旅报销制度",
+              keywords: ["600"],
+              category: "数值型",
+            },
+            {
+              question: "出差 3 天以内由谁审批",
+              expectedDoc: "差旅报销制度",
+              keywords: [],
+              category: "事实型",
+            },
+          ],
+        })
+      );
+    }
+    if (path.endsWith("/ai/api/ragEval/listRuns")) {
+      return respond(ok([ragEvalRun()]));
+    }
+    if (path.endsWith("/ai/api/ragEval/startRun")) {
+      options.ragEvalStartRequests?.push(route.request().postDataJSON());
+      return respond(ok("r-new", "评估已启动，共 2 条用例"));
+    }
+    if (path.endsWith("/ai/api/ragEval/getRun")) {
+      return respond(
+        ok({
+          run: ragEvalRun(),
+          baseline: {
+            ...ragEvalRun(),
+            runKey: "r-base",
+            recall: 0.9,
+            precision: 0.5,
+            mrr: 0.7,
+            ndcg: 0.75,
+            keywordHitRate: 0.5,
+            startedAt: Date.UTC(2026, 10, 4, 9, 0, 0),
+          },
+          results: [
+            {
+              caseIndex: 0,
+              question: "出差住宿每晚上限多少",
+              expectedDoc: "差旅报销制度",
+              keywords: ["600"],
+              category: "数值型",
+              retrievedDocs: ["差旅报销制度", "考勤制度"],
+              topDoc: "差旅报销制度",
+              firstHitRank: 1,
+              recall: 1,
+              precision: 0.5,
+              reciprocalRank: 1,
+              ndcg: 1,
+              keywordHit: true,
+              keywordEvaluated: true,
+              durationMs: 320,
+            },
+            {
+              caseIndex: 1,
+              question: "出差 3 天以内由谁审批",
+              expectedDoc: "差旅报销制度",
+              keywords: ["审批"],
+              category: "事实型",
+              retrievedDocs: ["考勤制度", "差旅报销制度"],
+              topDoc: "考勤制度",
+              firstHitRank: 2,
+              recall: 1,
+              precision: 0.5,
+              reciprocalRank: 0.5,
+              ndcg: 0.6309,
+              keywordHit: false,
+              keywordEvaluated: true,
+              durationMs: 280,
+            },
+          ],
+        })
+      );
+    }
+    if (path.endsWith("/ai/api/ragEval/deleteDataset") ||
+        path.endsWith("/ai/api/ragEval/deleteRun")) {
+      return respond(ok(true));
     }
 
     return respond(ok([]));

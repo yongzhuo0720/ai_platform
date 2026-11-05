@@ -26,6 +26,11 @@ export const navigationSections: any[] = [
         path: '/kb-search',
         routeName: 'kb-search',
       },
+      {
+        title: 'RAG 评估',
+        path: '/rag-eval',
+        routeName: 'rag-eval',
+      },
     ],
   },
   {
