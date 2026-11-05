@@ -32,6 +32,46 @@ public class KbDocBean extends DbEntityBase {
     Integer chunkCount;
 
     @SqlColumn()
-    @ApiModelProperty("状态：ready/pending")
+    @ApiModelProperty("状态：queued/chunking/embedding/ready/failed")
     String status;
+
+    @SqlColumn()
+    @ApiModelProperty("文档标识（异步任务定位用，不对外暴露）")
+    String docKey;
+
+    @SqlColumn()
+    @ApiModelProperty("正文 SHA-256，用于同库去重")
+    String contentHash;
+
+    @SqlColumn()
+    @ApiModelProperty("文件类型：txt/md/pdf/docx 等")
+    String fileType;
+
+    @SqlColumn()
+    @ApiModelProperty("原始文件字节数")
+    Long sizeBytes;
+
+    @SqlColumn()
+    @ApiModelProperty("处理进度 0-100")
+    Integer progress;
+
+    @SqlColumn(method = "text")
+    @ApiModelProperty("失败原因（仅失败态有值）")
+    String errorMsg;
+
+    @SqlColumn()
+    @ApiModelProperty("已尝试次数（含首次处理）")
+    Integer attemptCount;
+
+    @SqlColumn()
+    @ApiModelProperty("开始处理时间（毫秒时间戳，兼作排队时间）")
+    Long startedAt;
+
+    @SqlColumn()
+    @ApiModelProperty("处理结束时间（毫秒时间戳）")
+    Long finishedAt;
+
+    @SqlColumn()
+    @ApiModelProperty("生成向量的模型名")
+    String embeddingModel;
 }

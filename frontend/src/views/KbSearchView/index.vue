@@ -5,7 +5,7 @@
       <div class="page-heading">
         <div>
           <h1>知识检索</h1>
-          <p>本地 RAG 实验室：上传纯文本文档，服务端自动分块并向量化，支持相似度检索测试。</p>
+          <p>本地 RAG 实验室：上传文档后由服务端异步分块、向量化，进度实时更新，失败可重试。</p>
         </div>
         <div class="hero-stats">
           <button type="button" class="btn btn-primary" @click="openUploadDialog">
@@ -25,8 +25,33 @@
         <el-table :data="state.docs" v-loading="state.docsLoading" style="width: 100%" size="small" stripe>
           <el-table-column prop="name" label="文档" min-width="160" show-overflow-tooltip />
           <el-table-column prop="kbName" label="知识库" width="110" align="center" />
+          <el-table-column label="状态" width="170" align="center">
+            <template #default="scope">
+              <div class="kb-status">
+                <el-tag :type="statusTagType(scope.row.status)" size="small">
+                  {{ statusLabel(scope.row.status) }}
+                </el-tag>
+                <template v-if="isActiveDoc(scope.row)">
+                  <el-progress
+                    :percentage="progressOf(scope.row)"
+                    :stroke-width="4"
+                    :show-text="false"
+                    class="kb-progress"
+                  />
+                  <span class="kb-progress-text">{{ progressOf(scope.row) }}%</span>
+                </template>
+              </div>
+              <el-tooltip
+                v-if="scope.row.status === 'failed' && scope.row.errorMsg"
+                :content="scope.row.errorMsg"
+                placement="top"
+              >
+                <span class="kb-error">{{ scope.row.errorMsg }}</span>
+              </el-tooltip>
+            </template>
+          </el-table-column>
           <el-table-column label="分块" width="70" align="center">
-            <template #default="scope">{{ scope.row.chunkCount }}</template>
+            <template #default="scope">{{ scope.row.chunkCount || '-' }}</template>
           </el-table-column>
           <el-table-column label="字符数" width="90" align="center">
             <template #default="scope">{{ scope.row.charCount }}</template>
@@ -34,8 +59,17 @@
           <el-table-column label="上传时间" width="140" align="center">
             <template #default="scope">{{ formatTime(scope.row.createtime) }}</template>
           </el-table-column>
-          <el-table-column label="操作" width="80" align="center" fixed="right">
+          <el-table-column label="操作" width="110" align="center" fixed="right">
             <template #default="scope">
+              <el-button
+                v-if="scope.row.status === 'failed'"
+                link
+                type="primary"
+                size="small"
+                @click="handleRetry(scope.row)"
+              >
+                重试
+              </el-button>
               <el-button link type="danger" size="small" @click="handleDelete(scope.row)">删除</el-button>
             </template>
           </el-table-column>
@@ -106,17 +140,35 @@
     >
       <el-form label-width="90px">
         <el-form-item label="选择文件">
-          <input type="file" accept=".txt,.md,.markdown,.pdf,.docx,text/plain" @change="handleFileChange" />
+          <input
+            type="file"
+            accept=".txt,.md,.markdown,.csv,.json,.log,.pdf,.docx"
+            @change="handleFileChange"
+          />
         </el-form-item>
         <el-form-item label="文档名称">
-          <el-input v-model="state.uploadForm.name" placeholder="如：部署手册" maxlength="100" />
+          <el-input v-model="state.uploadForm.name" placeholder="如：部署手册" maxlength="200" />
         </el-form-item>
         <el-form-item label="知识库">
-          <el-input v-model="state.uploadForm.kbName" placeholder="默认知识库" maxlength="50" />
+          <el-input v-model="state.uploadForm.kbName" placeholder="默认知识库" maxlength="100" />
         </el-form-item>
-        <el-form-item label="内容预览">
+        <el-form-item label="文档内容">
+          <el-input
+            v-model="state.uploadForm.content"
+            type="textarea"
+            :rows="4"
+            maxlength="200000"
+            placeholder="也可以直接粘贴正文；与选择文件二选一"
+            @input="handleContentInput"
+          />
           <span class="kb-upload-meta">
-            {{ state.uploadForm.content ? `已载入 ${state.uploadForm.content.length} 字符` : '未载入内容' }}
+            <template v-if="state.uploadForm.content">
+              已提取 {{ state.uploadForm.content.length }} 字符
+            </template>
+            <template v-else-if="state.uploadForm.fileName">
+              已选择 {{ state.uploadForm.fileName }}（{{ formatSize(state.uploadForm.sizeBytes) }}），服务端将自动解析
+            </template>
+            <template v-else>未载入内容</template>
           </span>
         </el-form-item>
       </el-form>
@@ -136,10 +188,17 @@ const {
   state,
   openUploadDialog,
   handleFileChange,
+  handleContentInput,
   submitUpload,
+  handleRetry,
   handleDelete,
   submitSearch,
   scoreTagType,
+  isActiveDoc,
+  statusLabel,
+  statusTagType,
+  progressOf,
+  formatSize,
   formatTime,
 } = useIndex()
 </script>

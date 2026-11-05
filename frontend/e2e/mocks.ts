@@ -62,6 +62,18 @@ export interface BackendMockOptions {
    * 以及 datasetKey/topK 是否真的来自当前页面状态。</p>
    */
   ragEvalStartRequests?: unknown[];
+  /**
+   * 知识检索页的文档列表。每次调用都会重新求值，
+   * 便于模拟「上传后 queued → 轮询后 ready」的真实状态推进。
+   */
+  kbDocs?: () => unknown[];
+  /**
+   * 收集知识文档上传请求。multipart 无法用 postDataJSON 解析，
+   * 这里保留 Content-Type 与原始请求体，用于断言确实走了文件上传接口。
+   */
+  kbUploads?: Array<{ contentType: string; postData: string | null }>;
+  /** 上传接口返回的文档；通常在闭包里同时更新 kbDocs 的状态 */
+  kbUploadResponse?: () => unknown;
 }
 
 /**
@@ -183,8 +195,23 @@ export async function installBackendMocks(
     if (path.endsWith("/ai/api/assistantBean/query")) {
       return respond(ok([]));
     }
+    if (path.endsWith("/ai/api/kbRag/uploadFile")) {
+      options.kbUploads?.push({
+        contentType: route.request().headers()["content-type"] ?? "",
+        postData: route.request().postData(),
+      });
+      return respond(
+        ok(
+          options.kbUploadResponse?.() ?? { iid: 1, status: "queued" },
+          "文档已受理，正在后台处理"
+        )
+      );
+    }
+    if (path.endsWith("/ai/api/kbRag/retryDoc")) {
+      return respond(ok(true, "文档已重新排队"));
+    }
     if (path.endsWith("/ai/api/kbRag/listDocs")) {
-      return respond(ok([]));
+      return respond(ok(options.kbDocs ? options.kbDocs() : []));
     }
     if (path.endsWith("/ai/api/ragEval/listDatasets")) {
       return respond(

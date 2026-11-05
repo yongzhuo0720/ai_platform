@@ -20,9 +20,11 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import com.aiproject.ai.service.bean.KbChunkBean;
 import com.aiproject.ai.service.bean.KbDocBean;
+import com.aiproject.ai.service.bean.KbDocContentBean;
 import com.aiproject.ai.service.bean.KnowledgeBaseBean;
 import com.aiproject.ai.service.mapper.KbChunkBeanMapper;
 import com.aiproject.ai.service.mapper.KbDocBeanMapper;
+import com.aiproject.ai.service.mapper.KbDocContentBeanMapper;
 import com.aiproject.ai.service.mapper.KnowledgeBaseBeanMapper;
 
 @Slf4j
@@ -45,6 +47,9 @@ public class KnowledgeBaseBeanHolder {
 
     @Autowired
     KbChunkBeanMapper<KbChunkBean> kbChunkBeanMapper;
+
+    @Autowired
+    KbDocContentBeanMapper<KbDocContentBean> kbDocContentBeanMapper;
 
     public Result<Boolean> install(String uid, KnowledgeBaseBean data) {
         if(CheckUtils.isEmpty(data.getRoleiids())){
@@ -104,6 +109,11 @@ public class KnowledgeBaseBeanHolder {
                 chunkWhere.setKbName(kbName);
                 chunkWhere.setLastuser(ownerUid);
                 chunks += kbChunkBeanMapper.delete(chunkWhere);
+
+                KbDocContentBean contentWhere = new KbDocContentBean();
+                contentWhere.setKbName(kbName);
+                contentWhere.setLastuser(ownerUid);
+                kbDocContentBeanMapper.delete(contentWhere);
 
                 KbDocBean docWhere = new KbDocBean();
                 docWhere.setKbName(kbName);

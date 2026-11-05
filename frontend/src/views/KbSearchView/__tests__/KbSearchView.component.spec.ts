@@ -6,7 +6,9 @@ import { ElMessage, ElMessageBox } from "element-plus";
 vi.mock("@/api/kbRag", () => ({
   kbRagApi: {
     listDocs: vi.fn(),
-    uploadDoc: vi.fn(),
+    uploadFile: vi.fn(),
+    uploadContent: vi.fn(),
+    retryDoc: vi.fn(),
     deleteDoc: vi.fn(),
     search: vi.fn(),
   },
@@ -16,14 +18,16 @@ import KbSearchView from "../index.vue";
 import { kbRagApi } from "@/api/kbRag";
 
 /**
- * 知识检索页：文档列表、上传、删除、检索结果渲染
+ * 知识检索页：文档列表、状态与进度、异步上传、失败重试、检索结果渲染
  * 以及 skipped/warning 降级提示。API 全部 mock。
  */
 
 enableAutoUnmount(afterEach);
 
 const listDocs = kbRagApi.listDocs as Mock;
-const uploadDoc = kbRagApi.uploadDoc as Mock;
+const uploadFile = kbRagApi.uploadFile as Mock;
+const uploadContent = kbRagApi.uploadContent as Mock;
+const retryDoc = kbRagApi.retryDoc as Mock;
 const deleteDoc = kbRagApi.deleteDoc as Mock;
 const search = kbRagApi.search as Mock;
 
@@ -39,6 +43,11 @@ const docs = [
     kbName: "默认知识库",
     chunkCount: 12,
     charCount: 3400,
+    status: "ready",
+    progress: 100,
+    fileType: "txt",
+    sizeBytes: 3400,
+    attemptCount: 1,
     createtime: "2026/10/20 08:05:00",
   },
   {
@@ -47,9 +56,27 @@ const docs = [
     kbName: "产品库",
     chunkCount: 3,
     charCount: 800,
+    status: "ready",
+    progress: 100,
+    fileType: "md",
+    sizeBytes: 800,
+    attemptCount: 1,
     createtime: null,
   },
 ];
+
+const failedDoc = {
+  iid: 3,
+  name: "故障文档",
+  kbName: "默认知识库",
+  chunkCount: 0,
+  charCount: 100,
+  status: "failed",
+  progress: 40,
+  errorMsg: "向量服务超时",
+  attemptCount: 2,
+  createtime: null,
+};
 
 const searchResult = {
   model: "bge-m3",
@@ -94,10 +121,15 @@ const setFile = async (
     configurable: true,
   });
   await input.trigger("change");
+  await flushPromises();
 };
 
 describe("KbSearchView", () => {
-  it("首屏渲染文档列表；空库显示引导空态", async () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("首屏渲染文档列表与处理状态；空库显示引导空态", async () => {
     listDocs.mockResolvedValue(ok(docs));
     const wrapper = mountView();
     await flushPromises();
@@ -109,12 +141,63 @@ describe("KbSearchView", () => {
     expect(rows[0].text()).toContain("12");
     expect(rows[0].text()).toContain("3400");
     expect(rows[0].text()).toContain("2026-10-20 08:05");
+    expect(rows[0].text()).toContain("就绪");
     expect(rows[1].text()).toContain("-");
 
     listDocs.mockResolvedValue(ok([]));
     const emptyWrapper = mountView();
     await flushPromises();
     expect(emptyWrapper.find(".kb-empty").text()).toContain("还没有文档");
+  });
+
+  it("处理中的文档每 2 秒轮询，就绪后自动停止", async () => {
+    vi.useFakeTimers();
+    const queued = { ...docs[0], status: "queued", progress: 10, chunkCount: 0 };
+    const ready = { ...docs[0], status: "ready", progress: 100 };
+    listDocs
+      .mockResolvedValueOnce(ok([queued]))
+      .mockResolvedValueOnce(ok([ready]));
+
+    const wrapper = mountView();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(wrapper.text()).toContain("排队中");
+    expect(wrapper.text()).toContain("10%");
+    expect(listDocs).toHaveBeenCalledTimes(1);
+
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(listDocs).toHaveBeenCalledTimes(2);
+    expect(wrapper.text()).toContain("就绪");
+
+    // 全部就绪后定时器必须停掉，不能继续空转请求
+    await vi.advanceTimersByTimeAsync(10000);
+    expect(listDocs).toHaveBeenCalledTimes(2);
+  });
+
+  it("卸载后迟到的轮询响应不会重新启动定时器", async () => {
+    vi.useFakeTimers();
+    const queued = { ...docs[0], status: "queued", progress: 10, chunkCount: 0 };
+    let resolveSecond: ((value: unknown) => void) | undefined;
+    listDocs
+      .mockResolvedValueOnce(ok([queued]))
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            resolveSecond = resolve;
+          })
+      );
+
+    const wrapper = mountView();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(listDocs).toHaveBeenCalledTimes(1);
+
+    vi.advanceTimersByTime(2000);
+    expect(listDocs).toHaveBeenCalledTimes(2);
+
+    wrapper.unmount();
+    resolveSecond?.(ok([queued]));
+    await flushPromises();
+    await vi.advanceTimersByTimeAsync(10000);
+    expect(listDocs).toHaveBeenCalledTimes(2);
   });
 
   it("文档列表失败：错误码与请求异常分别提示", async () => {
@@ -176,10 +259,10 @@ describe("KbSearchView", () => {
     expect(wrapper.find(".kb-search-actions .btn").text()).toContain("检索");
   });
 
-  it("上传：名称与内容必填，成功后按默认知识库提交并刷新列表", async () => {
+  it("粘贴正文上传：名称与内容必填，成功后提交文本并刷新列表", async () => {
     const spies = createMessageSpies();
     listDocs.mockResolvedValue(ok([]));
-    uploadDoc.mockResolvedValue(ok(true, "文档已入库（4 块）"));
+    uploadContent.mockResolvedValue(ok(true, "文档已受理，正在后台处理"));
     const wrapper = mountView();
     await flushPromises();
 
@@ -195,20 +278,72 @@ describe("KbSearchView", () => {
     (wrapper.vm as any).state.uploadForm.kbName = "";
     await clickByText(wrapper, ".el-dialog__footer button", "上传并向量化");
 
-    expect(uploadDoc).toHaveBeenCalledWith({
-      name: "部署手册",
-      kbName: "默认知识库",
-      content: "正文内容",
-    });
-    expect(spies.success).toHaveBeenCalledWith("文档已入库（4 块）");
+    expect(uploadContent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        name: "部署手册",
+        kbName: "默认知识库",
+        content: "正文内容",
+        fileType: "txt",
+      })
+    );
+    expect(uploadFile).not.toHaveBeenCalled();
+    expect(spies.success).toHaveBeenCalledWith("文档已受理，正在后台处理");
     expect((wrapper.vm as any).state.uploadDialogVisible).toBe(false);
     expect(listDocs).toHaveBeenCalledTimes(2);
+  });
+
+  it("文本文件原文上传；同名字段来自所选文件", async () => {
+    const spies = createMessageSpies();
+    listDocs.mockResolvedValue(ok([]));
+    uploadFile.mockResolvedValue(ok({ iid: 9, status: "queued" }, "文档已受理，正在后台处理"));
+    const wrapper = mountView();
+    await flushPromises();
+    (wrapper.vm as any).state.uploadDialogVisible = true;
+    await nextTick();
+
+    const file = new File(["# 部署\n先安装 JDK 8"], "deploy.md", {
+      type: "text/markdown",
+    });
+    await setFile(wrapper, file);
+
+    // 服务端解析类文件不在浏览器读取正文，避免白名单外编码被前端错误解码
+    expect((wrapper.vm as any).state.uploadForm.name).toBe("deploy.md");
+    expect((wrapper.vm as any).state.uploadForm.fileType).toBe("md");
+    expect((wrapper.vm as any).state.uploadForm.content).toBe("");
+
+    await clickByText(wrapper, ".el-dialog__footer button", "上传并向量化");
+    expect(uploadFile).toHaveBeenCalledWith(expect.any(File), {
+      name: "deploy.md",
+      kbName: "默认知识库",
+    });
+    expect(uploadContent).not.toHaveBeenCalled();
+    expect(spies.success).toHaveBeenCalledWith("文档已受理，正在后台处理");
+  });
+
+  it("已粘贴正文后再选文件：清空旧正文，避免提交过期内容", async () => {
+    createMessageSpies();
+    listDocs.mockResolvedValue(ok([]));
+    const wrapper = mountView();
+    await flushPromises();
+    (wrapper.vm as any).state.uploadDialogVisible = true;
+    await nextTick();
+
+    (wrapper.vm as any).state.uploadForm.name = "手工名称";
+    (wrapper.vm as any).state.uploadForm.content = "上一份文件的正文";
+    await setFile(
+      wrapper,
+      new File(["new content"], "new.txt", { type: "text/plain" })
+    );
+
+    expect((wrapper.vm as any).state.uploadForm.content).toBe("");
+    expect((wrapper.vm as any).state.uploadForm.fileName).toBe("new.txt");
+    expect((wrapper.vm as any).state.uploadForm.name).toBe("手工名称");
   });
 
   it("上传失败：错误码提示后端原因，异常提示稍后重试", async () => {
     const spies = createMessageSpies();
     listDocs.mockResolvedValue(ok([]));
-    uploadDoc.mockResolvedValueOnce(fail("向量化服务离线"));
+    uploadContent.mockResolvedValueOnce(fail("向量化服务离线"));
     const wrapper = mountView();
     await flushPromises();
 
@@ -220,9 +355,26 @@ describe("KbSearchView", () => {
     expect(spies.error).toHaveBeenCalledWith("向量化服务离线");
     expect((wrapper.vm as any).state.uploadForm.name).toBe("部署手册");
 
-    uploadDoc.mockRejectedValueOnce(new Error("network"));
+    uploadContent.mockRejectedValueOnce(new Error("network"));
     await clickByText(wrapper, ".el-dialog__footer button", "上传并向量化");
     expect(spies.error).toHaveBeenCalledWith("上传失败，请稍后重试");
+  });
+
+  it("失败文档展示原因并可重试；重试成功刷新列表", async () => {
+    const spies = createMessageSpies();
+    listDocs.mockResolvedValue(ok([failedDoc]));
+    retryDoc.mockResolvedValue(ok(true, "文档已重新排队"));
+    const wrapper = mountView();
+    await flushPromises();
+
+    const row = wrapper.findAll(".el-table__row")[0];
+    expect(row.text()).toContain("失败");
+    expect(row.text()).toContain("向量服务超时");
+
+    await clickByText(row, "button", "重试");
+    expect(retryDoc).toHaveBeenCalledWith(3);
+    expect(spies.success).toHaveBeenCalledWith("文档已重新排队");
+    expect(listDocs).toHaveBeenCalledTimes(2);
   });
 
   it("删除：确认后按 iid 删除并刷新；取消不调用；接口异常给出提示", async () => {
@@ -253,7 +405,7 @@ describe("KbSearchView", () => {
     expect(spies.error).toHaveBeenCalledWith("删除失败，请稍后重试");
   });
 
-  it("选择文本文件自动载入内容与名称；超过 20MB 直接拒绝", async () => {
+  it("文件选择：超过 20MB 与不支持的类型直接拒绝", async () => {
     const spies = createMessageSpies();
     listDocs.mockResolvedValue(ok([]));
     const wrapper = mountView();
@@ -261,19 +413,15 @@ describe("KbSearchView", () => {
     (wrapper.vm as any).state.uploadDialogVisible = true;
     await nextTick();
 
-    const file = new File(["# 部署\n先安装 JDK 8"], "deploy.md", {
-      type: "text/markdown",
-    });
-    await setFile(wrapper, file);
-    await vi.waitFor(() => {
-      expect((wrapper.vm as any).state.uploadForm.content).toContain("先安装 JDK 8");
-    });
-    expect((wrapper.vm as any).state.uploadForm.name).toBe("deploy.md");
-
     const huge = new File(["x"], "huge.txt", { type: "text/plain" });
     Object.defineProperty(huge, "size", { value: 21 * 1024 * 1024 });
     await setFile(wrapper, huge);
     expect(spies.warning).toHaveBeenCalledWith("文件过大，单篇最多 20MB");
-    expect((wrapper.vm as any).state.uploadForm.content).toContain("先安装 JDK 8");
+    expect((wrapper.vm as any).state.uploadForm.fileName).toBe("");
+
+    const exe = new File(["x"], "tool.exe");
+    await setFile(wrapper, exe);
+    expect(spies.warning).toHaveBeenCalledWith("仅支持 txt / md / csv / json / log / pdf / docx 文档");
+    expect((wrapper.vm as any).state.uploadForm.fileName).toBe("");
   });
 });

@@ -2,6 +2,7 @@ package com.aiproject.ai.service.holde;
 
 import com.aiproject.ai.service.bean.KbChunkBean;
 import com.aiproject.ai.service.bean.KbDocBean;
+import com.aiproject.ai.service.bean.KbDocContentBean;
 import com.aiproject.ai.service.gateway.EmbeddingClient;
 import com.aiproject.ai.service.gateway.RerankResolver;
 import com.aiproject.ai.service.gateway.dto.KbDocUpload;
@@ -9,6 +10,7 @@ import com.aiproject.ai.service.gateway.dto.KbSearchItem;
 import com.aiproject.ai.service.gateway.dto.KbSearchResult;
 import com.aiproject.ai.service.mapper.KbChunkBeanMapper;
 import com.aiproject.ai.service.mapper.KbDocBeanMapper;
+import com.aiproject.ai.service.mapper.KbDocContentBeanMapper;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.heneng.hnsp.common.croe.model.Result;
 import com.heneng.hnsp.common.db.utils.PageRequest;
@@ -41,7 +43,8 @@ public class KbRagHolder {
     private static final int RRF_K = 60;
 
     private static final int MAX_DOC_CHARS = 200000;
-    private static final int MAX_CHUNKS = 500;
+    /** 单篇分块上限；异步流水线在向量化之前也要用同一个上限做校验 */
+    public static final int MAX_CHUNKS = 500;
     private static final int CHUNK_SIZE = 500;
     private static final int CHUNK_OVERLAP = 100;
     /** 单次检索返回条数上限；评估工作台复用这个上限做参数校验 */
@@ -63,6 +66,9 @@ public class KbRagHolder {
 
     @Autowired
     KbChunkBeanMapper<KbChunkBean> kbChunkBeanMapper;
+
+    @Autowired
+    KbDocContentBeanMapper<KbDocContentBean> kbDocContentBeanMapper;
 
     @Autowired
     EmbeddingClient embeddingClient;
@@ -92,6 +98,11 @@ public class KbRagHolder {
                         a.getIid() == null ? 0 : a.getIid());
             }
         });
+        // docKey 与 contentHash 只用于服务端定位和去重，不进入列表响应
+        for (KbDocBean doc : docs) {
+            doc.setDocKey(null);
+            doc.setContentHash(null);
+        }
         return Result.succeed(docs, "查询成功");
     }
 
@@ -233,6 +244,19 @@ public class KbRagHolder {
         // docIid 全局唯一，但归属条件仍然保留：少一个条件就多一条越权路径
         chunkWhere.setLastuser(uid);
         int chunks = kbChunkBeanMapper.delete(chunkWhere);
+
+        // 异步流水线的原始正文单独存表：删文档时必须一起清掉，
+        // 否则重试入口已经没了，正文却永久留在库里（也会让去重索引继续占位）
+        KbDocContentBean contentWhere = new KbDocContentBean();
+        contentWhere.setDocIid(data.getIid());
+        contentWhere.setLastuser(uid);
+        try {
+            kbDocContentBeanMapper.delete(contentWhere);
+        } catch (Exception e) {
+            log.error("[KbRag] 清理文档正文失败, uid={}, docIid={}: {}",
+                    uid, data.getIid(), e.getMessage(), e);
+            return Result.failed(false, "删除失败：清理文档正文时出错，请稍后重试");
+        }
 
         // 分块先删、文档后删：中途失败时留下的是「空壳文档」，用户可重试删除；
         // 反过来会留下检索得到、界面上却不存在的孤儿正文。
@@ -700,7 +724,7 @@ public class KbRagHolder {
      * 分块：优先按空行分段落，段落打包进不超过 CHUNK_SIZE 的块；
      * 超长段落按长度滑动窗口（带重叠）再切。
      */
-    static List<String> chunkText(String text) {
+    public static List<String> chunkText(String text) {
         List<String> chunks = new ArrayList<String>();
         String normalized = text.replace("\r\n", "\n").trim();
         if (normalized.isEmpty()) {

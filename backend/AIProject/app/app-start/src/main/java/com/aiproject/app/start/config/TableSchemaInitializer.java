@@ -31,6 +31,7 @@ public class TableSchemaInitializer implements ApplicationListener<ApplicationRe
         ensureKbChunkFullTextIndex();
         ensureKbChunkQueryIndexes();
         ensureKbChunkEmbeddingModelColumns();
+        ensureKbDocPipeline();
         ensureLongTextColumns();
         ensureCostAndTracingColumns();
         ensureApiTokenTable();
@@ -219,6 +220,48 @@ public class TableSchemaInitializer implements ApplicationListener<ApplicationRe
     private void ensureKbChunkEmbeddingModelColumns() {
         execute("ALTER TABLE kbchunkbean ADD COLUMN IF NOT EXISTS \"embeddingModel\" varchar(128)");
         execute("ALTER TABLE kbchunkbean ADD COLUMN IF NOT EXISTS \"embeddingDim\" int4");
+    }
+
+    /**
+     * 文档处理流水线：状态机字段、去重索引与原始正文表。
+     *
+     * <p>全部是新增列/新增表，存量文档的 {@code contentHash} 等列为 NULL，
+     * 语义就是「旧同步入口写入、不参与去重」，不会被误判为重复。</p>
+     *
+     * <p>去重唯一索引是并发闸门：两个请求同时上传同一篇正文时，
+     * 只靠先查后插会双双通过；索引兜底后，后到者插入失败并返回明确提示。
+     * 条件里排除 failed，保证失败文档不阻塞用户重新上传。</p>
+     */
+    private void ensureKbDocPipeline() {
+        execute("ALTER TABLE kbdocbean ADD COLUMN IF NOT EXISTS \"docKey\" varchar(64)");
+        execute("ALTER TABLE kbdocbean ADD COLUMN IF NOT EXISTS \"contentHash\" varchar(64)");
+        execute("ALTER TABLE kbdocbean ADD COLUMN IF NOT EXISTS \"fileType\" varchar(16)");
+        execute("ALTER TABLE kbdocbean ADD COLUMN IF NOT EXISTS \"sizeBytes\" int8");
+        execute("ALTER TABLE kbdocbean ADD COLUMN IF NOT EXISTS \"progress\" int4");
+        execute("ALTER TABLE kbdocbean ADD COLUMN IF NOT EXISTS \"errorMsg\" text");
+        execute("ALTER TABLE kbdocbean ADD COLUMN IF NOT EXISTS \"attemptCount\" int4");
+        execute("ALTER TABLE kbdocbean ADD COLUMN IF NOT EXISTS \"startedAt\" int8");
+        execute("ALTER TABLE kbdocbean ADD COLUMN IF NOT EXISTS \"finishedAt\" int8");
+        execute("ALTER TABLE kbdocbean ADD COLUMN IF NOT EXISTS \"embeddingModel\" varchar(128)");
+        execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_kbdoc_key ON kbdocbean (\"docKey\")");
+        execute("CREATE INDEX IF NOT EXISTS idx_kbdoc_user_kb_status "
+                + "ON kbdocbean (\"lastuser\", \"kbName\", \"status\")");
+        execute("CREATE INDEX IF NOT EXISTS idx_kbdoc_user_hash "
+                + "ON kbdocbean (\"lastuser\", \"kbName\", \"contentHash\")");
+        execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_kbdoc_dedupe "
+                + "ON kbdocbean (\"lastuser\", \"kbName\", \"contentHash\") "
+                + "WHERE \"contentHash\" IS NOT NULL "
+                + "AND \"status\" IN ('queued', 'chunking', 'embedding', 'ready')");
+
+        execute("CREATE TABLE IF NOT EXISTS kbdoccontentbean ("
+                + "\"docIid\" int8, \"kbName\" varchar(255), \"content\" text, "
+                + "\"contentHash\" varchar(64), \"iid\" bigserial NOT NULL PRIMARY KEY, "
+                + "\"lastuser\" varchar(255), \"createtime\" timestamp DEFAULT now(), "
+                + "\"updatetime\" timestamp, \"enable\" boolean DEFAULT true, \"app\" varchar(255))");
+        execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_kbdoccontent_doc "
+                + "ON kbdoccontentbean (\"docIid\")");
+        execute("CREATE INDEX IF NOT EXISTS idx_kbdoccontent_user_kb "
+                + "ON kbdoccontentbean (\"lastuser\", \"kbName\")");
     }
 
     /**

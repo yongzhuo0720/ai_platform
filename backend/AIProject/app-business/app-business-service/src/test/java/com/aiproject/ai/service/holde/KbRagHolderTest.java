@@ -2,11 +2,13 @@ package com.aiproject.ai.service.holde;
 
 import com.aiproject.ai.service.bean.KbChunkBean;
 import com.aiproject.ai.service.bean.KbDocBean;
+import com.aiproject.ai.service.bean.KbDocContentBean;
 import com.aiproject.ai.service.gateway.EmbeddingClient;
 import com.aiproject.ai.service.gateway.dto.KbDocUpload;
 import com.aiproject.ai.service.gateway.dto.KbSearchItem;
 import com.aiproject.ai.service.mapper.KbChunkBeanMapper;
 import com.aiproject.ai.service.mapper.KbDocBeanMapper;
+import com.aiproject.ai.service.mapper.KbDocContentBeanMapper;
 import com.heneng.hnsp.common.croe.model.Result;
 import com.heneng.hnsp.common.db.utils.PageRequest;
 import com.heneng.hnsp.common.db.utils.PageResult;
@@ -63,6 +65,9 @@ class KbRagHolderTest {
     KbChunkBeanMapper<KbChunkBean> kbChunkBeanMapper;
 
     @Mock
+    KbDocContentBeanMapper<KbDocContentBean> kbDocContentBeanMapper;
+
+    @Mock
     EmbeddingClient embeddingClient;
 
     @InjectMocks
@@ -97,6 +102,25 @@ class KbRagHolderTest {
         verify(kbDocBeanMapper).select(isNull(), captor.capture());
         assertEquals("u1", captor.getValue().getLastuser(),
                 "文档列表的查询条件必须带上当前用户，否则等于拉全表");
+    }
+
+    /** 内部定位键与正文哈希只用于服务端，不进入列表响应 */
+    @Test
+    void listDocs_shouldNotExposeInternalFields() {
+        KbDocBean doc = new KbDocBean();
+        doc.setIid(1L);
+        doc.setName("制度");
+        doc.setDocKey("internal-key");
+        doc.setContentHash("content-hash");
+        when(kbDocBeanMapper.select(isNull(), any(KbDocBean.class)))
+                .thenReturn(new ArrayList<KbDocBean>(Collections.singletonList(doc)));
+
+        Result<List<KbDocBean>> result = holder.listDocs("u1");
+
+        assertEquals(1, result.getDatas().size());
+        assertEquals("制度", result.getDatas().get(0).getName());
+        assertNull(result.getDatas().get(0).getDocKey());
+        assertNull(result.getDatas().get(0).getContentHash());
     }
 
     /** 未登录时直接拒绝，不发查询 */
@@ -160,11 +184,12 @@ class KbRagHolderTest {
     }
 
     /**
-     * 删除顺序：先清分块、再删文档。
-     * 反过来一旦分块删除失败，文档已消失而正文还在，检索会继续命中「已删除」的内容。
+     * 删除顺序：先清分块与原始正文、再删文档。
+     * 反过来一旦清理失败，文档已消失而正文还在，检索会继续命中「已删除」的内容；
+     * 原始正文若残留，还会继续占用去重索引，用户无法重新上传同一篇文档。
      */
     @Test
-    void deleteDoc_shouldDeleteChunksBeforeDocument() {
+    void deleteDoc_shouldDeleteChunksAndContentBeforeDocument() {
         KbDocBean data = new KbDocBean();
         data.setIid(100L);
         KbDocBean existing = new KbDocBean();
@@ -173,13 +198,21 @@ class KbRagHolderTest {
         when(kbDocBeanMapper.select(isNull(), any(KbDocBean.class)))
                 .thenReturn(Collections.singletonList(existing));
         when(kbChunkBeanMapper.delete(any(KbChunkBean.class))).thenReturn(2);
+        when(kbDocContentBeanMapper.delete(any(KbDocContentBean.class))).thenReturn(1);
         when(kbDocBeanMapper.delete(any(KbDocBean.class))).thenReturn(1);
 
         holder.deleteDoc("u1", data);
 
+        ArgumentCaptor<KbDocContentBean> contentCaptor =
+                ArgumentCaptor.forClass(KbDocContentBean.class);
+        verify(kbDocContentBeanMapper).delete(contentCaptor.capture());
+        assertEquals(100L, contentCaptor.getValue().getDocIid());
+        assertEquals("u1", contentCaptor.getValue().getLastuser(), "正文删除同样要带归属");
+
         org.mockito.InOrder order = org.mockito.Mockito.inOrder(
-                kbChunkBeanMapper, kbDocBeanMapper);
+                kbChunkBeanMapper, kbDocContentBeanMapper, kbDocBeanMapper);
         order.verify(kbChunkBeanMapper).delete(any(KbChunkBean.class));
+        order.verify(kbDocContentBeanMapper).delete(any(KbDocContentBean.class));
         order.verify(kbDocBeanMapper).delete(any(KbDocBean.class));
     }
 

@@ -1,4 +1,4 @@
-import { onMounted, reactive } from 'vue'
+import { onBeforeUnmount, onMounted, reactive } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { kbRagApi, type KbDoc, type KbSearchResultDto } from '@/api/kbRag'
 import { debug } from '@/utils/debug'
@@ -41,7 +41,19 @@ async function extractTextFromFile(file: File): Promise<string> {
   })
 }
 
+const MAX_FILE_BYTES = 20 * 1024 * 1024
 const MAX_DOC_CHARS = 200000
+const POLL_INTERVAL_MS = 2000
+/** 服务端可直接解析的文本类文件：原样上传，避免浏览器与后端两次解码结果不一致 */
+const SERVER_PARSE_TYPES = new Set(['txt', 'md', 'markdown', 'csv', 'json', 'log'])
+/** 浏览器解析、只提交提取后正文的类型 */
+const CLIENT_PARSE_TYPES = new Set(['pdf', 'docx'])
+const ACTIVE_STATUSES = new Set(['queued', 'chunking', 'embedding'])
+
+function extensionOf(fileName: string): string {
+  const dot = fileName.lastIndexOf('.')
+  return dot < 0 ? '' : fileName.slice(dot + 1).toLowerCase()
+}
 
 export function useIndex() {
   const state = reactive({
@@ -53,6 +65,9 @@ export function useIndex() {
       name: '',
       kbName: '默认知识库',
       content: '',
+      fileName: '',
+      fileType: '',
+      sizeBytes: 0,
     },
     searching: false,
     searchForm: {
@@ -62,87 +77,192 @@ export function useIndex() {
     searchResult: null as KbSearchResultDto | null,
   })
 
+  // 原始 File 不放进 reactive：Vue 的 Proxy 会包裹原生对象，个别浏览器下读文件会失效
+  let pendingFile: File | null = null
+  let pollTimer: ReturnType<typeof setTimeout> | null = null
+  let disposed = false
+  // 连续选择文件时，只接受最后一次解析结果，避免慢解析覆盖新选择
+  let parseToken = 0
+
   onMounted(() => {
     loadDocs()
   })
+  onBeforeUnmount(() => {
+    disposed = true
+    stopPolling()
+  })
 
-  async function loadDocs() {
-    state.docsLoading = true
+  function hasActiveDocs(): boolean {
+    return state.docs.some((doc) => ACTIVE_STATUSES.has(doc.status))
+  }
+
+  function stopPolling() {
+    if (pollTimer) {
+      clearTimeout(pollTimer)
+      pollTimer = null
+    }
+  }
+
+  /** 只在还有处理中的文档时轮询；文档全部就绪/失败后自动停止 */
+  function schedulePoll() {
+    if (disposed || pollTimer || !hasActiveDocs()) {
+      return
+    }
+    pollTimer = setTimeout(async () => {
+      pollTimer = null
+      await loadDocs({ silent: true })
+      // 请求期间组件可能已卸载：不能再安排下一轮
+      if (disposed) return
+      schedulePoll()
+    }, POLL_INTERVAL_MS)
+  }
+
+  async function loadDocs(options: { silent?: boolean } = {}) {
+    if (!options.silent) state.docsLoading = true
     try {
       const { data: res } = await kbRagApi.listDocs()
       if (res.resp_code === 0) {
         state.docs = res.datas ?? []
-      } else {
+        if (hasActiveDocs()) {
+          schedulePoll()
+        } else {
+          stopPolling()
+        }
+      } else if (!options.silent) {
         ElMessage.error(res.resp_msg || '获取文档列表失败')
       }
     } catch (err) {
       debug.error('获取知识库文档列表失败', err)
-      ElMessage.error('获取文档列表失败，请稍后重试')
+      if (!options.silent) {
+        ElMessage.error('获取文档列表失败，请稍后重试')
+      }
     } finally {
-      state.docsLoading = false
+      if (!options.silent) state.docsLoading = false
+    }
+  }
+
+  function resetUploadForm() {
+    parseToken++
+    pendingFile = null
+    state.uploadForm = {
+      name: '',
+      kbName: '默认知识库',
+      content: '',
+      fileName: '',
+      fileType: '',
+      sizeBytes: 0,
     }
   }
 
   function openUploadDialog() {
-    state.uploadForm = { name: '', kbName: '默认知识库', content: '' }
+    resetUploadForm()
     state.uploadDialogVisible = true
   }
 
-  /** 读取本地 txt/md 文本，填入上传弹窗 */
+  function clearSelectedFile(clearAutoName = false) {
+    parseToken++
+    pendingFile = null
+    state.uploadForm.fileName = ''
+    state.uploadForm.fileType = ''
+    state.uploadForm.sizeBytes = 0
+    if (clearAutoName) state.uploadForm.name = ''
+  }
+
+  /** 用户手动粘贴正文：放弃已选文件，避免「文件优先」导致粘贴内容被忽略 */
+  function handleContentInput() {
+    clearSelectedFile()
+  }
+
   async function handleFileChange(event: Event) {
     const input = event.target as HTMLInputElement
     const file = input.files?.[0]
     if (!file) return
-    // 20MB 是文件体积上限；文本量上限（20 万字符）在解析后校验
-    if (file.size > 20 * 1024 * 1024) {
+    input.value = ''
+    if (file.size > MAX_FILE_BYTES) {
       ElMessage.warning('文件过大，单篇最多 20MB')
-      input.value = ''
       return
     }
-    const lower = file.name.toLowerCase()
-    const needsParse = lower.endsWith('.pdf') || lower.endsWith('.docx')
-    if (needsParse) ElMessage.info('正在解析文档…')
+    const extension = extensionOf(file.name)
+    if (!SERVER_PARSE_TYPES.has(extension) && !CLIENT_PARSE_TYPES.has(extension)) {
+      ElMessage.warning('仅支持 txt / md / csv / json / log / pdf / docx 文档')
+      return
+    }
+
+    const token = ++parseToken
+    const autoName = !state.uploadForm.name.trim()
+    state.uploadForm.fileName = file.name
+    state.uploadForm.fileType = extension
+    state.uploadForm.sizeBytes = file.size
+    if (autoName) {
+      state.uploadForm.name = file.name
+    }
+    // 换了文件就必须丢掉上一份正文：否则新文件解析失败时，旧正文会被当成本次输入提交
+    state.uploadForm.content = ''
+
+    if (SERVER_PARSE_TYPES.has(extension)) {
+      // 原文上传：后端统一做编码探测（UTF-8 / GBK）与分块
+      pendingFile = file
+      return
+    }
+
+    pendingFile = null
+    ElMessage.info('正在解析文档…')
     try {
       const text = await extractTextFromFile(file)
+      // 解析期间用户又选了别的文件：丢弃本次结果
+      if (token !== parseToken) return
       if (!text.trim()) {
         ElMessage.warning('未能从文档中提取到文本（可能是扫描件/纯图片 PDF）')
+        clearSelectedFile(autoName)
+        return
       }
       if (text.length > MAX_DOC_CHARS) {
-        ElMessage.warning(`提取文本 ${text.length} 字符，超过单篇 20 万上限，将截断入库`)
-        state.uploadForm.content = text.slice(0, MAX_DOC_CHARS)
-      } else {
-        state.uploadForm.content = text
+        ElMessage.warning(
+          `提取文本 ${text.length} 字符，超过单篇 20 万上限，请拆分后再上传`
+        )
+        clearSelectedFile(autoName)
+        return
       }
-      if (!state.uploadForm.name) {
-        state.uploadForm.name = file.name
-      }
+      state.uploadForm.content = text
     } catch (e) {
-      console.error('文档解析失败:', e)
+      if (token !== parseToken) return
+      debug.error('文档解析失败', e)
       ElMessage.error('文档解析失败，请确认文件未损坏')
+      clearSelectedFile(autoName)
     }
-    input.value = ''
   }
 
   async function submitUpload() {
-    if (!state.uploadForm.name.trim()) {
+    const form = state.uploadForm
+    const name = form.name.trim()
+    if (!name) {
       ElMessage.warning('请填写文档名称')
       return
     }
-    if (!state.uploadForm.content.trim()) {
+    const kbName = form.kbName.trim() || '默认知识库'
+    if (!pendingFile && !form.content.trim()) {
       ElMessage.warning('请选择文件或粘贴文档内容')
       return
     }
+
     state.uploading = true
     try {
-      const { data: res } = await kbRagApi.uploadDoc({
-        name: state.uploadForm.name.trim(),
-        kbName: state.uploadForm.kbName.trim() || '默认知识库',
-        content: state.uploadForm.content,
-      })
+      const { data: res } = pendingFile
+        ? await kbRagApi.uploadFile(pendingFile, { name, kbName })
+        : await kbRagApi.uploadContent({
+            name,
+            kbName,
+            content: form.content,
+            fileType: form.fileType || 'txt',
+            fileName: form.fileName || undefined,
+            sizeBytes: form.sizeBytes || undefined,
+          })
       if (res.resp_code === 0) {
-        ElMessage.success(res.resp_msg || '文档已入库')
+        ElMessage.success(res.resp_msg || '文档已受理，正在后台处理')
         state.uploadDialogVisible = false
-        loadDocs()
+        resetUploadForm()
+        await loadDocs()
+        schedulePoll()
       } else {
         ElMessage.error(res.resp_msg || '上传失败')
       }
@@ -151,6 +271,23 @@ export function useIndex() {
       ElMessage.error('上传失败，请稍后重试')
     } finally {
       state.uploading = false
+    }
+  }
+
+  async function handleRetry(row: KbDoc) {
+    if (!row.iid) return
+    try {
+      const { data: res } = await kbRagApi.retryDoc(row.iid)
+      if (res.resp_code === 0) {
+        ElMessage.success(res.resp_msg || '文档已重新排队')
+        await loadDocs()
+        schedulePoll()
+      } else {
+        ElMessage.error(res.resp_msg || '重试失败')
+      }
+    } catch (err) {
+      debug.error('重试知识库文档失败', err)
+      ElMessage.error('重试失败，请稍后重试')
     }
   }
 
@@ -211,6 +348,56 @@ export function useIndex() {
     return 'info'
   }
 
+  function isActiveDoc(row: KbDoc): boolean {
+    return ACTIVE_STATUSES.has(row.status)
+  }
+
+  function statusLabel(status: string | null | undefined): string {
+    switch (status) {
+      case 'queued':
+        return '排队中'
+      case 'chunking':
+        return '分块中'
+      case 'embedding':
+        return '向量化中'
+      case 'ready':
+        return '就绪'
+      case 'failed':
+        return '失败'
+      default:
+        return '未知'
+    }
+  }
+
+  function statusTagType(
+    status: string | null | undefined
+  ): 'success' | 'warning' | 'danger' | 'info' {
+    switch (status) {
+      case 'ready':
+        return 'success'
+      case 'failed':
+        return 'danger'
+      case 'queued':
+      case 'chunking':
+      case 'embedding':
+        return 'warning'
+      default:
+        return 'info'
+    }
+  }
+
+  function progressOf(row: KbDoc): number {
+    if (row.status === 'ready') return 100
+    const progress = row.progress ?? 0
+    return Math.max(0, Math.min(100, progress))
+  }
+
+  function formatSize(bytes: number | null | undefined): string {
+    if (!bytes || bytes <= 0) return '-'
+    if (bytes >= 1024 * 1024) return `${(bytes / 1024 / 1024).toFixed(1)} MB`
+    return `${Math.max(1, Math.round(bytes / 1024))} KB`
+  }
+
   function formatTime(value: string | number | null | undefined): string {
     if (value === null || value === undefined || value === '') return '-'
     const parsed = new Date(String(value).replace(/\//g, '-').replace(' ', 'T'))
@@ -224,10 +411,17 @@ export function useIndex() {
     loadDocs,
     openUploadDialog,
     handleFileChange,
+    handleContentInput,
     submitUpload,
+    handleRetry,
     handleDelete,
     submitSearch,
     scoreTagType,
+    isActiveDoc,
+    statusLabel,
+    statusTagType,
+    progressOf,
+    formatSize,
     formatTime,
   }
 }

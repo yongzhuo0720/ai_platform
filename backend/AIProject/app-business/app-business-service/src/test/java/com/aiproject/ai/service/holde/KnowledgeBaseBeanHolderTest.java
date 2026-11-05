@@ -4,9 +4,11 @@ import com.aiproject.ai.permission.bean.MyUserBaseDb;
 import com.aiproject.ai.permission.holde.MyUserBaseDbHolder;
 import com.aiproject.ai.service.bean.KbChunkBean;
 import com.aiproject.ai.service.bean.KbDocBean;
+import com.aiproject.ai.service.bean.KbDocContentBean;
 import com.aiproject.ai.service.bean.KnowledgeBaseBean;
 import com.aiproject.ai.service.mapper.KbChunkBeanMapper;
 import com.aiproject.ai.service.mapper.KbDocBeanMapper;
+import com.aiproject.ai.service.mapper.KbDocContentBeanMapper;
 import com.aiproject.ai.service.mapper.KnowledgeBaseBeanMapper;
 import com.heneng.hnsp.common.croe.model.Result;
 import com.heneng.hnsp.common.db.utils.PageRequest;
@@ -64,6 +66,9 @@ class KnowledgeBaseBeanHolderTest {
 
     @Mock
     KbChunkBeanMapper<KbChunkBean> kbChunkBeanMapper;
+
+    @Mock
+    KbDocContentBeanMapper<KbDocContentBean> kbDocContentBeanMapper;
 
     @InjectMocks
     KnowledgeBaseBeanHolder holder;
@@ -237,6 +242,7 @@ class KnowledgeBaseBeanHolderTest {
         when(knowledgeBaseBeanMapper.select(isNull(), any(KnowledgeBaseBean.class)))
                 .thenReturn(Collections.singletonList(target));
         when(kbChunkBeanMapper.delete(any(KbChunkBean.class))).thenReturn(3);
+        when(kbDocContentBeanMapper.delete(any(KbDocContentBean.class))).thenReturn(2);
         when(kbDocBeanMapper.delete(any(KbDocBean.class))).thenReturn(2);
         when(knowledgeBaseBeanMapper.delete(any(KnowledgeBaseBean.class))).thenReturn(1);
 
@@ -257,9 +263,17 @@ class KnowledgeBaseBeanHolderTest {
         assertEquals("研发知识库", docCaptor.getValue().getKbName());
         assertEquals("u1", docCaptor.getValue().getLastuser());
 
-        // 先清分块、再清文档、最后删权限记录：中途失败时主记录仍在，可重试
-        InOrder order = inOrder(kbChunkBeanMapper, kbDocBeanMapper, knowledgeBaseBeanMapper);
+        ArgumentCaptor<KbDocContentBean> contentCaptor =
+                ArgumentCaptor.forClass(KbDocContentBean.class);
+        verify(kbDocContentBeanMapper).delete(contentCaptor.capture());
+        assertEquals("研发知识库", contentCaptor.getValue().getKbName());
+        assertEquals("u1", contentCaptor.getValue().getLastuser());
+
+        // 先清分块与原始正文、再清文档、最后删权限记录：中途失败时主记录仍在，可重试
+        InOrder order = inOrder(kbChunkBeanMapper, kbDocContentBeanMapper,
+                kbDocBeanMapper, knowledgeBaseBeanMapper);
         order.verify(kbChunkBeanMapper).delete(any(KbChunkBean.class));
+        order.verify(kbDocContentBeanMapper).delete(any(KbDocContentBean.class));
         order.verify(kbDocBeanMapper).delete(any(KbDocBean.class));
         order.verify(knowledgeBaseBeanMapper).delete(any(KnowledgeBaseBean.class));
     }
