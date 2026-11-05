@@ -1,5 +1,8 @@
 package com.aiproject.ai.service.controller;
 
+import com.aiproject.ai.service.agent.AgentRunner;
+import com.aiproject.ai.service.agent.dto.AgentRunDetail;
+import com.aiproject.ai.service.agent.dto.AgentRunRequest;
 import com.aiproject.ai.service.bean.AgentBean;
 import com.aiproject.ai.service.holde.AgentConfigHolder;
 import com.heneng.hnsp.common.croe.model.Result;
@@ -30,6 +33,9 @@ public class AgentBeanController {
     @Autowired
     AgentConfigHolder agentConfigHolder;
 
+    @Autowired
+    AgentRunner agentRunner;
+
     @ApiOperation(value = "配置列表", httpMethod = "POST")
     @PostMapping("/list")
     public Result<List<AgentBean>> list(@LoginUserId String uid) {
@@ -55,5 +61,19 @@ public class AgentBeanController {
     public Result<Boolean> delete(@LoginUserId String uid,
                                   @RequestBody(required = false) AgentBean data) {
         return agentConfigHolder.delete(uid, data == null ? null : data.getIid());
+    }
+
+    /**
+     * 同步执行一次 Agent 运行，返回运行详情（汇总 + 步骤明细）。
+     *
+     * <p>本子阶段用同步返回而不是 SSE：先把 tool_calls 循环、终止条件与追踪落库
+     * 做对并单测覆盖；流式步骤事件是下一步的增强，不改变这里的编排语义。</p>
+     */
+    @ApiOperation(value = "运行 Agent", httpMethod = "POST", notes = "同步执行工具调用循环，返回运行详情")
+    @PostMapping("/run")
+    public Result<AgentRunDetail> run(@LoginUserId String uid,
+                                      @RequestBody(required = false) AgentRunRequest data) {
+        return agentRunner.run(uid, data == null ? null : data.getAgentKey(),
+                data == null ? null : data.getQuestion());
     }
 }

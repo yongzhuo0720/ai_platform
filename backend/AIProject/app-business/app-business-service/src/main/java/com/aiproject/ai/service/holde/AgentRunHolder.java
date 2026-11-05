@@ -84,4 +84,69 @@ public class AgentRunHolder {
         detail.setSteps(steps);
         return Result.succeed(detail, "查询成功");
     }
+
+    /**
+     * 供执行循环调用：落一条 running 运行记录。
+     * 归属由调用方（已校验过 Agent 归属）传入，这里不再重复查库。
+     */
+    public void start(String uid, Long agentIid, String question, String runKey) {
+        AgentRunBean run = new AgentRunBean();
+        run.setRunKey(runKey);
+        run.setAgentIid(agentIid);
+        run.setStatus("running");
+        run.setQuestion(question);
+        run.setIterations(0);
+        run.setPromptTokens(0L);
+        run.setCompletionTokens(0L);
+        run.setTotalTokens(0L);
+        run.setCostCents(0L);
+        run.setStartedAt(System.currentTimeMillis());
+        run.setLastuser(uid);
+        runMapper.install(run);
+    }
+
+    /** 逐步落追踪明细；工具参数与结果已在执行器侧做过截断 */
+    public void addStep(String uid, String runKey, int stepNo, int iteration,
+                        String stepType, String toolName, String args, String result,
+                        String status, long promptTokens, long completionTokens,
+                        long costCents, long latencyMs, String error, String requestId) {
+        AgentStepBean step = new AgentStepBean();
+        step.setRunKey(runKey);
+        step.setStepNo(stepNo);
+        step.setIteration(iteration);
+        step.setStepType(stepType);
+        step.setToolName(toolName);
+        step.setToolArgs(args);
+        step.setToolResult(result);
+        step.setStatus(status);
+        step.setPromptTokens(promptTokens);
+        step.setCompletionTokens(completionTokens);
+        step.setCostCents(costCents);
+        step.setLatencyMs(latencyMs);
+        step.setErrorMessage(error);
+        step.setRequestId(requestId);
+        step.setLastuser(uid);
+        stepMapper.install(step);
+    }
+
+    /** 收尾：只 SET 汇总字段，where 带 runKey + 归属 */
+    public void finish(String uid, String runKey, String status, int iterations,
+                       long prompt, long completion, long cost, long durationMs,
+                       String answer, String error) {
+        AgentRunBean patch = new AgentRunBean();
+        patch.setStatus(status);
+        patch.setIterations(iterations);
+        patch.setPromptTokens(prompt);
+        patch.setCompletionTokens(completion);
+        patch.setTotalTokens(prompt + completion);
+        patch.setCostCents(cost);
+        patch.setFinishedAt(System.currentTimeMillis());
+        patch.setDurationMs(durationMs);
+        patch.setAnswer(answer);
+        patch.setErrorMessage(error);
+        AgentRunBean where = new AgentRunBean();
+        where.setRunKey(runKey);
+        where.setLastuser(uid);
+        runMapper.update(patch, where);
+    }
 }

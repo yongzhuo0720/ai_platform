@@ -76,4 +76,8 @@ public class AgentRunBean extends DbEntityBase {
     @SqlColumn()
     @ApiModelProperty("总耗时（毫秒）")
     Long durationMs;
+
+    @SqlColumn(method = "text")
+    @ApiModelProperty("最终回答")
+    String answer;
 }

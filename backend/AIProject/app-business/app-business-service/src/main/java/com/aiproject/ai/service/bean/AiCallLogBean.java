@@ -115,4 +115,16 @@ public class AiCallLogBean extends DbEntityBase {
     @SqlColumn()
     @ApiModelProperty("全链路请求ID")
     String requestId;
+
+    /**
+     * Agent 运行业务键。普通网关调用为空；Agent 编排里的每次模型调用都会带上，
+     * 让已有的治理看板可以按 runKey 聚合成本，不必另起一套计价表。
+     */
+    @SqlColumn()
+    @ApiModelProperty("关联 Agent 运行业务键")
+    String runKey;
+
+    @SqlColumn()
+    @ApiModelProperty("关联 Agent 步骤序号")
+    Integer stepNo;
 }

@@ -152,6 +152,36 @@ class AgentConfigHolderTest {
     }
 
     @Test
+    void create_shouldRejectUnknownPermissionType() {
+        AgentBean data = request("助手");
+        data.setPermissionType("everyone_can_see");
+        Result<AgentBean> result = holder.create(UID, data);
+        assertNull(result.getDatas());
+        assertTrue(result.getResp_msg().contains("可见性"));
+        verify(configMapper, never()).install(any(AgentBean.class));
+    }
+
+    @Test
+    void create_shouldRejectTooManyIterations() {
+        AgentBean data = request("助手");
+        data.setMaxIterations(999);
+        Result<AgentBean> result = holder.create(UID, data);
+        assertNull(result.getDatas());
+        assertTrue(result.getResp_msg().contains("迭代步数"));
+    }
+
+    @Test
+    void update_shouldRejectHugeTokenBudgetBeforeTouchingDb() {
+        AgentBean data = request("助手");
+        data.setIid(7L);
+        data.setTokenBudget(99999999L);
+        Result<Boolean> result = holder.update(UID, data);
+        assertEquals(Boolean.FALSE, result.getDatas());
+        assertTrue(result.getResp_msg().contains("Token 预算"));
+        verify(configMapper, never()).select(any(), any(AgentBean.class));
+    }
+
+    @Test
     void anonymous_shouldBeRejectedOnEveryEntry() {
         assertNull(holder.list(null).getDatas());
         assertNull(holder.create(null, request("助手")).getDatas());

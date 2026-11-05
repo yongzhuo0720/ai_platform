@@ -155,6 +155,22 @@ public class AgentToolHolder {
         return Result.succeed(true, "删除成功");
     }
 
+    /**
+     * 供执行循环读取工具定义。与 {@link #list} 的区别：不做分页、不返回 Result，
+     * 但仍带归属校验——不能把别人 Agent 的工具下发给模型。
+     */
+    public List<AgentToolBean> listForRun(String uid, Long agentIid) {
+        if (AgentConfigHolder.blank(uid) || agentIid == null || agentIid <= 0
+                || !agentOwned(uid, agentIid)) {
+            return new ArrayList<AgentToolBean>();
+        }
+        AgentToolBean where = new AgentToolBean();
+        where.setAgentIid(agentIid);
+        where.setLastuser(uid);
+        List<AgentToolBean> list = toolMapper.select(null, where);
+        return list == null ? new ArrayList<AgentToolBean>() : list;
+    }
+
     /** 工具必须挂在自己的 Agent 下，不能给别人的 Agent 注册工具 */
     private boolean agentOwned(String uid, Long agentIid) {
         AgentBean where = new AgentBean();

@@ -9,7 +9,10 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 import java.util.UUID;
 
 /**
@@ -30,6 +33,13 @@ public class AgentConfigHolder {
     static final int DEFAULT_MAX_ITERATIONS = 8;
     static final long DEFAULT_TOKEN_BUDGET = 20000L;
     static final long DEFAULT_TOOL_TIMEOUT_MS = 8000L;
+    /** 执行护栏上限：不做这层校验，前端传一个超大值就能绕开编排里的预算与超时 */
+    static final int MAX_ITERATIONS_LIMIT = 20;
+    static final long TOKEN_BUDGET_LIMIT = 1000000L;
+    static final long TOOL_TIMEOUT_MIN_MS = 1000L;
+    static final long TOOL_TIMEOUT_MAX_MS = 120000L;
+    private static final Set<String> PERMISSION_TYPES = new HashSet<String>(
+            Arrays.asList("public", "only_me", "partial_invisible"));
 
     @Autowired
     AgentBeanMapper<AgentBean> configMapper;
@@ -63,6 +73,10 @@ public class AgentConfigHolder {
         }
         if (data.getSystemPrompt() != null && data.getSystemPrompt().length() > MAX_PROMPT_CHARS) {
             return Result.failed(null, "System Prompt 最多 " + MAX_PROMPT_CHARS + " 个字符");
+        }
+        String settingError = validateSettings(data);
+        if (settingError != null) {
+            return Result.failed(null, settingError);
         }
 
         // install 不回填 iid，也不能信任前端传来的归属/业务键，全部由服务端重新确定
@@ -113,6 +127,10 @@ public class AgentConfigHolder {
         }
         if (data.getSystemPrompt() != null && data.getSystemPrompt().length() > MAX_PROMPT_CHARS) {
             return Result.failed(false, "System Prompt 最多 " + MAX_PROMPT_CHARS + " 个字符");
+        }
+        String settingError = validateSettings(data);
+        if (settingError != null) {
+            return Result.failed(false, settingError);
         }
         if (!owned(uid, data.getIid())) {
             return Result.failed(false, "Agent 不存在或不属于当前用户");
@@ -169,6 +187,34 @@ public class AgentConfigHolder {
         return list == null || list.isEmpty() ? null : list.get(0);
     }
 
+    /**
+     * 可见性枚举与执行护栏的范围校验。
+     *
+     * <p>{@code permissionType} 必须走白名单：写错的值在可见性解析里会被
+     * fail-closed 判成「不可见」，用户只会看到 Agent 凭空消失却不知道原因。
+     * 数值护栏同理——它们不是展示用的建议值，而是编排器真正会用的上限。</p>
+     */
+    private String validateSettings(AgentBean data) {
+        if (!blank(data.getPermissionType())
+                && !PERMISSION_TYPES.contains(data.getPermissionType().trim())) {
+            return "不支持的可见性类型：" + data.getPermissionType();
+        }
+        if (data.getMaxIterations() != null
+                && (data.getMaxIterations() < 1 || data.getMaxIterations() > MAX_ITERATIONS_LIMIT)) {
+            return "最大迭代步数需在 1~" + MAX_ITERATIONS_LIMIT + " 之间";
+        }
+        if (data.getTokenBudget() != null
+                && (data.getTokenBudget() < 1 || data.getTokenBudget() > TOKEN_BUDGET_LIMIT)) {
+            return "Token 预算需在 1~" + TOKEN_BUDGET_LIMIT + " 之间";
+        }
+        if (data.getToolTimeoutMs() != null
+                && (data.getToolTimeoutMs() < TOOL_TIMEOUT_MIN_MS
+                    || data.getToolTimeoutMs() > TOOL_TIMEOUT_MAX_MS)) {
+            return "单工具超时需在 " + TOOL_TIMEOUT_MIN_MS + "~" + TOOL_TIMEOUT_MAX_MS + " 毫秒之间";
+        }
+        return null;
+    }
+
     private boolean owned(String uid, Long iid) {
         AgentBean where = new AgentBean();
         where.setIid(iid);
@@ -177,7 +223,8 @@ public class AgentConfigHolder {
         return list != null && !list.isEmpty();
     }
 
-    static boolean blank(String value) {
+    /** 供同层 Holder 与 agent 编排包复用的空值判断 */
+    public static boolean blank(String value) {
         return value == null || value.trim().isEmpty();
     }
 }

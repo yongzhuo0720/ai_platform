@@ -343,7 +343,7 @@ public class TableSchemaInitializer implements ApplicationListener<ApplicationRe
                 + "\"question\" text, \"iterations\" int4, \"promptTokens\" int8, "
                 + "\"completionTokens\" int8, \"totalTokens\" int8, \"costCents\" int8, "
                 + "\"errorMessage\" text, \"requestId\" varchar(64), \"startedAt\" int8, "
-                + "\"finishedAt\" int8, \"durationMs\" int8, "
+                + "\"finishedAt\" int8, \"durationMs\" int8, \"answer\" text, "
                 + "\"iid\" bigserial NOT NULL PRIMARY KEY, \"lastuser\" varchar(255), "
                 + "\"createtime\" timestamp DEFAULT now(), \"updatetime\" timestamp, "
                 + "\"enable\" boolean DEFAULT true, \"app\" varchar(255))");
@@ -365,6 +365,13 @@ public class TableSchemaInitializer implements ApplicationListener<ApplicationRe
                 + "\"enable\" boolean DEFAULT true, \"app\" varchar(255))");
         execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_agentstep_run_step "
                 + "ON agentstepbean (\"runKey\", \"stepNo\")");
+
+        // 已有表加列必须显式 ALTER：CREATE TABLE IF NOT EXISTS 对已存在的表不补列
+        execute("ALTER TABLE agentrunbean ADD COLUMN IF NOT EXISTS \"answer\" text");
+        execute("ALTER TABLE aicalllogbean ADD COLUMN IF NOT EXISTS \"runKey\" varchar(64)");
+        execute("ALTER TABLE aicalllogbean ADD COLUMN IF NOT EXISTS \"stepNo\" int4");
+        execute("CREATE INDEX IF NOT EXISTS idx_aicalllog_runkey "
+                + "ON aicalllogbean (\"runKey\")");
     }
 
     /**

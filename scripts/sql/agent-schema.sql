@@ -72,6 +72,7 @@ CREATE TABLE IF NOT EXISTS agentrunbean (
     "startedAt" int8,
     "finishedAt" int8,
     "durationMs" int8,
+    "answer" text,
     "iid" bigserial NOT NULL PRIMARY KEY,
     "lastuser" varchar(255),
     "createtime" timestamp DEFAULT now(),
@@ -115,9 +116,13 @@ CREATE TABLE IF NOT EXISTS agentstepbean (
 CREATE UNIQUE INDEX IF NOT EXISTS idx_agentstep_run_step
     ON agentstepbean ("runKey", "stepNo");
 
-COMMIT;
+-- Agent 编排里的每次模型调用都挂到 runKey / stepNo 上，
+-- 治理看板据此按运行聚合成本（复用已有计价，不另起一套表）。
+-- 注意：这是给「已存在的表」加列，必须写 ALTER，CREATE TABLE IF NOT EXISTS 不补列。
+-- agentrunbean 若由上一子阶段建过，同样需要补丁（answer 是子阶段 2 新增列）。
+ALTER TABLE agentrunbean ADD COLUMN IF NOT EXISTS "answer" text;
+ALTER TABLE aicalllogbean ADD COLUMN IF NOT EXISTS "runKey" varchar(64);
+ALTER TABLE aicalllogbean ADD COLUMN IF NOT EXISTS "stepNo" int4;
+CREATE INDEX IF NOT EXISTS idx_aicalllog_runkey ON aicalllogbean ("runKey");
 
--- 后续子阶段 2 才需要（本脚本暂不执行）：
--- ALTER TABLE aicalllogbean ADD COLUMN IF NOT EXISTS "runKey" varchar(64);
--- ALTER TABLE aicalllogbean ADD COLUMN IF NOT EXISTS "stepNo" int4;
--- CREATE INDEX IF NOT EXISTS idx_aicalllog_runkey ON aicalllogbean ("runKey");
+COMMIT;
