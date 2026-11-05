@@ -30,6 +30,13 @@ class AiUpstreamStub implements AutoCloseable {
     final AtomicInteger streamedChunks = new AtomicInteger();
     final CountDownLatch clientGone = new CountDownLatch(1);
 
+    /**
+     * 模拟「上游已受理并吐出一帧，然后连接异常中断」：
+     * 声明一个远大于实际写入的 Content-Length 后关闭连接，
+     * 客户端读到不足长度时会抛 Premature EOF，而不是把 EOF 当成正常结束。
+     */
+    volatile boolean failSseMidStream;
+
     AiUpstreamStub() throws Exception {
         server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
         server.createContext("/", exchange -> {
@@ -47,6 +54,10 @@ class AiUpstreamStub implements AutoCloseable {
                 calls.incrementAndGet();
                 if (slowSse) {
                     writeSlowSse(exchange);
+                    return;
+                }
+                if (failSseMidStream) {
+                    writePartialSseThenFail(exchange);
                     return;
                 }
                 byte[] response = responseBody.getBytes(StandardCharsets.UTF_8);
@@ -81,6 +92,16 @@ class AiUpstreamStub implements AutoCloseable {
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
         }
+    }
+
+    /** 吐出一帧正文后提前关闭；声明的长度大于实际字节，客户端会看到读取异常而非正常 EOF */
+    private void writePartialSseThenFail(com.sun.net.httpserver.HttpExchange exchange) throws IOException {
+        exchange.getResponseHeaders().set("Content-Type", "text/event-stream");
+        exchange.sendResponseHeaders(200, 128 * 1024);
+        exchange.getResponseBody().write(
+                "data: {\"choices\":[{\"delta\":{\"content\":\"partial\"}}]}\n\n"
+                        .getBytes(StandardCharsets.UTF_8));
+        exchange.getResponseBody().flush();
     }
 
     String baseUrl() {

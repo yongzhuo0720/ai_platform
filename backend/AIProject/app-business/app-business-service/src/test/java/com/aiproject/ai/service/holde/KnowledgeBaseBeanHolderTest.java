@@ -2,13 +2,19 @@ package com.aiproject.ai.service.holde;
 
 import com.aiproject.ai.permission.bean.MyUserBaseDb;
 import com.aiproject.ai.permission.holde.MyUserBaseDbHolder;
+import com.aiproject.ai.service.bean.KbChunkBean;
+import com.aiproject.ai.service.bean.KbDocBean;
 import com.aiproject.ai.service.bean.KnowledgeBaseBean;
+import com.aiproject.ai.service.mapper.KbChunkBeanMapper;
+import com.aiproject.ai.service.mapper.KbDocBeanMapper;
 import com.aiproject.ai.service.mapper.KnowledgeBaseBeanMapper;
 import com.heneng.hnsp.common.croe.model.Result;
 import com.heneng.hnsp.common.db.utils.PageRequest;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
+import org.mockito.InOrder;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
@@ -22,6 +28,9 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.isNull;
+import static org.mockito.Mockito.inOrder;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 /**
@@ -49,6 +58,12 @@ class KnowledgeBaseBeanHolderTest {
 
     @Mock
     KnowledgeBaseMemberHolder knowledgeBaseMemberHolder;
+
+    @Mock
+    KbDocBeanMapper<KbDocBean> kbDocBeanMapper;
+
+    @Mock
+    KbChunkBeanMapper<KbChunkBean> kbChunkBeanMapper;
 
     @InjectMocks
     KnowledgeBaseBeanHolder holder;
@@ -206,5 +221,100 @@ class KnowledgeBaseBeanHolderTest {
 
         Result<List<KnowledgeBaseBean>> result = holder.queryList("admin", new KnowledgeBaseBean());
         assertEquals(1, result.getDatas().size());
+    }
+
+    /**
+     * 删除知识库必须级联清理本地 RAG。
+     * 修复前只删 knowledgebasebean，kbdocbean / kbchunkbean 原样留下：
+     * 数据库里看不到这些文档的入口，但它们仍参与检索，属于「删不掉的残留数据」。
+     */
+    @Test
+    void delete_shouldCascadeLocalDocumentsByOwner() {
+        KnowledgeBaseBean target = record("kb-1", "u1", "public", "[]", "[]");
+        target.setIid(1L);
+        target.setName("研发知识库");
+        when(myUserBaseDbHolder.queryUserByUid("u1")).thenReturn(user("u1", 5L, "dept01"));
+        when(knowledgeBaseBeanMapper.select(isNull(), any(KnowledgeBaseBean.class)))
+                .thenReturn(Collections.singletonList(target));
+        when(kbChunkBeanMapper.delete(any(KbChunkBean.class))).thenReturn(3);
+        when(kbDocBeanMapper.delete(any(KbDocBean.class))).thenReturn(2);
+        when(knowledgeBaseBeanMapper.delete(any(KnowledgeBaseBean.class))).thenReturn(1);
+
+        KnowledgeBaseBean request = new KnowledgeBaseBean();
+        request.setKbId("kb-1");
+        Result<Boolean> result = holder.delete("u1", request);
+
+        assertTrue(Boolean.TRUE.equals(result.getDatas()));
+        assertTrue(result.getResp_msg().contains("2 篇本地文档"));
+
+        ArgumentCaptor<KbChunkBean> chunkCaptor = ArgumentCaptor.forClass(KbChunkBean.class);
+        verify(kbChunkBeanMapper).delete(chunkCaptor.capture());
+        assertEquals("研发知识库", chunkCaptor.getValue().getKbName());
+        assertEquals("u1", chunkCaptor.getValue().getLastuser());
+
+        ArgumentCaptor<KbDocBean> docCaptor = ArgumentCaptor.forClass(KbDocBean.class);
+        verify(kbDocBeanMapper).delete(docCaptor.capture());
+        assertEquals("研发知识库", docCaptor.getValue().getKbName());
+        assertEquals("u1", docCaptor.getValue().getLastuser());
+
+        // 先清分块、再清文档、最后删权限记录：中途失败时主记录仍在，可重试
+        InOrder order = inOrder(kbChunkBeanMapper, kbDocBeanMapper, knowledgeBaseBeanMapper);
+        order.verify(kbChunkBeanMapper).delete(any(KbChunkBean.class));
+        order.verify(kbDocBeanMapper).delete(any(KbDocBean.class));
+        order.verify(knowledgeBaseBeanMapper).delete(any(KnowledgeBaseBean.class));
+    }
+
+    /** 管理员代删他人知识库时，级联条件必须用记录的所有者，而不是管理员的 uid */
+    @Test
+    void delete_shouldCascadeWithRecordOwnerWhenAdminDeletes() {
+        KnowledgeBaseBean target = record("kb-1", "u2", "public", "[]", "[]");
+        target.setIid(1L);
+        target.setName("客服知识库");
+        when(myUserBaseDbHolder.queryUserByUid("admin")).thenReturn(user("admin", 99999L, "dept00"));
+        when(knowledgeBaseBeanMapper.select(isNull(), any(KnowledgeBaseBean.class)))
+                .thenReturn(Collections.singletonList(target));
+        when(kbChunkBeanMapper.delete(any(KbChunkBean.class))).thenReturn(1);
+        when(kbDocBeanMapper.delete(any(KbDocBean.class))).thenReturn(1);
+        when(knowledgeBaseBeanMapper.delete(any(KnowledgeBaseBean.class))).thenReturn(1);
+
+        KnowledgeBaseBean request = new KnowledgeBaseBean();
+        request.setKbId("kb-1");
+        holder.delete("admin", request);
+
+        ArgumentCaptor<KbDocBean> docCaptor = ArgumentCaptor.forClass(KbDocBean.class);
+        verify(kbDocBeanMapper).delete(docCaptor.capture());
+        assertEquals("u2", docCaptor.getValue().getLastuser(),
+                "管理员删除时应清理原所有者的本地文档");
+    }
+
+    /** 级联清理失败时必须保留主记录：否则用户既看不到文档，也无法重试清理 */
+    @Test
+    void delete_shouldKeepRecordWhenCascadeFails() {
+        KnowledgeBaseBean target = record("kb-1", "u1", "public", "[]", "[]");
+        target.setIid(1L);
+        target.setName("研发知识库");
+        when(myUserBaseDbHolder.queryUserByUid("u1")).thenReturn(user("u1", 5L, "dept01"));
+        when(knowledgeBaseBeanMapper.select(isNull(), any(KnowledgeBaseBean.class)))
+                .thenReturn(Collections.singletonList(target));
+        when(kbChunkBeanMapper.delete(any(KbChunkBean.class)))
+                .thenThrow(new RuntimeException("db down"));
+
+        KnowledgeBaseBean request = new KnowledgeBaseBean();
+        request.setKbId("kb-1");
+        Result<Boolean> result = holder.delete("u1", request);
+
+        assertFalse(Boolean.TRUE.equals(result.getDatas()));
+        assertTrue(result.getResp_msg().contains("清理"));
+        verify(knowledgeBaseBeanMapper, never()).delete(any(KnowledgeBaseBean.class));
+    }
+
+    /** 没有任何定位条件时不能直接透传删除：Mapper 会把空条件当成全表删除 */
+    @Test
+    void delete_shouldRejectEmptyCondition() {
+        Result<Boolean> result = holder.delete("u1", new KnowledgeBaseBean());
+
+        assertFalse(Boolean.TRUE.equals(result.getDatas()));
+        verify(knowledgeBaseBeanMapper, never()).delete(any(KnowledgeBaseBean.class));
+        verify(knowledgeBaseBeanMapper, never()).select(isNull(), any(KnowledgeBaseBean.class));
     }
 }

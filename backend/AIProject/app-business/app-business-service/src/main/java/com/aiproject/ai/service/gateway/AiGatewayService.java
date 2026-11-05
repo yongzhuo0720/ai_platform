@@ -116,6 +116,9 @@ public class AiGatewayService {
     @Autowired
     AiApiTokenHolder apiTokenHolder;
 
+    @Autowired
+    AiIdempotencyGuard idempotencyGuard;
+
     /**
      * 全链路请求 ID。
      *
@@ -209,6 +212,16 @@ public class AiGatewayService {
         if (endpoint.contains("..") || endpoint.toLowerCase().contains("%2e")) {
             writeError(response, HttpServletResponse.SC_BAD_REQUEST,
                     "invalid_endpoint", "非法的接口路径");
+            return;
+        }
+        // 只放行前端实际使用的 Dify 接口：服务端持有的是应用/数据集密钥，
+        // 不能因为「路径能拼出来」就把 Dify 的整棵 API 树开放给任意登录用户。
+        if (!DifyEndpointPolicy.isAllowed(module, method, endpoint)) {
+            String message = "该接口路径不允许通过 AI 网关访问";
+            writeError(response, HttpServletResponse.SC_FORBIDDEN,
+                    "upstream_path_forbidden", message);
+            record(userId, module, endpoint, method, "failed",
+                    HttpServletResponse.SC_FORBIDDEN, null, start, message, clientIp(request));
             return;
         }
 
@@ -859,6 +872,23 @@ public class AiGatewayService {
         Relayed relayed = new Relayed();
         // 同样提到 try 外：中断时已解析到的模型名、会话 ID 和部分用量仍要记进审计
         AiGatewayUsageParser parser = new AiGatewayUsageParser();
+        // 写请求的幂等占位必须在上游调用之前取得；拿不到占位时全额释放预扣
+        AiIdempotencyGuard.Acquisition idempotency =
+                idempotencyGuard.acquire(userId, module, request);
+        if (idempotency.isRejected()) {
+            writeError(response, idempotency.getHttpStatus(),
+                    idempotency.getCode(), idempotency.getMessage());
+            record(userId, module, auditEndpoint, method,
+                    idempotency.getHttpStatus() == 409 ? "blocked" : "failed",
+                    idempotency.getHttpStatus(), null, start, idempotency.getMessage(), clientIp);
+            if (reservation != null && reservation.isActive()) {
+                guard.settle(reservation, 0L);
+            }
+            return;
+        }
+        AiIdempotencyGuard.Lease idempotencyLease = idempotency.getLease();
+        // 响应是否为 SSE，提到 try 外供 catch 里的计费判断使用
+        boolean sseResponse = false;
         try {
             String target = config.getApiUrl() + "/" + upstreamEndpoint;
             String query = request.getQueryString();
@@ -914,6 +944,7 @@ public class AiGatewayService {
 
             boolean sse = upstreamType != null
                     && upstreamType.toLowerCase().contains("text/event-stream");
+            sseResponse = sse;
             if (sse) {
                 response.setHeader("Cache-Control", "no-cache");
                 response.setHeader("X-Accel-Buffering", "no");
@@ -935,14 +966,18 @@ public class AiGatewayService {
                 relayBody(upstream, response.getOutputStream(), parser, relayed);
             }
 
-            boolean failed = upstreamStatus >= 400 || parser.getErrorMessage() != null;
+            // 上游提前断流时只会看到 EOF：HTTP 200、没有 error 帧、也没有 usage。
+            // 不把这种流判成失败，用户就能靠「断开上游」白拿已经生成的内容。
+            boolean truncatedStream = sseResponse && !parser.isStreamCompleted()
+                    && parser.getTotalTokens() == null && relayed.bytes > 0;
+            boolean failed = upstreamStatus >= 400 || parser.getErrorMessage() != null
+                    || truncatedStream;
             String status = failed ? "failed" : "success";
             String error = parser.getErrorMessage();
             if (failed && error == null) {
-                error = "上游返回 HTTP " + upstreamStatus;
+                error = truncatedStream
+                        ? "上游流式响应提前结束" : "上游返回 HTTP " + upstreamStatus;
             }
-            record(userId, module, auditEndpoint, method, status, upstreamStatus, parser,
-                    start, error, clientIp);
 
             // 2026-10-29：失败请求不再计入配额。
             // 修复前这里完全没看 failed——只要上游响应里出现过 usage 字段就照扣，
@@ -958,10 +993,25 @@ public class AiGatewayService {
                 if (reservation == null || !reservation.isActive()) {
                     guard.addTokens(userId, module, actualTokens);
                 }
+            } else if (failed && parser.getTotalTokens() == null && sseResponse
+                    && shouldBillPartialOutput(relayed, upstreamStatus, true, false)
+                    && reservation != null && reservation.isActive()) {
+                // 流已经吐出一部分正文后才失败（上游错误帧、连接被重置、超时）：
+                // 上游确实生成过内容，不能因为「没拿到最终 usage」就全额退款。
+                // 非 SSE 的 200 错误体不走这里——那种响应通常一个字都没生成。
+                billable = true;
+                actualTokens = reservation.getTokens();
+                parser.markBilledTokens(actualTokens);
+                log.info("[AiGateway] 上游中途失败，按预扣值计费: uid={}, module={}, relayedBytes={}, tokens={}",
+                        userId, module, relayed.bytes, actualTokens);
             } else if (failed && parser.getTotalTokens() != null) {
                 log.warn("[AiGateway] 上游失败，本次用量不计入配额: uid={}, module={}, tokens={}, httpStatus={}",
                         userId, module, parser.getTotalTokens(), upstreamStatus);
             }
+
+            // 放在计费判断之后：按预扣值计费时，审计里的 tokens 必须等于真正扣掉的额度
+            record(userId, module, auditEndpoint, method, status, upstreamStatus, parser,
+                    start, error, clientIp);
         } catch (MaxUploadSizeExceededException e) {
             // 分块上传没有声明长度，躲得过上面的预检，只能在这里接住。
             // 关键是不能让它落到兜底 catch 写成 502「上游错误」：
@@ -998,14 +1048,16 @@ public class AiGatewayService {
             // SSE 的 usage 只在最后一帧（Dify 的 message_end）里给，中断时拿不到真实值，
             // 因此按预扣值结算：多退少补都省掉，至少不退回零。
             // 一个字节都没转发出去就断开的（比如刚连上就关页面）仍然全额释放。
-            if (aborted && relayed.bytes > 0 && !billable
+            // 2026-11-05：同一规则扩展到「非客户端原因的中途失败」——上游 accepted
+            // 之后连接重置/读超时，只要已有正文送出，同样是真实消耗，不能全额退款。
+            if (!billable && shouldBillPartialOutput(relayed, upstreamStatus, sseResponse, aborted)
                     && reservation != null && reservation.isActive()) {
                 billable = true;
                 actualTokens = reservation.getTokens();
                 parser.markBilledTokens(actualTokens);
                 billedByReserve = true;
-                log.info("[AiGateway] 客户端中断，按预扣值计费: uid={}, module={}, relayedBytes={}, tokens={}",
-                        userId, module, relayed.bytes, actualTokens);
+                log.info("[AiGateway] 响应中途失败，按预扣值计费: uid={}, module={}, aborted={}, relayedBytes={}, tokens={}",
+                        userId, module, aborted, relayed.bytes, actualTokens);
             }
 
             // 只有「按预扣值计费」这一条路径把 parser 写进审计：此刻它的 totalTokens 就是我们真正扣掉的额度。
@@ -1019,6 +1071,18 @@ public class AiGatewayService {
             if (reservation != null && reservation.isActive()) {
                 guard.settle(reservation, billable ? actualTokens : 0L);
             }
+            if (idempotencyLease != null) {
+                // 上游已受理（哪怕没拿到 usage）就保留幂等键，防止调用方重试造成重复执行；
+                // 只有请求根本没被上游成功受理时才释放，允许用同一个键重试。
+                boolean effectAchieved = billable
+                        || (upstreamStatus != null && upstreamStatus < 400
+                        && parser.getErrorMessage() == null);
+                if (effectAchieved) {
+                    idempotencyGuard.complete(idempotencyLease);
+                } else {
+                    idempotencyGuard.release(idempotencyLease);
+                }
+            }
             closeQuietly(upstream);
             if (conn != null) {
                 conn.disconnect();
@@ -1029,6 +1093,27 @@ public class AiGatewayService {
                 // 客户端可能已断开
             }
         }
+    }
+
+    /**
+     * 响应中断时是否应按预扣值计费。
+     *
+     * <p>四个条件缺一不可：已经向上游发出请求并收到接受响应（&lt;400）、确实有字节
+     * 转发给了浏览器、不是「一个字节都没送出去」的空中断，以及（非客户端主动断开时）
+     * SSE 至少已经出现带正文的事件——只有心跳/role 帧不算模型产出。</p>
+     */
+    private boolean shouldBillPartialOutput(Relayed relayed, Integer upstreamStatus,
+                                            boolean sse, boolean aborted) {
+        if (relayed.bytes <= 0) {
+            return false;
+        }
+        if (upstreamStatus == null || upstreamStatus >= 400) {
+            return false;
+        }
+        if (aborted) {
+            return true;
+        }
+        return !sse || firstTokenAt.get() != null;
     }
 
     private void relayRequestBody(HttpServletRequest request, HttpURLConnection conn,

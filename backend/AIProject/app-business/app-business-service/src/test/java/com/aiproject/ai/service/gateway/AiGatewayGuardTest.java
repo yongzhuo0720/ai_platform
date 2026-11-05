@@ -7,12 +7,27 @@ import com.aiproject.ai.service.holde.AiUserQuotaHolder;
 import com.heneng.hnsp.common.redis.service.RedisServer;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.springframework.data.redis.core.HashOperations;
 import org.springframework.data.redis.core.RedisTemplate;
+import org.springframework.data.redis.core.StringRedisTemplate;
+import org.springframework.data.redis.core.ZSetOperations;
+import org.springframework.data.redis.core.script.DefaultRedisScript;
+
+import java.util.Arrays;
+import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
+import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyDouble;
+import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.ArgumentMatchers.anyMap;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.contains;
 import static org.mockito.ArgumentMatchers.eq;
@@ -209,5 +224,143 @@ class AiGatewayGuardTest {
 
         assertTrue(reservation.isBlocked());
         assertEquals("quota_exceeded", reservation.getBlockedCode());
+    }
+
+    /**
+     * 跨零点完成的长请求：结算必须改「预扣时写的那一天」的 key。
+     * 如果按结算时刻重新拼日期，第一天的预扣永远退不回来，第二天的额度反而被扣。
+     */
+    @Test
+    void settleUsesKeysCapturedAtReservationTime() {
+        AiGatewayGuard.Reservation reservation = AiGatewayGuard.Reservation.active(
+                "u1", "unit:g1", 1500L,
+                "ai:gateway:tokens:u1:20260101", "ai:gateway:tokens:unit:g1:20260101", null);
+
+        guard.settle(reservation, 900L);
+
+        verify(redisServer).decrement("ai:gateway:tokens:u1:20260101", 600L);
+        verify(redisServer).decrement("ai:gateway:tokens:unit:g1:20260101", 600L);
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void reserveWritesLedgerForCrashRecovery() {
+        StringRedisTemplate stringRedis = mock(StringRedisTemplate.class);
+        HashOperations<String, Object, Object> hash = mock(HashOperations.class);
+        ZSetOperations<String, String> zset = mock(ZSetOperations.class);
+        when(stringRedis.opsForHash()).thenReturn(hash);
+        when(stringRedis.opsForZSet()).thenReturn(zset);
+        guard.stringRedisTemplate = stringRedis;
+        when(quotaHolder.effectiveQuota("u1")).thenReturn(10000L);
+        when(redisServer.increment(anyString(), eq(1500L))).thenReturn(1500L);
+
+        AiGatewayGuard.Reservation reservation = guard.reserve("u1", "chat");
+
+        assertNotNull(reservation.getLedgerKey());
+        assertTrue(reservation.getLedgerKey().startsWith("ai:gateway:reservation:"));
+        assertTrue(reservation.getUserKey().startsWith("ai:gateway:tokens:u1:"));
+        verify(hash).putAll(eq(reservation.getLedgerKey()), anyMap());
+        verify(zset).add(eq("ai:gateway:reservation:index"),
+                eq(reservation.getLedgerKey()), anyDouble());
+    }
+
+    /**
+     * 台账已被别的进程结算/回收（Lua 返回 0）时不能再调整计数：
+     * 否则同一笔预扣会被退两次，用户额度凭空变多。
+     */
+    @Test
+    @SuppressWarnings("unchecked")
+    void settleSkipsAdjustmentWhenLedgerAlreadyClaimed() {
+        StringRedisTemplate stringRedis = mock(StringRedisTemplate.class);
+        when(stringRedis.execute(any(DefaultRedisScript.class), anyList())).thenReturn(0L);
+        guard.stringRedisTemplate = stringRedis;
+        AiGatewayGuard.Reservation reservation = AiGatewayGuard.Reservation.active(
+                "u1", null, 1500L, "uk", null, "ledger-1");
+
+        guard.settle(reservation, 900L);
+
+        verify(redisServer, never()).decrement(anyString(), anyLong());
+        verify(redisServer, never()).increment(anyString(), anyLong());
+    }
+
+    /** Redis 认领失败时退化为「无台账」结算：宁可少一次保护，也不能不结算 */
+    @Test
+    @SuppressWarnings("unchecked")
+    void settleFallsBackToAdjustmentWhenLedgerClaimFails() {
+        StringRedisTemplate stringRedis = mock(StringRedisTemplate.class);
+        when(stringRedis.execute(any(DefaultRedisScript.class), anyList()))
+                .thenThrow(new RuntimeException("redis down"));
+        guard.stringRedisTemplate = stringRedis;
+        AiGatewayGuard.Reservation reservation = AiGatewayGuard.Reservation.active(
+                "u1", null, 1500L, "uk", null, "ledger-1");
+
+        guard.settle(reservation, 900L);
+
+        verify(redisServer).decrement("uk", 600L);
+    }
+
+    /** 容器被 kill -9 后 finally 没执行：定时回收按台账退还预扣 */
+    @Test
+    @SuppressWarnings("unchecked")
+    void reaperRefundsStaleReservation() {
+        StringRedisTemplate stringRedis = mock(StringRedisTemplate.class);
+        ZSetOperations<String, String> zset = mock(ZSetOperations.class);
+        HashOperations<String, Object, Object> hash = mock(HashOperations.class);
+        when(stringRedis.opsForZSet()).thenReturn(zset);
+        when(stringRedis.opsForHash()).thenReturn(hash);
+        guard.stringRedisTemplate = stringRedis;
+        when(zset.rangeByScore(eq("ai:gateway:reservation:index"), eq(0D),
+                anyDouble(), eq(0L), eq(100L)))
+                .thenReturn(new LinkedHashSet<String>(Arrays.asList("ledger-1")));
+        Map<Object, Object> fields = new LinkedHashMap<Object, Object>();
+        fields.put("userId", "u1");
+        fields.put("tokens", "1500");
+        fields.put("userKey", "uk");
+        fields.put("unitKey", "gk");
+        when(hash.entries("ledger-1")).thenReturn(fields);
+        when(stringRedis.execute(any(DefaultRedisScript.class), anyList())).thenReturn(1L);
+
+        guard.reapExpiredReservations();
+
+        verify(redisServer).decrement("uk", 1500L);
+        verify(redisServer).decrement("gk", 1500L);
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void reaperSkipsReservationAlreadySettled() {
+        StringRedisTemplate stringRedis = mock(StringRedisTemplate.class);
+        ZSetOperations<String, String> zset = mock(ZSetOperations.class);
+        HashOperations<String, Object, Object> hash = mock(HashOperations.class);
+        when(stringRedis.opsForZSet()).thenReturn(zset);
+        when(stringRedis.opsForHash()).thenReturn(hash);
+        guard.stringRedisTemplate = stringRedis;
+        when(zset.rangeByScore(eq("ai:gateway:reservation:index"), eq(0D),
+                anyDouble(), eq(0L), eq(100L)))
+                .thenReturn(new LinkedHashSet<String>(Arrays.asList("ledger-1")));
+        Map<Object, Object> fields = new LinkedHashMap<Object, Object>();
+        fields.put("userId", "u1");
+        fields.put("tokens", "1500");
+        fields.put("userKey", "uk");
+        when(hash.entries("ledger-1")).thenReturn(fields);
+        when(stringRedis.execute(any(DefaultRedisScript.class), anyList())).thenReturn(0L);
+
+        guard.reapExpiredReservations();
+
+        verify(redisServer, never()).decrement(anyString(), anyLong());
+    }
+
+    /** 没有 StringRedisTemplate 时台账功能整体降级，不影响原有预扣/结算 */
+    @Test
+    void reservationWorksWithoutLedgerTemplate() {
+        guard.stringRedisTemplate = null;
+        when(quotaHolder.effectiveQuota("u1")).thenReturn(10000L);
+        when(redisServer.increment(anyString(), eq(1500L))).thenReturn(1500L);
+
+        AiGatewayGuard.Reservation reservation = guard.reserve("u1", "chat");
+        guard.settle(reservation, 900L);
+
+        assertNull(reservation.getLedgerKey());
+        verify(redisServer).decrement(anyString(), eq(600L));
     }
 }

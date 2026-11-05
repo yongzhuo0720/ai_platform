@@ -22,6 +22,7 @@ import java.util.Arrays;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
@@ -61,6 +62,9 @@ class AiGatewayOpenAiCompatTest {
         service.kbRagHolder = mock(KbRagHolder.class);
         service.modelGatewayResolver = mock(ModelGatewayResolver.class);
         service.priceResolver = mock(ModelPriceResolver.class);
+        service.idempotencyGuard = mock(AiIdempotencyGuard.class);
+        when(service.idempotencyGuard.acquire(anyString(), anyString(), any()))
+                .thenReturn(AiIdempotencyGuard.Acquisition.none());
         // 白名单是纯逻辑，用真身才能顺带验到「iid / 平台名 / 上游名任一命中」
         service.apiTokenHolder = new AiApiTokenHolder();
         when(service.guard.check(anyString(), anyString())).thenReturn(AiGatewayGuard.Decision.allow());

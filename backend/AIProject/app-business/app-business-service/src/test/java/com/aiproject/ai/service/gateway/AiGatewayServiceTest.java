@@ -34,6 +34,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -55,6 +56,9 @@ class AiGatewayServiceTest {
         service.kbRagHolder = mock(KbRagHolder.class);
         service.modelGatewayResolver = mock(ModelGatewayResolver.class);
         service.priceResolver = mock(ModelPriceResolver.class);
+        service.idempotencyGuard = mock(AiIdempotencyGuard.class);
+        when(service.idempotencyGuard.acquire(anyString(), anyString(), any()))
+                .thenReturn(AiIdempotencyGuard.Acquisition.none());
         // 默认不预扣（等同配额不限）；需要验证预扣行为的用例自行覆盖
         when(service.guard.reserve(anyString(), anyString()))
                 .thenReturn(AiGatewayGuard.Reservation.none());
@@ -165,6 +169,76 @@ class AiGatewayServiceTest {
         assertEquals(0, upstream.calls.get(), "额度不足时不能调用上游");
         verify(service.guard, never()).settle(any(AiGatewayGuard.Reservation.class), anyLong());
         verify(service.guard, never()).addTokens(anyString(), anyString(), anyLong());
+    }
+
+    /**
+     * 网关只放行前端实际使用的 Dify 接口。
+     * 修复前任何登录用户都能借服务端密钥访问 Dify 的整棵 API 树
+     * （工作流、租户设置、模型供应商凭据等），这是权限边界问题而不是体验问题。
+     */
+    @Test
+    void endpointOutsideAllowlistIsRejectedWith403BeforeUpstream() throws Exception {
+        MockHttpServletRequest request = request("POST", "chat", "workflows/run");
+        request.setContentType("application/json");
+        request.setContent("{\"inputs\":{}}".getBytes(StandardCharsets.UTF_8));
+
+        MockHttpServletResponse response = proxy("chat", request, "u1");
+
+        assertEquals(403, response.getStatus());
+        assertTrue(response.getContentAsString(StandardCharsets.UTF_8)
+                .contains("upstream_path_forbidden"));
+        assertEquals(0, upstream.calls.get(), "白名单外的路径不能打到上游");
+
+        ArgumentCaptor<AiCallLogBean> captor = ArgumentCaptor.forClass(AiCallLogBean.class);
+        verify(service.callLogHolder).record(captor.capture());
+        assertEquals("failed", captor.getValue().getStatus());
+        assertEquals(Integer.valueOf(403), captor.getValue().getHttpStatus());
+    }
+
+    @Test
+    void encodedTraversalIsRejectedWith400BeforeUpstream() {
+        MockHttpServletRequest request = request("GET", "file", "datasets/%2e%2e/admin");
+
+        MockHttpServletResponse response = proxy("file", request, "u1");
+
+        assertEquals(400, response.getStatus());
+        assertEquals(0, upstream.calls.get());
+    }
+
+    /**
+     * 同一个 Idempotency-Key 的重复请求必须在调用上游之前挡住：
+     * 上一次可能已经扣过额度、建过数据，放过去就是重复计费/重复写入。
+     */
+    @Test
+    void idempotencyConflictRejectsBeforeUpstreamAndReleasesReservation() throws Exception {
+        when(service.configResolver.isSupported("chat")).thenReturn(true);
+        when(service.configResolver.resolve("chat")).thenReturn(
+                new AiGatewayConfigResolver.ResolvedConfig(upstream.baseUrl(), "test-key"));
+        when(service.guard.check("u1", "chat")).thenReturn(AiGatewayGuard.Decision.allow());
+        AiGatewayGuard.Reservation reservation =
+                AiGatewayGuard.Reservation.active("u1", null, 1500L);
+        when(service.guard.reserve("u1", "chat")).thenReturn(reservation);
+        when(service.idempotencyGuard.acquire(eq("u1"), eq("chat"), any()))
+                .thenReturn(AiIdempotencyGuard.Acquisition.rejected(409,
+                        AiIdempotencyGuard.CODE_CONFLICT,
+                        "相同请求已处理或正在处理中，请勿重复提交"));
+        MockHttpServletRequest request = request("POST", "chat", "chat-messages");
+        request.setContentType("application/json");
+        request.setContent("{\"query\":\"hi\"}".getBytes(StandardCharsets.UTF_8));
+        MockHttpServletResponse response = new MockHttpServletResponse();
+
+        service.proxy("chat", "u1", request, response);
+
+        assertEquals(409, response.getStatus());
+        assertTrue(response.getContentAsString(StandardCharsets.UTF_8)
+                .contains(AiIdempotencyGuard.CODE_CONFLICT));
+        assertEquals(0, upstream.calls.get(), "重复请求不能再打上游");
+        verify(service.guard).settle(reservation, 0L);
+
+        ArgumentCaptor<AiCallLogBean> captor = ArgumentCaptor.forClass(AiCallLogBean.class);
+        verify(service.callLogHolder).record(captor.capture());
+        assertEquals("blocked", captor.getValue().getStatus());
+        assertEquals(Integer.valueOf(409), captor.getValue().getHttpStatus());
     }
 
     /**
@@ -419,6 +493,43 @@ class AiGatewayServiceTest {
         assertEquals("aborted", captor.getValue().getStatus());
         assertEquals(Long.valueOf(1500L), captor.getValue().getTotalTokens(),
                 "按预扣值计费后，审计里的用量必须等于真正扣掉的额度，否则看板显示空值而额度已被消耗");
+    }
+
+    /**
+     * 非客户端原因的中途失败（上游连接重置、读超时、容器网络抖动）同样不能全额退款：
+     * 只要上游已经受理并送出过正文，模型就真实生成过内容。
+     * 这里用「浏览器端写入失败但不带 connection reset 语义」模拟，
+     * 锁住 catch 里 aborted=false 分支也会按预扣值计费。
+     */
+    @Test
+    void midStreamFailureAfterPartialOutputIsBilledAtReserve() throws Exception {
+        upstream.failSseMidStream = true;
+        when(service.configResolver.isSupported("chat")).thenReturn(true);
+        when(service.configResolver.resolve("chat")).thenReturn(
+                new AiGatewayConfigResolver.ResolvedConfig(upstream.baseUrl(), "test-key"));
+        when(service.guard.check("u1", "chat")).thenReturn(AiGatewayGuard.Decision.allow());
+        AiGatewayGuard.Reservation reservation =
+                AiGatewayGuard.Reservation.active("u1", null, 1500L);
+        when(service.guard.reserve("u1", "chat")).thenReturn(reservation);
+
+        MockHttpServletRequest request = request("POST", "chat", "chat-messages");
+        request.setContentType("application/json");
+        request.setContent("{\"query\":\"hi\",\"user\":\"u1\"}".getBytes(StandardCharsets.UTF_8));
+
+        MockHttpServletResponse response = new MockHttpServletResponse();
+        service.proxy("chat", "u1", request, response);
+
+        verify(service.guard).settle(reservation, 1500L);
+        assertTrue(response.getContentAsString(StandardCharsets.UTF_8).contains("partial"),
+                "上游已送出的正文应转发给浏览器");
+
+        ArgumentCaptor<AiCallLogBean> captor = ArgumentCaptor.forClass(AiCallLogBean.class);
+        verify(service.callLogHolder).record(captor.capture());
+        assertEquals("failed", captor.getValue().getStatus());
+        assertEquals(Integer.valueOf(200), captor.getValue().getHttpStatus(),
+                "审计记录上游真实响应状态：上游已受理并开始输出，只是流没有正常结束");
+        assertTrue(captor.getValue().getErrorMessage().contains("提前结束"));
+        assertEquals(Long.valueOf(1500L), captor.getValue().getTotalTokens());
     }
 
     /** 先正常送出 allowBytes 个字节，之后才模拟浏览器断开 */

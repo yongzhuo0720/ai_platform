@@ -44,7 +44,8 @@ public class KbRagHolder {
     private static final int MAX_CHUNKS = 500;
     private static final int CHUNK_SIZE = 500;
     private static final int CHUNK_OVERLAP = 100;
-    private static final int MAX_TOP_K = 20;
+    /** 单次检索返回条数上限；评估工作台复用这个上限做参数校验 */
+    public static final int MAX_TOP_K = 20;
     private static final int MAX_QUERY_CHARS = 2000;
     /**
      * 单次检索最多扫描的分块数。
@@ -213,19 +214,34 @@ public class KbRagHolder {
         if (uid == null || uid.trim().isEmpty()) {
             return Result.failed(false, "未登录或登录已过期");
         }
-        if (data == null || data.getIid() == null) {
+        if (data == null || data.getIid() == null || data.getIid() <= 0) {
             return Result.failed(false, "文档 iid 不能为空");
         }
         KbDocBean where = new KbDocBean();
         where.setIid(data.getIid());
         where.setLastuser(uid);
-        if (kbDocBeanMapper.delete(where) <= 0) {
+        // 先确认文档确实属于当前用户，再动分块。修复前直接删文档、再按 docIid 删分块：
+        // 文档删除后若分块删除失败（或进程中途退出），正文仍留在 kbchunkbean 里，
+        // 检索会继续命中一篇「已删除」的文档。
+        List<KbDocBean> docs = kbDocBeanMapper.select(null, where);
+        if (docs == null || docs.isEmpty()) {
             return Result.failed(false, "删除失败：文档不存在或不属于当前用户");
         }
+
         KbChunkBean chunkWhere = new KbChunkBean();
         chunkWhere.setDocIid(data.getIid());
-        kbChunkBeanMapper.delete(chunkWhere);
-        return Result.succeed(true, "删除成功");
+        // docIid 全局唯一，但归属条件仍然保留：少一个条件就多一条越权路径
+        chunkWhere.setLastuser(uid);
+        int chunks = kbChunkBeanMapper.delete(chunkWhere);
+
+        // 分块先删、文档后删：中途失败时留下的是「空壳文档」，用户可重试删除；
+        // 反过来会留下检索得到、界面上却不存在的孤儿正文。
+        if (kbDocBeanMapper.delete(where) <= 0) {
+            log.warn("[KbRag] 分块已清理但文档删除未命中, uid={}, docIid={}", uid, data.getIid());
+            return Result.failed(false, "删除失败：文档已被删除或状态已变化，请刷新后重试");
+        }
+        return Result.succeed(true, chunks > 0
+                ? "删除成功（含 " + chunks + " 个分块）" : "删除成功");
     }
 
     /**

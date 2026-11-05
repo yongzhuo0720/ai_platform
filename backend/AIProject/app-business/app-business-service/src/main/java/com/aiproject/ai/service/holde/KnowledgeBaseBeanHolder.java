@@ -18,7 +18,11 @@ import com.fasterxml.jackson.core.type.TypeReference;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
+import com.aiproject.ai.service.bean.KbChunkBean;
+import com.aiproject.ai.service.bean.KbDocBean;
 import com.aiproject.ai.service.bean.KnowledgeBaseBean;
+import com.aiproject.ai.service.mapper.KbChunkBeanMapper;
+import com.aiproject.ai.service.mapper.KbDocBeanMapper;
 import com.aiproject.ai.service.mapper.KnowledgeBaseBeanMapper;
 
 @Slf4j
@@ -35,6 +39,12 @@ public class KnowledgeBaseBeanHolder {
 
     @Autowired
     KnowledgeBaseMemberHolder knowledgeBaseMemberHolder;
+
+    @Autowired
+    KbDocBeanMapper<KbDocBean> kbDocBeanMapper;
+
+    @Autowired
+    KbChunkBeanMapper<KbChunkBean> kbChunkBeanMapper;
 
     public Result<Boolean> install(String uid, KnowledgeBaseBean data) {
         if(CheckUtils.isEmpty(data.getRoleiids())){
@@ -58,14 +68,61 @@ public class KnowledgeBaseBeanHolder {
      * 任意登录用户只要知道他人的 kbId / iid 即可删除其权限记录（越权删除）。
      */
     public Result<Boolean> delete(String uid, KnowledgeBaseBean data) {
+        if (data == null) {
+            return Result.failed(false, "缺少删除条件");
+        }
+        boolean hasIid = data.getIid() != null && data.getIid() > 0;
+        boolean hasKbId = data.getKbId() != null && !data.getKbId().trim().isEmpty();
+        if (!hasIid && !hasKbId) {
+            return Result.failed(false, "知识库 iid 或 kbId 不能为空");
+        }
         Result<Boolean> check = checkOwnership(uid, data);
         if (check != null) {
             return check;
         }
+        // 管理员会跳过 checkOwnership 的查询，因此这里统一再取一次目标记录：
+        // 删除本地 RAG 文档需要 name 与 ownerUid，不能只靠调用方传来的条件。
+        List<KnowledgeBaseBean> targets = knowledgeBaseBeanMapper.select(null, data);
+        if (targets == null || targets.isEmpty()) {
+            return Result.failed(false, "记录不存在");
+        }
+
+        int chunks = 0;
+        int docs = 0;
+        try {
+            for (KnowledgeBaseBean target : targets) {
+                String kbName = target.getName();
+                String ownerUid = target.getOwnerUid();
+                if (kbName == null || kbName.trim().isEmpty()
+                        || ownerUid == null || ownerUid.trim().isEmpty()) {
+                    // 没有别名或归属的旧记录无法定位本地文档，保持原有「只删权限记录」行为
+                    continue;
+                }
+                // 本地 RAG 用上传时填写的知识库名关联权限记录；按所有者收窄，
+                // 避免同名知识库误删他人的文档。
+                KbChunkBean chunkWhere = new KbChunkBean();
+                chunkWhere.setKbName(kbName);
+                chunkWhere.setLastuser(ownerUid);
+                chunks += kbChunkBeanMapper.delete(chunkWhere);
+
+                KbDocBean docWhere = new KbDocBean();
+                docWhere.setKbName(kbName);
+                docWhere.setLastuser(ownerUid);
+                docs += kbDocBeanMapper.delete(docWhere);
+            }
+        } catch (Exception e) {
+            // 先清文档再删主记录：这里失败时知识库记录仍在，用户可以重试；
+            // 顺序反过来则会留下永远无法从界面定位的本地文档。
+            log.error("[KnowledgeBase] 删除知识库时清理本地文档失败, uid={}, kbId={}: {}",
+                    uid, data.getKbId(), e.getMessage(), e);
+            return Result.failed(false, "删除失败：清理本地知识库文档时出错，请稍后重试");
+        }
+
         if (knowledgeBaseBeanMapper.delete(data) <= 0) {
             return Result.failed(false, "删除失败");
         }
-        return Result.succeed(true, "删除成功");
+        return Result.succeed(true, docs > 0
+                ? "删除成功（含 " + docs + " 篇本地文档、" + chunks + " 个分块）" : "删除成功");
     }
 
     /**

@@ -23,6 +23,13 @@ public class AiGatewayUsageParser {
     private String errorMessage;
 
     /**
+     * 流是否出现了「正常终止」信号（[DONE]、message_end、workflow_finished、finish_reason）。
+     * 上游提前断流时通常只剩 EOF，不会给 usage；没有这个标记就分不清
+     * 「正常结束但供应商没给用量」和「回答被截断」，前者不该收费、后者必须按预扣值计费。
+     */
+    private boolean streamCompleted;
+
+    /**
      * 记为「本次实际扣掉的额度」。
      * <p>
      * 客户端中途断开时上游不会给出 usage（Dify 只在 message_end 里给），但网关按预扣值结算，
@@ -47,7 +54,11 @@ public class AiGatewayUsageParser {
             return false;
         }
         String payload = text.substring(5).trim();
-        if (payload.isEmpty() || "[DONE]".equals(payload)) {
+        if (payload.isEmpty()) {
+            return false;
+        }
+        if ("[DONE]".equals(payload)) {
+            streamCompleted = true;
             return false;
         }
         JsonNode root = parse(payload);
@@ -123,6 +134,18 @@ public class AiGatewayUsageParser {
     private void applyRoot(JsonNode root) {
         String event = text(root, "event");
         String object = text(root, "object");
+        if ("message_end".equals(event) || "workflow_finished".equals(event)
+                || "error".equals(event) || "response.completed".equals(event)
+                || "response.failed".equals(event)) {
+            streamCompleted = true;
+        }
+        JsonNode choices = root.path("choices");
+        if (choices.isArray() && choices.size() > 0) {
+            JsonNode finishReason = choices.get(0).get("finish_reason");
+            if (finishReason != null && !finishReason.isNull()) {
+                streamCompleted = true;
+            }
+        }
         if ("error".equals(event)) {
             String message = text(root, "message");
             if (message == null) {

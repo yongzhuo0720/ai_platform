@@ -113,12 +113,14 @@ class KbRagHolderTest {
         KbDocBean data = new KbDocBean();
         data.setIid(100L);
 
-        // 归属不匹配 → Mapper 删到 0 行
-        when(kbDocBeanMapper.delete(any(KbDocBean.class))).thenReturn(0);
+        // 归属不匹配 → 带 lastuser 的查询查不到目标文档
+        when(kbDocBeanMapper.select(isNull(), any(KbDocBean.class)))
+                .thenReturn(Collections.<KbDocBean>emptyList());
 
         Result<Boolean> result = holder.deleteDoc("u1", data);
 
         assertFalse(Boolean.TRUE.equals(result.getDatas()), "删他人文档必须失败");
+        verify(kbDocBeanMapper, never()).delete(any(KbDocBean.class));
         verify(kbChunkBeanMapper, never()).delete(any(KbChunkBean.class));
     }
 
@@ -128,12 +130,22 @@ class KbRagHolderTest {
         KbDocBean data = new KbDocBean();
         data.setIid(100L);
 
-        when(kbDocBeanMapper.delete(any(KbDocBean.class))).thenReturn(1);
+        KbDocBean existing = new KbDocBean();
+        existing.setIid(100L);
+        existing.setLastuser("u1");
+        when(kbDocBeanMapper.select(isNull(), any(KbDocBean.class)))
+                .thenReturn(Collections.singletonList(existing));
         when(kbChunkBeanMapper.delete(any(KbChunkBean.class))).thenReturn(1);
+        when(kbDocBeanMapper.delete(any(KbDocBean.class))).thenReturn(1);
 
         Result<Boolean> result = holder.deleteDoc("u1", data);
 
         assertTrue(Boolean.TRUE.equals(result.getDatas()));
+
+        ArgumentCaptor<KbDocBean> selection = ArgumentCaptor.forClass(KbDocBean.class);
+        verify(kbDocBeanMapper).select(isNull(), selection.capture());
+        assertEquals("u1", selection.getValue().getLastuser(), "归属校验必须发生在删除之前");
+        assertEquals(100L, selection.getValue().getIid());
 
         ArgumentCaptor<KbDocBean> docCaptor = ArgumentCaptor.forClass(KbDocBean.class);
         verify(kbDocBeanMapper).delete(docCaptor.capture());
@@ -144,6 +156,31 @@ class KbRagHolderTest {
         ArgumentCaptor<KbChunkBean> chunkCaptor = ArgumentCaptor.forClass(KbChunkBean.class);
         verify(kbChunkBeanMapper).delete(chunkCaptor.capture());
         assertEquals(100L, chunkCaptor.getValue().getDocIid());
+        assertEquals("u1", chunkCaptor.getValue().getLastuser(), "分块删除同样要带归属");
+    }
+
+    /**
+     * 删除顺序：先清分块、再删文档。
+     * 反过来一旦分块删除失败，文档已消失而正文还在，检索会继续命中「已删除」的内容。
+     */
+    @Test
+    void deleteDoc_shouldDeleteChunksBeforeDocument() {
+        KbDocBean data = new KbDocBean();
+        data.setIid(100L);
+        KbDocBean existing = new KbDocBean();
+        existing.setIid(100L);
+        existing.setLastuser("u1");
+        when(kbDocBeanMapper.select(isNull(), any(KbDocBean.class)))
+                .thenReturn(Collections.singletonList(existing));
+        when(kbChunkBeanMapper.delete(any(KbChunkBean.class))).thenReturn(2);
+        when(kbDocBeanMapper.delete(any(KbDocBean.class))).thenReturn(1);
+
+        holder.deleteDoc("u1", data);
+
+        org.mockito.InOrder order = org.mockito.Mockito.inOrder(
+                kbChunkBeanMapper, kbDocBeanMapper);
+        order.verify(kbChunkBeanMapper).delete(any(KbChunkBean.class));
+        order.verify(kbDocBeanMapper).delete(any(KbDocBean.class));
     }
 
     /** 检索的分块查询必须带归属，否则能读到他人文档正文 */

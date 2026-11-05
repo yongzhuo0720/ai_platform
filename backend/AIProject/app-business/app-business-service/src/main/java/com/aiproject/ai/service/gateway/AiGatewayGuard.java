@@ -9,11 +9,19 @@ import lombok.Getter;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.redis.core.RedisTemplate;
+import org.springframework.data.redis.core.StringRedisTemplate;
+import org.springframework.data.redis.core.script.DefaultRedisScript;
+import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
+import java.util.Arrays;
+import java.util.LinkedHashMap;
+import java.util.Map;
+import java.util.Set;
+import java.util.UUID;
 import java.util.concurrent.TimeUnit;
 
 /**
@@ -59,6 +67,41 @@ public class AiGatewayGuard {
     /** uid -> gid 进程内缓存（部门归属低频变更，10 分钟足够新） */
     private final java.util.concurrent.ConcurrentHashMap<String, String[]> gidCache = new java.util.concurrent.ConcurrentHashMap<String, String[]>();
     private static final long GID_CACHE_MS = 10 * 60 * 1000L;
+
+    /**
+     * 预扣台账：预扣成功后把「占用了哪个用户池、哪个部门池、多少 Token」写进一个短期 Hash。
+     * 进程崩溃或容器被强杀时，finally 里的 settle 不会执行，预扣额度会一直占到当天结束；
+     * 台账让定时任务能发现并退回这些「无人认领」的预扣。
+     *
+     * <p>StringRedisTemplate 是可选依赖：它缺失时只退化为无台账（与旧行为一致），
+     * 不影响正常请求的预扣与结算。</p>
+     */
+    @Autowired(required = false)
+    StringRedisTemplate stringRedisTemplate;
+
+    private static final String LEDGER_INDEX_KEY = "ai:gateway:reservation:index";
+    private static final String LEDGER_KEY_PREFIX = "ai:gateway:reservation:";
+    private static final long LEDGER_TTL_SECONDS = 2 * 60 * 60L;
+    /** 超过该时长仍未结算，视为请求线程已经不在了；留足 5 分钟读超时的余量 */
+    private static final long LEDGER_STALE_MS = 30 * 60 * 1000L;
+
+    private static final DefaultRedisScript<Long> SETTLE_LEDGER_SCRIPT = new DefaultRedisScript<Long>(
+            "local status = redis.call('HGET', KEYS[1], 'status') "
+                    + "if not status then return -1 end "
+                    + "if status ~= 'active' then return 0 end "
+                    + "redis.call('HSET', KEYS[1], 'status', 'settled') "
+                    + "redis.call('ZREM', KEYS[2], KEYS[1]) "
+                    + "redis.call('EXPIRE', KEYS[1], 60) return 1",
+            Long.class);
+
+    private static final DefaultRedisScript<Long> REAP_LEDGER_SCRIPT = new DefaultRedisScript<Long>(
+            "local status = redis.call('HGET', KEYS[1], 'status') "
+                    + "if not status then return -1 end "
+                    + "if status ~= 'active' then return 0 end "
+                    + "redis.call('HSET', KEYS[1], 'status', 'reaped') "
+                    + "redis.call('ZREM', KEYS[2], KEYS[1]) "
+                    + "redis.call('EXPIRE', KEYS[1], 60) return 1",
+            Long.class);
 
     public Decision check(String userId, String module) {
         Decision rate = checkRateLimit(userId);
@@ -209,7 +252,8 @@ public class AiGatewayGuard {
             }
             userReserved = false; // 预扣转交给 Reservation，由 settle 负责结算
             unitReserved = false;
-            return Reservation.active(userId, unitOwner, tokens);
+            String ledgerKey = recordLedger(userId, unitOwner, tokens, userKey, unitKey);
+            return Reservation.active(userId, unitOwner, tokens, userKey, unitKey, ledgerKey);
         } catch (Exception e) {
             if (userReserved && userKey != null) {
                 try {
@@ -231,24 +275,168 @@ public class AiGatewayGuard {
     }
 
     /**
+     * 写预扣台账。失败只告警、不阻断请求：台账是崩溃恢复的增强，
+     * 正常路径的「finally 里 settle」仍然是主通道，不能因为台账写不进去就把用户挡在门外。
+     */
+    private String recordLedger(String userId, String unitOwner, long tokens,
+                                String userKey, String unitKey) {
+        if (stringRedisTemplate == null) {
+            return null;
+        }
+        String ledgerKey = LEDGER_KEY_PREFIX + UUID.randomUUID().toString().replace("-", "");
+        try {
+            long now = System.currentTimeMillis();
+            Map<String, String> fields = new LinkedHashMap<String, String>();
+            fields.put("userId", userId);
+            fields.put("unitOwner", unitOwner == null ? "" : unitOwner);
+            fields.put("tokens", String.valueOf(tokens));
+            fields.put("userKey", userKey);
+            fields.put("unitKey", unitKey == null ? "" : unitKey);
+            fields.put("status", "active");
+            fields.put("createdAt", String.valueOf(now));
+            stringRedisTemplate.opsForHash().putAll(ledgerKey, fields);
+            stringRedisTemplate.expire(ledgerKey, LEDGER_TTL_SECONDS, TimeUnit.SECONDS);
+            stringRedisTemplate.opsForZSet().add(LEDGER_INDEX_KEY, ledgerKey, (double) now);
+            return ledgerKey;
+        } catch (Exception e) {
+            log.warn("[AiGateway] 写预扣台账失败，本次请求无崩溃恢复保护, uid={}: {}",
+                    userId, e.getMessage());
+            return null;
+        }
+    }
+
+    /**
      * 请求结束后按真实 usage 结算预扣：多退少补；usage 缺失（失败/中断）时传 0 全额释放。
      * <p>
      * 同一 Reservation 只结算一次；未预扣（配额不限或 Redis 降级）时是空操作，
      * 调用方仍按原逻辑走 {@link #addTokens}。
+     * <p>
+     * 两个容易踩的细节：
+     * <ul>
+     *   <li>用<b>预扣时记下的 key</b>，而不是结算时重新按日期拼 key。跨零点完成的长请求
+     *       如果在结算时重新拼 key，会去改第二天的计数，第一天的预扣永远退不回来；</li>
+     *   <li>有台账时先原子认领（active → settled）再调计数。认领失败说明已被别的进程
+     *       结算或回收，不能再调一次，否则会重复退款。</li>
+     * </ul>
      */
     public void settle(Reservation reservation, long actualTokens) {
         if (reservation == null || !reservation.isActive() || !reservation.trySettle()) {
             return;
         }
+        Boolean claimed = claimLedger(reservation.getLedgerKey(), SETTLE_LEDGER_SCRIPT);
+        if (Boolean.FALSE.equals(claimed)) {
+            log.warn("[AiGateway] 预扣台账已被结算或回收，跳过重复调整, uid={}",
+                    reservation.getUserId());
+            return;
+        }
         long delta = actualTokens - reservation.getTokens();
         try {
-            adjustTokens(todayTokenKey(reservation.getUserId()), delta);
+            adjustTokens(userKeyOf(reservation), delta);
             if (reservation.getUnitOwner() != null) {
-                adjustTokens(todayTokenKey(reservation.getUnitOwner()), delta);
+                adjustTokens(unitKeyOf(reservation), delta);
             }
         } catch (Exception e) {
             log.warn("[AiGateway] 结算预扣配额失败, uid={}: {}", reservation.getUserId(), e.getMessage());
         }
+    }
+
+    private String userKeyOf(Reservation reservation) {
+        return reservation.getUserKey() == null
+                ? todayTokenKey(reservation.getUserId()) : reservation.getUserKey();
+    }
+
+    private String unitKeyOf(Reservation reservation) {
+        return reservation.getUnitKey() == null
+                ? todayTokenKey(reservation.getUnitOwner()) : reservation.getUnitKey();
+    }
+
+    /**
+     * 原子认领台账。
+     *
+     * @return true 表示本次调用成功认领；false 表示已被结算/回收；null 表示没有台账或 Redis 不可用
+     */
+    private Boolean claimLedger(String ledgerKey, DefaultRedisScript<Long> script) {
+        if (ledgerKey == null || stringRedisTemplate == null) {
+            return null;
+        }
+        try {
+            Long claimed = stringRedisTemplate.execute(script,
+                    Arrays.asList(ledgerKey, LEDGER_INDEX_KEY));
+            if (claimed == null || claimed < 0) {
+                return null;
+            }
+            return claimed > 0;
+        } catch (Exception e) {
+            log.warn("[AiGateway] 认领预扣台账失败，按无台账结算: {}", e.getMessage());
+            return null;
+        }
+    }
+
+    /**
+     * 回收超时未结算的预扣。
+     *
+     * <p>典型场景：容器发布时被 kill -9，请求线程的 finally 没机会执行。
+     * 没有回收时这笔预扣会占到当天 key 过期（2 天），用户额度看起来「凭空少了一截」。
+     * 只退不扣：认领成功后按台账里的 tokens 反向调整，重复执行由 Lua 里的状态判断兜住。</p>
+     */
+    @Scheduled(fixedDelay = 10 * 60 * 1000L, initialDelay = 2 * 60 * 1000L)
+    public void reapExpiredReservations() {
+        if (stringRedisTemplate == null) {
+            return;
+        }
+        long cutoff = System.currentTimeMillis() - LEDGER_STALE_MS;
+        Set<String> ledgerKeys;
+        try {
+            ledgerKeys = stringRedisTemplate.opsForZSet()
+                    .rangeByScore(LEDGER_INDEX_KEY, 0D, (double) cutoff, 0, 100);
+        } catch (Exception e) {
+            log.warn("[AiGateway] 查询超时预扣台账失败: {}", e.getMessage());
+            return;
+        }
+        if (ledgerKeys == null || ledgerKeys.isEmpty()) {
+            return;
+        }
+        for (String ledgerKey : ledgerKeys) {
+            try {
+                Map<Object, Object> fields = stringRedisTemplate.opsForHash().entries(ledgerKey);
+                if (fields == null || fields.isEmpty()) {
+                    // Hash 已过期但索引还在：清掉索引即可，没有可退的额度
+                    stringRedisTemplate.opsForZSet().remove(LEDGER_INDEX_KEY, ledgerKey);
+                    continue;
+                }
+                Long claimed = stringRedisTemplate.execute(REAP_LEDGER_SCRIPT,
+                        Arrays.asList(ledgerKey, LEDGER_INDEX_KEY));
+                if (claimed == null || claimed <= 0) {
+                    continue;
+                }
+                long tokens = parseLong(fields.get("tokens"));
+                String userKey = asString(fields.get("userKey"));
+                String unitKey = asString(fields.get("unitKey"));
+                if (tokens <= 0 || userKey == null) {
+                    continue;
+                }
+                adjustTokens(userKey, -tokens);
+                if (unitKey != null && !unitKey.isEmpty()) {
+                    adjustTokens(unitKey, -tokens);
+                }
+                log.warn("[AiGateway] 已回收超时未结算的预扣: uid={}, tokens={}",
+                        fields.get("userId"), tokens);
+            } catch (Exception e) {
+                log.warn("[AiGateway] 回收预扣台账失败, key={}: {}", ledgerKey, e.getMessage());
+            }
+        }
+    }
+
+    private static long parseLong(Object value) {
+        try {
+            return value == null ? 0L : Long.parseLong(String.valueOf(value));
+        } catch (NumberFormatException e) {
+            return 0L;
+        }
+    }
+
+    private static String asString(Object value) {
+        return value == null ? null : String.valueOf(value);
     }
 
     private void adjustTokens(String key, long delta) {
@@ -264,7 +452,8 @@ public class AiGatewayGuard {
     /** 预扣结果：active 表示已占用额度；blocked 表示额度不足或治理依赖不可用，调用方应直接拒绝 */
     @Getter
     public static class Reservation {
-        private static final Reservation NONE = new Reservation(false, false, null, null, 0L, null, null);
+        private static final Reservation NONE =
+                new Reservation(false, false, null, null, 0L, null, null, null, null, null);
 
         private final boolean active;
         private final boolean blocked;
@@ -274,11 +463,18 @@ public class AiGatewayGuard {
         private final String userId;
         /** 部门共享池的配额行 userId（"unit:gid"），无部门时为 null */
         private final String unitOwner;
+        /** 预扣时实际写入的用户池 key；跨零点结算必须用它，而不是按结算时间重新拼 */
+        private final String userKey;
+        /** 预扣时实际写入的部门池 key；未预扣部门池时为 null */
+        private final String unitKey;
+        /** 预扣台账 key；未启用台账时为 null */
+        private final String ledgerKey;
         private final java.util.concurrent.atomic.AtomicBoolean settled =
                 new java.util.concurrent.atomic.AtomicBoolean(false);
 
         private Reservation(boolean active, boolean blocked, String blockedCode, String blockedMessage,
-                            long tokens, String userId, String unitOwner) {
+                            long tokens, String userId, String unitOwner,
+                            String userKey, String unitKey, String ledgerKey) {
             this.active = active;
             this.blocked = blocked;
             this.blockedCode = blockedCode;
@@ -286,6 +482,9 @@ public class AiGatewayGuard {
             this.tokens = tokens;
             this.userId = userId;
             this.unitOwner = unitOwner;
+            this.userKey = userKey;
+            this.unitKey = unitKey;
+            this.ledgerKey = ledgerKey;
         }
 
         public static Reservation none() {
@@ -298,11 +497,18 @@ public class AiGatewayGuard {
 
         /** 超额之外的拒绝（如 Redis / 配额表不可用），必须带自己的错误码，前端与看板才能区分 */
         public static Reservation blocked(String code, String message) {
-            return new Reservation(false, true, code, message, 0L, null, null);
+            return new Reservation(false, true, code, message, 0L, null, null, null, null, null);
         }
 
+        /** 兼容旧调用：没有 key 与台账，settle 时按当天 key 兜底 */
         public static Reservation active(String userId, String unitOwner, long tokens) {
-            return new Reservation(true, false, null, null, tokens, userId, unitOwner);
+            return active(userId, unitOwner, tokens, null, null, null);
+        }
+
+        public static Reservation active(String userId, String unitOwner, long tokens,
+                                         String userKey, String unitKey, String ledgerKey) {
+            return new Reservation(true, false, null, null, tokens, userId, unitOwner,
+                    userKey, unitKey, ledgerKey);
         }
 
         boolean trySettle() {
@@ -380,7 +586,7 @@ public class AiGatewayGuard {
         return gid;
     }
 
-    private String todayTokenKey(String userId) {
+    private static String todayTokenKey(String userId) {
         return "ai:gateway:tokens:" + userId + ":" + DAY.format(LocalDate.now());
     }
 

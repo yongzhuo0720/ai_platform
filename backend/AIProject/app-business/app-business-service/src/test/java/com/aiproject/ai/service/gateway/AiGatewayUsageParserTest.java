@@ -113,6 +113,34 @@ class AiGatewayUsageParserTest {
         assertEquals("msg-a", parser.getMessageId());
     }
 
+    /** 正常结束的流必须有完成标记；只看有没有 usage 会漏掉「供应商没给 usage 但确实结束了」 */
+    @Test
+    void marksStreamCompletedOnDoneMessageEndOrFinishReason() {
+        AiGatewayUsageParser done = new AiGatewayUsageParser();
+        assertFalse(done.isStreamCompleted());
+        done.acceptSseLine("data: [DONE]");
+        assertTrue(done.isStreamCompleted());
+
+        AiGatewayUsageParser messageEnd = new AiGatewayUsageParser();
+        messageEnd.acceptSseLine("data: {\"event\":\"message_end\"}");
+        assertTrue(messageEnd.isStreamCompleted());
+
+        AiGatewayUsageParser finishReason = new AiGatewayUsageParser();
+        finishReason.acceptSseLine(
+                "data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}");
+        assertTrue(finishReason.isStreamCompleted());
+    }
+
+    /** 提前断流只有正文、没有完成事件：服务层据此按失败计费 */
+    @Test
+    void streamWithoutCompletionMarkerStaysIncomplete() {
+        AiGatewayUsageParser parser = new AiGatewayUsageParser();
+        parser.acceptSseLine("data: {\"choices\":[{\"delta\":{\"content\":\"半截\"}}]}");
+
+        assertFalse(parser.isStreamCompleted());
+        assertNull(parser.getTotalTokens());
+    }
+
     @Test
     void ignoresNonDataLinesAndMalformedJson() {
         AiGatewayUsageParser parser = new AiGatewayUsageParser();
