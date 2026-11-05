@@ -73,8 +73,12 @@ Dify                              本平台 PostgreSQL
 
 ### 后端
 
+> **公开克隆无法独立编译后端。** 后端依赖私有框架 `com.heneng.hnsp` / `blxt.qjava`
+> （不在 Maven Central），本地离线仓库 `hd_redis/ai-maven/` 也不入库；CI 因此只跑前端。
+> 需要完整构建时，请向维护者获取私服访问或离线仓库。
+
 ```powershell
-# 私有依赖位于仓库内的 hd_redis/ai-maven（离线可用）
+# 假设已把私有离线仓库放在 hd_redis/ai-maven（不入库）
 $repo     = (Resolve-Path hd_redis/ai-maven/pro).Path
 $settings = (Resolve-Path hd_redis/ai-maven/conf/settings.xml).Path
 $env:JAVA_HOME = '<你的 JDK 8 路径>'

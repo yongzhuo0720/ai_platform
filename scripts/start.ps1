@@ -7,7 +7,7 @@
 #   powershell -ExecutionPolicy Bypass -File scripts/start.ps1 -FrontendOnly
 #
 # 启动后：
-#   前端  http://localhost:5173       演示账号 admin / ss（口令见本地库种子）
+#   前端  http://localhost:5173       演示账号与口令以本地库种子为准（不写入仓库）
 #   后端  http://localhost:8507/ai
 #
 # 前置要求：JDK 8（Java 21 与项目 Lombok 版本不兼容）、Node 18+。
