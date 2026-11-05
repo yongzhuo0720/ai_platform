@@ -58,17 +58,38 @@ public class LableChildBeanHolder {
         if (login != null) {
             return login;
         }
+        // 管理员只免归属校验，不免参数校验：空条件 delete/update 会命中整表
+        Result<Boolean> key = checkBindingKey(data);
+        if (key != null) {
+            return key;
+        }
         if (myUserBaseDbHolder.isAdmin(uid)) {
             return null;
-        }
-        if (data == null || isEmpty(data.getType()) || isEmpty(data.getHash())) {
-            return Result.failed(false, "缺少资源类型或主键");
         }
         if (resourceGuard != null && data.getType().equals(resourceGuard.type())
                 && resourceGuard.canManage(uid, data.getHash())) {
             return null;
         }
         return Result.failed(false, "仅资源所有者或管理员可维护标签绑定");
+    }
+
+    /** 绑定表的业务主键是 type + hash + lableiid，三者缺一不可。 */
+    private Result<Boolean> checkBindingKey(LableChildBean data) {
+        if (data == null || isEmpty(data.getType()) || isEmpty(data.getHash())
+                || data.getLableiid() == null || data.getLableiid() <= 0) {
+            return Result.failed(false, "缺少资源类型、主键或标签");
+        }
+        return null;
+    }
+
+    private Result<Boolean> checkUpdateWhere(LableChildBean where) {
+        if (where == null) {
+            return Result.failed(false, "缺少更新条件");
+        }
+        if (where.getIid() != null && where.getIid() > 0) {
+            return null;
+        }
+        return checkBindingKey(where);
     }
 
     private static boolean isEmpty(String value) {
@@ -155,6 +176,13 @@ public class LableChildBeanHolder {
         Result<Boolean> check = checkAdmin(uid);
         if (check != null) {
             return check;
+        }
+        if (data == null) {
+            return Result.failed(false, "缺少更新数据");
+        }
+        Result<Boolean> whereCheck = checkUpdateWhere(where);
+        if (whereCheck != null) {
+            return whereCheck;
         }
 
         data.setLastuser(uid);

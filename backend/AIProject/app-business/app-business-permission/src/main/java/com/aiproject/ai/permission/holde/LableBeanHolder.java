@@ -45,6 +45,9 @@ public class LableBeanHolder {
      * <p>2026-10-29 补充：此前 install / delete / update 三个写方法完全没有鉴权，
      * 任意已登录用户都能增删改全平台标签组。这里按项目既有约定补齐——
      * 返回 null 表示校验通过，返回非 null 表示被拒绝（与 ModelsConfigBeanHolder 一致）。</p>
+     *
+     * <p>2026-11-04 补充：鉴权之外还要校验参数。Mapper 是按非空字段拼 where 的，
+     * 空条件 delete 会删掉所有标签组并级联清空所有绑定，空条件 update 会改全表。</p>
      */
     private Result<Boolean> checkAdmin(String uid) {
         if (uid == null || uid.trim().isEmpty()) {
@@ -54,6 +57,35 @@ public class LableBeanHolder {
             return Result.failed(false, "仅管理员可维护标签组");
         }
         return null;
+    }
+
+    /** 标签组的业务主键是 iid，删除必须精确到行。 */
+    private Result<Boolean> checkLabelId(LableBean data) {
+        if (data == null || data.getIid() == null || data.getIid() <= 0) {
+            return Result.failed(false, "缺少标签组主键");
+        }
+        return null;
+    }
+
+    private Result<Boolean> checkLabelNameAndType(LableBean data) {
+        if (data == null || isEmpty(data.getName()) || isEmpty(data.getType())) {
+            return Result.failed(false, "标签名称和类型不能为空");
+        }
+        return null;
+    }
+
+    private Result<Boolean> checkUpdateWhere(LableBean where) {
+        if (where == null) {
+            return Result.failed(false, "缺少更新条件");
+        }
+        if (where.getIid() == null || where.getIid() <= 0) {
+            return Result.failed(false, "缺少标签组主键");
+        }
+        return null;
+    }
+
+    private static boolean isEmpty(String value) {
+        return value == null || value.trim().isEmpty();
     }
 
     /**
@@ -70,6 +102,10 @@ public class LableBeanHolder {
         Result<Boolean> check = checkAdmin(uid);
         if (check != null) {
             return check;
+        }
+        Result<Boolean> params = checkLabelNameAndType(data);
+        if (params != null) {
+            return params;
         }
         //查询名称是否存在
         LableBean bean = new LableBean();
@@ -99,6 +135,10 @@ public class LableBeanHolder {
         if (check != null) {
             return check;
         }
+        Result<Boolean> params = checkLabelId(data);
+        if (params != null) {
+            return params;
+        }
 
         if (lableBeanMapper.delete(data) <= 0) {
             return Result.failed(false, "删除失败");
@@ -125,6 +165,16 @@ public class LableBeanHolder {
         Result<Boolean> check = checkAdmin(uid);
         if (check != null) {
             return check;
+        }
+        if (data == null) {
+            return Result.failed(false, "缺少更新数据");
+        }
+        if (data.getName() != null && isEmpty(data.getName())) {
+            return Result.failed(false, "标签名称不能为空");
+        }
+        Result<Boolean> whereCheck = checkUpdateWhere(where);
+        if (whereCheck != null) {
+            return whereCheck;
         }
 
         data.setLastuser(uid);

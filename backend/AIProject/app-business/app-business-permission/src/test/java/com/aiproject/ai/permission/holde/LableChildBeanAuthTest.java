@@ -140,11 +140,65 @@ class LableChildBeanAuthTest {
     }
 
     @Test
+    void delete_admin_emptyCondition_shouldBeRejected_andNotTouchDb() {
+        Result<Boolean> r = holder.delete("admin", new LableChildBean());
+        assertFalse(Boolean.TRUE.equals(r.getDatas()), "空条件删除必须被拒绝，不能命中整表");
+        verify(lableChildBeanMapper, never()).delete(any(LableChildBean.class));
+    }
+
+    @Test
+    void delete_admin_missingLableiid_shouldBeRejected_andNotTouchDb() {
+        LableChildBean partial = binding("models", "9");
+        partial.setLableiid(null);
+
+        Result<Boolean> r = holder.delete("admin", partial);
+        assertFalse(Boolean.TRUE.equals(r.getDatas()), "缺少标签组时无法定位单条绑定");
+        verify(lableChildBeanMapper, never()).delete(any(LableChildBean.class));
+    }
+
+    @Test
+    void delete_admin_completeBindingKey_shouldSucceed() {
+        when(myUserBaseDbHolder.isAdmin("admin")).thenReturn(true);
+        when(lableChildBeanMapper.delete(any(LableChildBean.class))).thenReturn(1);
+
+        assertTrue(Boolean.TRUE.equals(holder.delete("admin", binding("models", "9")).getDatas()));
+    }
+
+    @Test
+    void install_admin_missingLableiid_shouldBeRejected_andNotTouchDb() {
+        LableChildBean partial = binding("models", "9");
+        partial.setLableiid(null);
+
+        Result<Boolean> r = holder.install("admin", partial);
+        assertFalse(Boolean.TRUE.equals(r.getDatas()), "缺少标签组不能创建无意义绑定");
+        verify(lableChildBeanMapper, never()).install(any(LableChildBean.class));
+    }
+
+    @Test
+    void update_admin_emptyWhere_shouldBeRejected_andNotTouchDb() {
+        when(myUserBaseDbHolder.isAdmin("admin")).thenReturn(true);
+
+        Result<Boolean> r = holder.update("admin", binding("models", "9"), new LableChildBean());
+        assertFalse(Boolean.TRUE.equals(r.getDatas()), "空条件更新必须被拒绝");
+        verify(lableChildBeanMapper, never()).update(any(LableChildBean.class), any(LableChildBean.class));
+    }
+
+    @Test
+    void update_admin_nullData_shouldBeRejected_andNotTouchDb() {
+        when(myUserBaseDbHolder.isAdmin("admin")).thenReturn(true);
+
+        Result<Boolean> r = holder.update("admin", null, binding("models", "9"));
+        assertFalse(Boolean.TRUE.equals(r.getDatas()), "缺少更新数据必须被拒绝");
+        verify(lableChildBeanMapper, never()).update(any(LableChildBean.class), any(LableChildBean.class));
+    }
+
+    @Test
     void update_admin_shouldSucceed() {
         when(myUserBaseDbHolder.isAdmin("admin")).thenReturn(true);
         when(lableChildBeanMapper.update(any(LableChildBean.class), any(LableChildBean.class))).thenReturn(1);
+        LableChildBean where = new LableChildBean();
+        where.setIid(1L);
 
-        assertTrue(Boolean.TRUE.equals(holder.update("admin", binding("knowledge_base", "kb-1"),
-                new LableChildBean()).getDatas()));
+        assertTrue(Boolean.TRUE.equals(holder.update("admin", binding("knowledge_base", "kb-1"), where).getDatas()));
     }
 }
