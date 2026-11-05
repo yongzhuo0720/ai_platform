@@ -109,7 +109,12 @@ public class KbRagHolder {
     /**
      * 上传文档：服务端分块并向量化后入库。
      * 文本由前端读取后以字符串提交（支持 txt/md 等纯文本）。
+     *
+     * @deprecated Controller 的 {@code /uploadDoc} 已转发到 {@link KbDocPipelineHolder}；
+     *             本方法仅为兼容既有单测保留，不要再作为业务入口调用。
+     *             它不写 contentHash / 原始正文 / 状态与向量模型标识，也不做去重。
      */
+    @Deprecated
     public Result<KbDocBean> uploadDoc(String uid, KbDocUpload data) {
         if (uid == null || uid.trim().isEmpty()) {
             return Result.failed(null, "未登录或登录已过期");

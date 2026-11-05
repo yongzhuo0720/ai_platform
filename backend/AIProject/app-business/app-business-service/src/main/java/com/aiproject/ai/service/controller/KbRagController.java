@@ -44,11 +44,32 @@ public class KbRagController {
         return kbRagHolder.listDocs(uid);
     }
 
-    @ApiOperation(value = "上传文档", httpMethod = "POST", notes = "分块 + 向量化后入库")
+    /**
+     * 旧同步上传入口，仅保留兼容：实际转发到异步流水线。
+     *
+     * <p>修复前这个入口直接写 kbdocbean/kbchunkbean，不写 contentHash、docKey、
+     * 原始正文、状态与向量模型标识，也不做去重与同名校验——任何登录用户都能
+     * 绕过新流水线的全部闸门无限重复上传；这些「黑户文档」不可重试，换向量模型后
+     * 还会被当成有效候选参与检索，检索质量在无声中下降。</p>
+     *
+     * <p>产品前端已全部切到 {@link #uploadFile}。这里转发后旧调用方仍然可用，
+     * 数据一律由 {@link KbDocPipelineHolder} 按同一套规则处理。</p>
+     *
+     * <p><b>语义变化</b>：由「同步返回 ready」变为「受理后返回 queued」，
+     * 调用方应从 {@code listDocs} 轮询 status / progress。</p>
+     */
+    @Deprecated
+    @ApiOperation(value = "上传文档（旧入口，转发到异步流水线）", httpMethod = "POST",
+            notes = "兼容旧调用方；实际走 /uploadFile 同一套解析、去重、状态与重试，返回 queued")
     @PostMapping("/uploadDoc")
     public Result<KbDocBean> uploadDoc(@LoginUserId String uid,
-                                       @RequestBody KbDocUpload data) {
-        return kbRagHolder.uploadDoc(uid, data);
+                                       @RequestBody(required = false) KbDocUpload data) {
+        if (data == null) {
+            return Result.failed(null, "请求参数不能为空");
+        }
+        // fileType / sizeBytes 留空，由 KbDocTextParser 从文件名推断类型、按正文长度计算体积
+        return kbDocPipelineHolder.uploadFile(uid, null, data.getContent(),
+                data.getName(), data.getKbName(), null, data.getName(), null);
     }
 
     @ApiOperation(value = "上传文件（异步流水线）", httpMethod = "POST",

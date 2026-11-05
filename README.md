@@ -45,7 +45,7 @@ Dify                              本平台 PostgreSQL
                           .id      └─ unitsnos/roleiids  部门/角色黑名单
 ```
 
-本地 RAG 是另一条链路：浏览器提取 TXT / Markdown / PDF / Word 文本，后端分块并调用向量模型，把文档元数据写入 `kbdocbean`，把文本分块与向量 JSON 写入 `kbchunkbean`。检索限定当前用户，结合余弦相似度、PostgreSQL 全文候选与 RRF 融合；可选 Rerank 后，将最终顺序的片段注入直连模型请求。它需要同时考虑**数据归属、检索质量与存储一致性**。
+本地 RAG 是另一条链路，采用**双通道上传 + 异步流水线**：txt/md/markdown/csv/json/log 由浏览器把原始文件以 `multipart` 交给后端 `KbDocTextParser` 解码（UTF-8 / GBK / BOM），PDF/DOCX 由浏览器用 pdfjs / mammoth 提取正文后以 `content` 提交，两条都走 `POST /ai/api/kbRag/uploadFile`。接口只做解析、校验、正文 SHA-256 去重与建任务，分块和向量化交给 `KbDocRunner` 在专用线程池里执行，状态机为 `queued → chunking → embedding → ready / failed`；文档元数据与 `status/progress` 写 `kbdocbean`，原始正文写 `kbdoccontentbean`，分块与向量 JSON 写 `kbchunkbean`，前端每 2 秒轮询真实进度。检索限定当前用户，结合余弦相似度、PostgreSQL 全文候选与 RRF 融合；可选 Rerank 后，将最终顺序的片段注入直连模型请求。它需要同时考虑**数据归属、检索质量与存储一致性**。
 
 ---
 
@@ -207,8 +207,8 @@ frontend/src/
 | 文件下载 | 路径需落在已登记的数据集根目录内，规范化后前缀比对，越界返回 403 |
 | 密钥治理 | 默认网关模式下，Dify / 直连模型密钥仅由服务端使用；网关覆盖客户端传入的认证头；平台 API 密钥只存 SHA-256 哈希，明文仅在创建时返回一次，且 `create` 不写操作日志（否则响应体里的明文会落进 `usercontrollerlog`） |
 | 操作日志 | 框架写的 `usercontrollerlog` 由本项目自己的 `POST /ai/api/controllerLog/query` 只读暴露：仅超管可查，日期区间严格解析成 `yyyy-MM-dd`，排序固定 `iid desc` 不接受前端传值，实体不映射 `params` 列（请求参数快照，可能含口令），所以那条链路上取不到请求体 |
-| AI 调用治理 | Dify、OpenAI 兼容模型与 `/v1` 外部调用共用网关：按用户限流，记录 tokens、耗时、请求 ID 与成本；支持用户与部门 Token 配额；客户端停止生成时立即关闭上游连接 |
-| 上传限制 | 单文件 50MB / 整请求 120MB；超限直接返回 413 `payload_too_large` 并记审计，不再伪装成 502 上游故障 |
+| AI 调用治理 | Dify、OpenAI 兼容模型与 `/v1` 外部调用共用网关：按用户限流，记录 tokens、耗时、请求 ID 与成本；支持用户与部门 Token 配额；Redis / 配额表不可用时 **fail-closed**（503 `guard_unavailable`），不放行。客户端取消会被识别并关闭上游连接，但 SSE 读循环是同步阻塞的，上游静默时最长要等 `readTimeoutMs`（默认 300s）才进入收尾，已在 `docs/第二轮深度升级-审查报告-2026-11-05.md` §5.2 列为待修项 |
+| 上传限制 | **两层限制，勿混用**：AI 网关透传链路为单文件 50MB / 整请求 120MB，超限返回 413 `payload_too_large` 并记审计，不再伪装成 502；本地 RAG 文档流水线另有更严的业务上限——单文件 20MB、解析后 20 万字符、单篇最多 500 块，超限在服务端解析阶段直接拒绝（不静默截断） |
 | 上游地址 | Dify 与直连模型的目标地址取服务端配置，由管理员维护 |
 | XSS | 助手回答中的原始 HTML 做转义，图片 URL 做协议校验 |
 
@@ -238,9 +238,9 @@ cd frontend
 npm run typecheck      # TypeScript 类型检查
 npm run check:icons    # 图标注册检查（模板图标必须 import 或全局注册）
 npm run check:styles   # 硬编码色值棘轮检查（只减不增，基线在 scripts/check-styles.baseline.json）
-npm run test            # 单元测试（Vitest），17 个文件 / 207 项
-npm run test:component  # 组件测试（真实渲染），25 个文件 / 216 项
-npm run test:e2e        # 浏览器冒烟（真实 Chromium + 接口 mock），13 项
+npm run test            # 单元测试（Vitest），18 个文件 / 212 项
+npm run test:component  # 组件测试（真实渲染），26 个文件 / 230 项
+npm run test:e2e        # 浏览器冒烟（真实 Chromium + 接口 mock），15 项
 npm run check:streaming # 流式超时/取消回归，14 项
 npm run check:markdown  # Markdown 与 XSS 消毒回归，10 项
 npm run build            # 生产构建
@@ -251,23 +251,30 @@ npm run check:bundle     # 首屏 gzip 体积预算（需先 build）
 跑完会打印 `后端单测汇总：N 项 / M 份报告`，一份报告都没生成就直接判失败——这是为了
 堵住「测试被静默跳过但 BUILD SUCCESS」这类最危险的绿色）。日志统一 UTF-8，可直接重定向存档。
 
-### 当前测试结果（2026-11-02 实测，`scripts/verify.ps1` 全绿）
+### 当前测试结果（2026-11-05 实测）
 
 | 项目 | 结果 |
 |---|---|
-| 后端单元测试 | **320 项通过（32 个测试类），0 失败 / 0 错误 / 0 跳过**（2026-11-01 实测，本批未改后端） |
+| 后端单元测试 | **434 项 / 40 份 Surefire 报告，0 失败 / 0 错误 / 0 跳过**（`mvn -o test`，JDK 8 Dragonwell 8；app-common 7、permission 71、service 330、app-start 26） |
 | 前端 TypeScript 检查 | 通过 |
-| 前端图标注册检查 | 通过（56 个在用图标全部可解析） |
+| 前端图标注册检查 | 通过 |
 | 硬编码色值棘轮检查 | 通过（48 个文件 / 2102 处，等于基线；新增即失败，只允许减少） |
-| 前端单元测试 | 17 个文件 / **207 项通过** |
-| 前端组件测试 | 25 个文件 / **216 项通过**（@vue/test-utils 真实渲染 LoginView / ChatComposer / ChatMessageList / ChatSidebar / StateBlock / KbSearchView / MyUsageView / ApiKeysView / ShareView / AiGatewayView / UserView / RoleView / UnitView / ModelsConfigView / DifyConfigView / LogView / KnowledgeBaseMngView / ModelsView / ApplicationsView / CapabilitiesView / DatasetView / KnowledgeBaseSquareView / KnowledgeBaseView / PreviewView / NotFoundView） |
-| 浏览器冒烟（Playwright） | **13 项通过**（真实 Chromium：登录守卫与登录跳转、聊天页启动无异常、直连模型 SSE 流式回答、直连图片附件带压缩 dataURL、直连模式隐藏 Dify 应用参数、配额 429 展示服务端原因、知识库模块未配置引导、404 兜底，外加目录页三态 5 项：骨架屏、接口非 0 可重试、搜索无结果文案、加载异常、数据集页异常后重试恢复；接口层由 `page.route` 拦截；webServer 固定用 4317 + `--strictPort`，不会撞上你开着的 5173 dev server） |
+| 前端逻辑单元测试 | 18 个文件 / **212 项通过** |
+| 前端组件测试 | 26 个文件 / **230 项通过**（@vue/test-utils 真实渲染） |
+| 浏览器冒烟（Playwright） | **15 项通过**（真实 Chromium + `page.route` 接口 mock，含文档流水线、目录页三态、登录守卫、SSE、配额、RAG 评估详情、404 兜底） |
 | 前端流式回归 | 14 项通过 |
-| 前端 Markdown / XSS 回归 | 10 项通过（**2026-10-29 前该脚本一直是失败的，见文档**） |
-| 前端生产构建 | 通过（element-plus 按路由分包，入口 gzip 152.2 kB，已无 >500 kB 分包警告） |
-| 产物体积预算 | 通过（首屏 JS 202.6 kB / 预算 260 kB，首屏 CSS 58.2 kB / 预算 80 kB，gzip） |
-| 产物密钥扫描 | 通过（构建后扫 106 个 dist 文件，防止 `VITE_*` 被 Vite 内联进产物） |
+| 前端 Markdown / XSS 回归 | 10 项通过 |
+| 前端生产构建 | 通过（element-plus 按路由分包） |
+| 产物体积预算 | 通过（首屏 JS ≤260 kB / CSS ≤80 kB，gzip） |
+| 产物密钥扫描 | 通过（构建后扫 dist，防止 `VITE_*` 被内联） |
 | RAG 评估集自检 | 通过（黄金集与语料一致性 + JS 指标与 Java `RagEvaluator` 口径一致，离线） |
+
+> **环境说明**：`scripts/verify.ps1` 在带批量删除防护的受限执行环境下，可能出现
+> Vitest 的 unhandled errors、Vite 构建的 `EPERM`，或 Playwright 清理 `test-results`
+> 时触发 `SAFE_DELETE_BULK_CONFIRM_REQUIRED`。这三类失败**不是用例回归**：
+> 单独执行 `npm run test` / `test:component` / `build` / `test:e2e`（E2E 先把旧
+> `test-results` 移到临时目录）均为 exit=0。上表数字来自 2026-11-05 的逐项复现
+> 与后端 Maven 实际输出；后端仍以 `verify.ps1` 为唯一门禁。
 
 2026-10-30 前端改进：
 
@@ -412,7 +419,8 @@ npm run check:bundle     # 首屏 gzip 体积预算（需先 build）
 永远看不到。现在请求开始前先原子预扣 `ai.gateway.quota-reserve-tokens`（默认 1500，
 用户池和部门共享池各一次 Redis 自增，任一超额即回滚并返回 429，不调用上游）；
 请求结束按上游返回的真实 usage 结算（多退少补），失败、异常或客户端中断全额释放。
-预扣值设 0 可关闭，退回旧行为；Redis 异常时 fail-open 并打 warn。直连模型在请求体
+预扣值设 0 可关闭，退回旧行为；**Redis / 配额表读不到时 fail-closed**（返回 503 `guard_unavailable`，
+不放行）——这是 2026-11-01 起的行为，旧版文档写的 fail-open 已失效。直连模型在请求体
 校验通过后才预扣，非法请求不占额度。预扣是估算值：单次回答远超 1500 tokens 时，
 结算后仍可能小幅超出配额——但并发窗口从「整个请求时长」缩短到「一次自增」，
 超出量也从「N 个并发请求的总和」收敛到「每个在途请求的实际用量与预扣值之差」。
