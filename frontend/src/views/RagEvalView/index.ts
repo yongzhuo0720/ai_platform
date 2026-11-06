@@ -22,12 +22,20 @@ export interface EditorCase {
   category: string
 }
 
-const STATUS_META: Record<RagEvalRunStatus, { label: string; type: 'info' | 'warning' | 'success' | 'danger' }> = {
+type TagType = 'info' | 'warning' | 'success' | 'danger'
+
+const STATUS_META: Record<RagEvalRunStatus, { label: string; type: TagType }> = {
   queued: { label: '排队中', type: 'info' },
   running: { label: '运行中', type: 'warning' },
   success: { label: '成功', type: 'success' },
   partial: { label: '部分成功', type: 'warning' },
   failed: { label: '失败', type: 'danger' },
+}
+
+const CHANNEL_META: Record<string, { label: string; type: TagType }> = {
+  both: { label: '双路', type: 'success' },
+  dense: { label: '向量路', type: 'info' },
+  lexical: { label: '关键词路', type: 'warning' },
 }
 
 const isActiveStatus = (status: RagEvalRunStatus) =>
@@ -127,6 +135,13 @@ export function useIndex() {
         hint: '全部关键词出现在期望文档同一命中分块的比例',
       },
     ]
+  })
+
+  /** 基线口径未知（历史运行）不算不一致；两边都有版本且不同才提示 */
+  const baselineMetricMismatch = computed(() => {
+    const current = state.runDetail?.run?.metricSpec
+    const base = state.runDetail?.baseline?.metricSpec
+    return Boolean(current && base && current !== base)
   })
 
   onMounted(() => {
@@ -515,6 +530,21 @@ export function useIndex() {
     return STATUS_META[status] ?? { label: status, type: 'info' as const }
   }
 
+  function channelMeta(channel?: string | null) {
+    return CHANNEL_META[channel ?? ''] ?? { label: channel || '-', type: 'info' as const }
+  }
+
+  /** 分数为 -1 表示该片段没有参与这条召回路径，不能显示成 0 分 */
+  function formatScore(value: number | null | undefined) {
+    if (value === null || value === undefined) return '-'
+    return value < 0 ? '未参与' : value.toFixed(4)
+  }
+
+  function formatLexicalScore(value: number | null | undefined) {
+    if (value === null || value === undefined) return '-'
+    return value < 0 ? '未参与' : String(value)
+  }
+
   function runProgress(row: RagEvalRun) {
     if (!row.total) return row.status === 'success' || row.status === 'partial' ? 100 : 0
     if (!isActiveStatus(row.status)) return 100
@@ -569,6 +599,7 @@ export function useIndex() {
     hasActiveRun,
     selectedDataset,
     metricCards,
+    baselineMetricMismatch,
     loadDatasets,
     selectDataset,
     loadRuns,
@@ -585,6 +616,9 @@ export function useIndex() {
     submitEditor,
     statusMeta,
     runProgress,
+    channelMeta,
+    formatScore,
+    formatLexicalScore,
     formatMetric,
     formatPercent,
     formatDelta,

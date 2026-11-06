@@ -11,6 +11,7 @@ import com.aiproject.ai.service.mapper.RagEvalCaseBeanMapper;
 import com.aiproject.ai.service.mapper.RagEvalCaseResultBeanMapper;
 import com.aiproject.ai.service.mapper.RagEvalDatasetBeanMapper;
 import com.aiproject.ai.service.mapper.RagEvalRunBeanMapper;
+import com.aiproject.ai.service.rag.dto.RagEvalHitDto;
 import com.heneng.hnsp.common.croe.model.Result;
 import com.heneng.hnsp.common.db.utils.PageRequest;
 import lombok.extern.slf4j.Slf4j;
@@ -45,6 +46,14 @@ public class RagEvalRunner {
     /** 超过 30 分钟仍未结束的运行视为僵死（服务重启、线程池异常等） */
     private static final long STALE_RUN_MS = 30 * 60 * 1000L;
     private static final int TRUNCATE_ERROR_CHARS = 1000;
+    /**
+     * 指标口径版本：Recall/Precision 按文档去重、NDCG 二值相关、关键词要求同块全部命中。
+     * 口径一旦变化必须升版本，否则新旧运行的「对比基线」是在比较两套算法。
+     */
+    private static final String METRIC_SPEC = "rag-eval-v1";
+    private static final String RETRIEVAL_HYBRID = "hybrid-rrf";
+    private static final String RETRIEVAL_HYBRID_RERANK = "hybrid-rrf+rerank";
+    private static final int PREVIEW_CHARS = 200;
 
     @Autowired
     RagEvalRunBeanMapper<RagEvalRunBean> runMapper;
@@ -148,6 +157,7 @@ public class RagEvalRunner {
         int keywordEvaluated = 0;
         int keywordHits = 0;
         int errors = 0;
+        boolean rerankApplied = false;
         String firstError = null;
         String model = null;
         for (RunCaseData data : evaluated) {
@@ -165,6 +175,9 @@ public class RagEvalRunner {
             }
             if (model == null && data.model != null && !data.model.trim().isEmpty()) {
                 model = data.model;
+            }
+            if (data.rerankApplied) {
+                rerankApplied = true;
             }
         }
 
@@ -199,6 +212,9 @@ public class RagEvalRunner {
         finished.setKeywordEvaluatedCount(keywordEvaluated);
         finished.setMissCount(report.getMisses().size());
         finished.setEmbeddingModel(model);
+        finished.setMetricSpec(METRIC_SPEC);
+        finished.setRetrievalMode(rerankApplied ? RETRIEVAL_HYBRID_RERANK : RETRIEVAL_HYBRID);
+        finished.setRerankApplied(rerankApplied);
         finished.setErrorMessage(truncate(errorMessage));
         finished.setFinishedAt(finishedAt);
         finished.setDurationMs(finishedAt - startedAt);
@@ -221,6 +237,7 @@ public class RagEvalRunner {
                 return data;
             }
             data.model = searchResult.getModel();
+            data.rerankApplied = searchResult.isRerankApplied();
             data.topDoc = null;
             List<KbSearchItem> items = searchResult.getItems();
             if (items != null) {
@@ -231,6 +248,7 @@ public class RagEvalRunner {
                     String docName = hit.getDocName() == null ? "" : hit.getDocName();
                     data.retrievedDocs.add(docName);
                     data.contents.add(hit.getContent() == null ? "" : hit.getContent());
+                    data.hits.add(toHitDto(data.hits.size() + 1, hit, docName));
                 }
             }
             if (!data.retrievedDocs.isEmpty()) {
@@ -282,6 +300,7 @@ public class RagEvalRunner {
         bean.setExpectedKeywords(data.bean.getExpectedKeywords());
         bean.setCategory(data.bean.getCategory());
         bean.setRetrievedDocs(RagEvalKeywordCodec.writeStringList(data.retrievedDocs));
+        bean.setRetrievedHits(RagEvalKeywordCodec.writeHits(data.hits));
         bean.setTopDoc(data.topDoc);
         bean.setFirstHitRank(data.firstHitRank);
         bean.setRecall(caseResult.getRecall());
@@ -294,6 +313,32 @@ public class RagEvalRunner {
         bean.setErrorMessage(truncate(data.error));
         bean.setLastuser(uid);
         return bean;
+    }
+
+    /**
+     * 保留每个命中片段的三路分数与来源：只存文档名时，无法判断漏召是
+     * 向量没匹配上、关键词没匹配上，还是精排把正确片段压到了后面。
+     */
+    private static RagEvalHitDto toHitDto(int rank, KbSearchItem hit, String docName) {
+        RagEvalHitDto dto = new RagEvalHitDto();
+        dto.setRank(rank);
+        dto.setDocName(docName);
+        dto.setKbName(hit.getKbName());
+        dto.setChunkIndex(hit.getChunkIndex());
+        dto.setScore(hit.getScore());
+        dto.setDenseScore(hit.getDenseScore());
+        dto.setLexicalScore(hit.getLexicalScore());
+        dto.setChannel(hit.getChannel());
+        dto.setContentPreview(preview(hit.getContent()));
+        return dto;
+    }
+
+    private static String preview(String content) {
+        if (content == null) {
+            return null;
+        }
+        String text = content.trim().replaceAll("\\s+", " ");
+        return text.length() <= PREVIEW_CHARS ? text : text.substring(0, PREVIEW_CHARS);
     }
 
     private static long docId(Map<String, Long> docIds, AtomicLong nextDocId, String docName) {
@@ -447,11 +492,13 @@ public class RagEvalRunner {
         private int index;
         private final List<String> retrievedDocs = new ArrayList<String>();
         private final List<String> contents = new ArrayList<String>();
+        private final List<RagEvalHitDto> hits = new ArrayList<RagEvalHitDto>();
         private String model;
         private String topDoc;
         private int firstHitRank;
         private boolean keywordHit;
         private boolean keywordEvaluated;
+        private boolean rerankApplied;
         private String error;
         private long durationMs;
     }

@@ -46,6 +46,10 @@ public class RagEvalCaseResultBean extends DbEntityBase {
     @ApiModelProperty("前 k 条命中文档名（JSON 数组，保留重复与顺序）")
     String retrievedDocs;
 
+    @SqlColumn(method = "text")
+    @ApiModelProperty("Top-K 命中明细（JSON 数组：排名/分块/三路分数/来源/片段预览）")
+    String retrievedHits;
+
     @SqlColumn()
     @ApiModelProperty("首条命中文档名")
     String topDoc;

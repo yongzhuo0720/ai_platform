@@ -20,5 +20,11 @@ public class KbSearchResult {
     private int skipped;
     /** 面向用户的降级说明，正常检索时为 null */
     private String warning;
+    /**
+     * 本次检索是否真正应用了 rerank 精排。
+     * 未配置、候选不足或精排失败降级时都是 false——评估运行需要如实记录，
+     * 否则「加了 rerank」与「rerank 没生效」在报告里看起来一模一样。
+     */
+    private boolean rerankApplied;
     private List<KbSearchItem> items = new ArrayList<KbSearchItem>();
 }

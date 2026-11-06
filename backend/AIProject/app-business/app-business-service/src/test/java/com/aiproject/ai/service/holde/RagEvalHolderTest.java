@@ -14,6 +14,7 @@ import com.aiproject.ai.service.rag.RagEvalRunner;
 import com.aiproject.ai.service.rag.RagEvalStatus;
 import com.aiproject.ai.service.rag.dto.RagEvalCaseInput;
 import com.aiproject.ai.service.rag.dto.RagEvalDatasetRequest;
+import com.aiproject.ai.service.rag.dto.RagEvalHitDto;
 import com.aiproject.ai.service.rag.dto.RagEvalRunDetail;
 import com.aiproject.ai.service.rag.dto.RagEvalRunRequest;
 import com.heneng.hnsp.common.croe.model.Result;
@@ -392,6 +393,40 @@ class RagEvalHolderTest {
         assertEquals("r3", detail.getRun().getRunKey());
         assertNotNull(detail.getBaseline());
         assertEquals("r2", detail.getBaseline().getRunKey(), "基线必须是更早且可比较的运行");
+    }
+
+    @Test
+    void getRun_shouldParseTopKHitsAndTolerateLegacyRows() {
+        RagEvalRunBean current = run("r1", RagEvalStatus.SUCCESS, 10);
+        when(runMapper.select(isNull(), any(RagEvalRunBean.class)))
+                .thenReturn(Collections.singletonList(current));
+        when(runMapper.select(any(PageRequest.class), any(RagEvalRunBean.class)))
+                .thenReturn(Collections.singletonList(current));
+
+        RagEvalCaseResultBean withHits = new RagEvalCaseResultBean();
+        withHits.setCaseIndex(0);
+        withHits.setRetrievedDocs("[\"A.pdf\"]");
+        withHits.setRetrievedHits("[{\"rank\":1,\"docName\":\"A.pdf\",\"chunkIndex\":3,"
+                + "\"score\":0.0328,\"denseScore\":0.91,\"lexicalScore\":2,"
+                + "\"channel\":\"both\",\"contentPreview\":\"预览\"}]");
+        RagEvalCaseResultBean legacy = new RagEvalCaseResultBean();
+        legacy.setCaseIndex(1);
+        legacy.setRetrievedDocs("[\"B.pdf\"]");
+        when(resultMapper.select(any(PageRequest.class), any(RagEvalCaseResultBean.class)))
+                .thenReturn(Arrays.asList(withHits, legacy));
+
+        Result<RagEvalRunDetail> result = holder.getRun(UID, "r1");
+
+        assertTrue(ok(result), result.getResp_msg());
+        RagEvalHitDto hit = result.getDatas().getResults().get(0).getRetrievedHits().get(0);
+        assertEquals(1, hit.getRank().intValue());
+        assertEquals("A.pdf", hit.getDocName());
+        assertEquals(3, hit.getChunkIndex().intValue());
+        assertEquals(0.91, hit.getDenseScore(), 1e-9);
+        assertEquals("both", hit.getChannel());
+        assertEquals("预览", hit.getContentPreview());
+        assertTrue(result.getDatas().getResults().get(1).getRetrievedHits().isEmpty(),
+                "旧运行没有明细时应返回空列表，不能让详情页整体失败");
     }
 
     @Test

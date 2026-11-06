@@ -11,6 +11,7 @@ import com.aiproject.ai.service.mapper.RagEvalCaseBeanMapper;
 import com.aiproject.ai.service.mapper.RagEvalCaseResultBeanMapper;
 import com.aiproject.ai.service.mapper.RagEvalDatasetBeanMapper;
 import com.aiproject.ai.service.mapper.RagEvalRunBeanMapper;
+import com.aiproject.ai.service.rag.dto.RagEvalHitDto;
 import com.heneng.hnsp.common.croe.model.Result;
 import com.heneng.hnsp.common.db.utils.PageRequest;
 import org.junit.jupiter.api.Test;
@@ -84,8 +85,10 @@ class RagEvalRunnerTest {
         when(resultMapper.install(any(RagEvalCaseResultBean.class))).thenReturn(1);
         when(kbRagHolder.search(eq(UID), anyString(), eq(KB_NAME), eq(5)))
                 .thenReturn(searchResult(
-                                hit("A.pdf", "alpha beta 的正文"),
-                                hit("B.pdf", "无关内容")),
+                                scoredHit("A.pdf", 2, "alpha beta 的正文",
+                                        0.0328, 0.91, 3, "both"),
+                                scoredHit("B.pdf", 0, "无关内容",
+                                        0.0164, 0.42, -1, "dense")),
                         searchResult(
                                 hit("B.pdf", "无关内容"),
                                 hit("C.pdf", "gamma 的正文")));
@@ -104,6 +107,9 @@ class RagEvalRunnerTest {
         assertEquals(1, finalUpdate.keywordEvaluatedCount);
         assertEquals(0, finalUpdate.missCount);
         assertEquals("embed-v1", finalUpdate.embeddingModel);
+        assertEquals("rag-eval-v1", finalUpdate.metricSpec);
+        assertEquals("hybrid-rrf", finalUpdate.retrievalMode);
+        assertFalse(finalUpdate.rerankApplied);
         assertNull(finalUpdate.errorMessage);
 
         ArgumentCaptor<RagEvalCaseResultBean> captor =
@@ -121,6 +127,66 @@ class RagEvalRunnerTest {
         assertFalse(saved.get(1).getKeywordEvaluated());
         assertNull(saved.get(1).getErrorMessage());
         assertEquals(UID, saved.get(0).getLastuser());
+
+        List<RagEvalHitDto> hits = RagEvalKeywordCodec.parseHits(saved.get(0).getRetrievedHits());
+        assertEquals(2, hits.size());
+        assertEquals(1, hits.get(0).getRank().intValue());
+        assertEquals("A.pdf", hits.get(0).getDocName());
+        assertEquals(2, hits.get(0).getChunkIndex().intValue());
+        assertEquals(0.0328, hits.get(0).getScore(), 1e-9);
+        assertEquals(0.91, hits.get(0).getDenseScore(), 1e-9);
+        assertEquals(3, hits.get(0).getLexicalScore().intValue());
+        assertEquals("both", hits.get(0).getChannel());
+        assertEquals("alpha beta 的正文", hits.get(0).getContentPreview());
+        assertEquals(2, hits.get(1).getRank().intValue());
+        assertEquals(-1, hits.get(1).getLexicalScore().intValue(),
+                "未参与关键词路的片段必须保留 -1，不能伪造成 0 分");
+    }
+
+    @Test
+    void execute_shouldSnapshotRerankModeWhenSearchReportsApplied() {
+        stubRunAndDataset(caseBean("问题", "A.pdf"));
+        when(runMapper.update(any(RagEvalRunBean.class), any(RagEvalRunBean.class))).thenReturn(1);
+        when(resultMapper.install(any(RagEvalCaseResultBean.class))).thenReturn(1);
+        KbSearchResult result = new KbSearchResult();
+        result.setModel("embed-v1");
+        result.setRerankApplied(true);
+        result.setItems(new ArrayList<KbSearchItem>(Collections.singletonList(
+                hit("A.pdf", "正文"))));
+        when(kbRagHolder.search(anyString(), anyString(), anyString(), anyInt()))
+                .thenReturn(Result.succeed(result, "ok"));
+
+        runner.execute(RUN_KEY, UID);
+
+        RunUpdate finalUpdate = lastRunUpdate();
+        assertEquals("hybrid-rrf+rerank", finalUpdate.retrievalMode);
+        assertEquals(Boolean.TRUE, finalUpdate.rerankApplied);
+    }
+
+    @Test
+    void execute_shouldTruncatePreviewWithoutAffectingKeywordMatching() {
+        stubRunAndDataset(caseBean("问题", "A.pdf", "关键结论"));
+        when(runMapper.update(any(RagEvalRunBean.class), any(RagEvalRunBean.class))).thenReturn(1);
+        when(resultMapper.install(any(RagEvalCaseResultBean.class))).thenReturn(1);
+        StringBuilder longContent = new StringBuilder();
+        for (int i = 0; i < 400; i++) {
+            longContent.append('x');
+        }
+        longContent.append("关键结论");
+        when(kbRagHolder.search(anyString(), anyString(), anyString(), anyInt()))
+                .thenReturn(searchResult(hit("A.pdf", longContent.toString())));
+
+        runner.execute(RUN_KEY, UID);
+
+        ArgumentCaptor<RagEvalCaseResultBean> captor =
+                ArgumentCaptor.forClass(RagEvalCaseResultBean.class);
+        verify(resultMapper).install(captor.capture());
+        List<RagEvalHitDto> hits =
+                RagEvalKeywordCodec.parseHits(captor.getValue().getRetrievedHits());
+        assertEquals(200, hits.get(0).getContentPreview().length(),
+                "片段预览必须截断，避免评估明细表被原文撑大");
+        assertTrue(captor.getValue().getKeywordHit(),
+                "关键词匹配必须使用完整分块，不能被预览截断影响");
     }
 
     @Test
@@ -349,6 +415,18 @@ class RagEvalRunnerTest {
         return item;
     }
 
+    private static KbSearchItem scoredHit(String docName, int chunkIndex, String content,
+                                           double score, double denseScore,
+                                           int lexicalScore, String channel) {
+        KbSearchItem item = hit(docName, content);
+        item.setChunkIndex(chunkIndex);
+        item.setScore(score);
+        item.setDenseScore(denseScore);
+        item.setLexicalScore(lexicalScore);
+        item.setChannel(channel);
+        return item;
+    }
+
     private static Result<KbSearchResult> searchResult(KbSearchItem... items) {
         KbSearchResult result = new KbSearchResult();
         result.setModel("embed-v1");
@@ -376,6 +454,9 @@ class RagEvalRunnerTest {
                 ? -1 : last.getKeywordEvaluatedCount();
         update.missCount = last.getMissCount() == null ? -1 : last.getMissCount();
         update.embeddingModel = last.getEmbeddingModel();
+        update.metricSpec = last.getMetricSpec();
+        update.retrievalMode = last.getRetrievalMode();
+        update.rerankApplied = last.getRerankApplied();
         update.errorMessage = last.getErrorMessage();
         return update;
     }
@@ -393,6 +474,9 @@ class RagEvalRunnerTest {
         private int keywordEvaluatedCount;
         private int missCount;
         private String embeddingModel;
+        private String metricSpec;
+        private String retrievalMode;
+        private Boolean rerankApplied;
         private String errorMessage;
     }
 }

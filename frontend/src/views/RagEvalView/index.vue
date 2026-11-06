@@ -335,9 +335,20 @@
             <span v-if="state.runDetail.run.embeddingModel">
               向量模型 {{ state.runDetail.run.embeddingModel }}
             </span>
+            <el-tag v-if="state.runDetail.run.metricSpec" size="small" type="info">
+              口径 {{ state.runDetail.run.metricSpec }}
+            </el-tag>
+            <el-tag
+              v-if="state.runDetail.run.retrievalMode"
+              size="small"
+              :type="state.runDetail.run.rerankApplied ? 'success' : 'info'"
+            >
+              检索链路 {{ state.runDetail.run.retrievalMode }}
+            </el-tag>
             <span v-if="state.runDetail.baseline" class="rag-eval-baseline">
               对比基线：{{ formatDateTime(state.runDetail.baseline.startedAt) }}（TopK
               {{ state.runDetail.baseline.topK }}）
+              <template v-if="baselineMetricMismatch">· 口径不同，差值仅供参考</template>
             </span>
           </div>
 
@@ -374,6 +385,58 @@
             max-height="420"
             style="width: 100%"
           >
+            <el-table-column type="expand" width="40">
+              <template #default="scope">
+                <div class="rag-eval-hits">
+                  <template v-if="scope.row.retrievedHits?.length">
+                    <div class="rag-eval-hits-head">
+                      <strong>Top-{{ scope.row.retrievedHits.length }} 命中明细</strong>
+                      <span class="rag-eval-muted">
+                        「融合排序分」只用于排序，不是相似度；向量分与词项重叠分来自两条召回路径
+                      </span>
+                    </div>
+                    <el-table :data="scope.row.retrievedHits" size="small" border>
+                      <el-table-column prop="rank" label="#" width="44" align="center" />
+                      <el-table-column label="文档 / 分块" min-width="180" show-overflow-tooltip>
+                        <template #default="hit">
+                          {{ hit.row.docName || '-' }}
+                          <el-tag
+                            v-if="hit.row.chunkIndex !== null && hit.row.chunkIndex !== undefined"
+                            size="small"
+                            type="info"
+                            class="rag-eval-chunk-tag"
+                          >
+                            块 {{ hit.row.chunkIndex }}
+                          </el-tag>
+                        </template>
+                      </el-table-column>
+                      <el-table-column label="命中来源" width="94" align="center">
+                        <template #default="hit">
+                          <el-tag size="small" :type="channelMeta(hit.row.channel).type">
+                            {{ channelMeta(hit.row.channel).label }}
+                          </el-tag>
+                        </template>
+                      </el-table-column>
+                      <el-table-column label="融合排序分" width="100" align="right">
+                        <template #default="hit">{{ formatScore(hit.row.score) }}</template>
+                      </el-table-column>
+                      <el-table-column label="向量分" width="82" align="right">
+                        <template #default="hit">{{ formatScore(hit.row.denseScore) }}</template>
+                      </el-table-column>
+                      <el-table-column label="词项重叠" width="82" align="right">
+                        <template #default="hit">{{ formatLexicalScore(hit.row.lexicalScore) }}</template>
+                      </el-table-column>
+                      <el-table-column label="片段预览" min-width="260" show-overflow-tooltip>
+                        <template #default="hit">{{ hit.row.contentPreview || '-' }}</template>
+                      </el-table-column>
+                    </el-table>
+                  </template>
+                  <div v-else class="rag-eval-muted">
+                    本次运行未记录 Top-K 明细（旧版本运行或该题检索失败）。
+                  </div>
+                </div>
+              </template>
+            </el-table-column>
             <el-table-column type="index" label="#" width="44" align="center" />
             <el-table-column prop="question" label="问题" min-width="180" show-overflow-tooltip />
             <el-table-column prop="expectedDoc" label="期望文档" min-width="130" show-overflow-tooltip />
@@ -444,6 +507,7 @@ const {
   hasActiveRun,
   selectedDataset,
   metricCards,
+  baselineMetricMismatch,
   loadRuns,
   selectDataset,
   startRun,
@@ -458,6 +522,9 @@ const {
   submitEditor,
   statusMeta,
   runProgress,
+  channelMeta,
+  formatScore,
+  formatLexicalScore,
   formatMetric,
   formatPercent,
   formatDelta,

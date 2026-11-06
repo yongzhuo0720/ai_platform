@@ -59,11 +59,27 @@ export interface RagEvalRun {
   missCount?: number | null
   keywordEvaluatedCount?: number | null
   embeddingModel?: string | null
+  metricSpec?: string | null
+  retrievalMode?: string | null
+  rerankApplied?: boolean | null
   errorMessage?: string | null
   startedAt?: number | null
   finishedAt?: number | null
   durationMs?: number | null
   createtime?: string | number | null
+}
+
+/** 单条 Top-K 命中明细：分数用于解释排序，contentPreview 是截断后的片段 */
+export interface RagEvalHit {
+  rank: number
+  docName?: string | null
+  kbName?: string | null
+  chunkIndex?: number | null
+  score?: number | null
+  denseScore?: number | null
+  lexicalScore?: number | null
+  channel?: 'both' | 'dense' | 'lexical' | string | null
+  contentPreview?: string | null
 }
 
 export interface RagEvalCaseResult {
@@ -73,6 +89,7 @@ export interface RagEvalCaseResult {
   keywords: string[]
   category: string
   retrievedDocs: string[]
+  retrievedHits: RagEvalHit[]
   topDoc?: string | null
   firstHitRank: number
   recall: number

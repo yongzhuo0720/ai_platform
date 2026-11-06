@@ -744,6 +744,7 @@ public class RagEvalHolder {
         dto.setKeywords(RagEvalKeywordCodec.parseKeywords(bean.getExpectedKeywords()));
         dto.setCategory(bean.getCategory());
         dto.setRetrievedDocs(RagEvalKeywordCodec.parseStringList(bean.getRetrievedDocs()));
+        dto.setRetrievedHits(RagEvalKeywordCodec.parseHits(bean.getRetrievedHits()));
         dto.setTopDoc(bean.getTopDoc());
         dto.setFirstHitRank(bean.getFirstHitRank());
         dto.setRecall(bean.getRecall());

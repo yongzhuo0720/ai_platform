@@ -82,6 +82,18 @@ public class RagEvalRunBean extends DbEntityBase {
     @ApiModelProperty("本次检索使用的向量模型")
     String embeddingModel;
 
+    @SqlColumn()
+    @ApiModelProperty("指标口径版本，如 rag-eval-v1")
+    String metricSpec;
+
+    @SqlColumn()
+    @ApiModelProperty("检索模式快照：hybrid-rrf / hybrid-rrf+rerank")
+    String retrievalMode;
+
+    @SqlColumn()
+    @ApiModelProperty("本次运行是否实际应用了 rerank 精排")
+    Boolean rerankApplied;
+
     @SqlColumn(method = "text")
     @ApiModelProperty("失败或降级说明")
     String errorMessage;

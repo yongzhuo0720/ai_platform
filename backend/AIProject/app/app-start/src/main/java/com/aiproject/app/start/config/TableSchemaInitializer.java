@@ -81,7 +81,9 @@ public class TableSchemaInitializer implements ApplicationListener<ApplicationRe
                 + "\"total\" int4, \"processed\" int4, \"recall\" float8, \"precision\" float8, "
                 + "\"mrr\" float8, \"ndcg\" float8, \"keywordHitRate\" float8, "
                 + "\"missCount\" int4, \"keywordEvaluatedCount\" int4, "
-                + "\"embeddingModel\" varchar(128), \"errorMessage\" text, "
+                + "\"embeddingModel\" varchar(128), "
+                + "\"metricSpec\" varchar(32), \"retrievalMode\" varchar(32), \"rerankApplied\" boolean, "
+                + "\"errorMessage\" text, "
                 + "\"startedAt\" int8, \"finishedAt\" int8, \"durationMs\" int8, "
                 + "\"iid\" bigserial NOT NULL PRIMARY KEY, \"lastuser\" varchar(255), "
                 + "\"createtime\" timestamp DEFAULT now(), \"updatetime\" timestamp, "
@@ -99,7 +101,8 @@ public class TableSchemaInitializer implements ApplicationListener<ApplicationRe
         execute("CREATE TABLE IF NOT EXISTS ragevalcaseresultbean ("
                 + "\"runKey\" varchar(64), \"caseIndex\" int4, \"question\" text, "
                 + "\"expectedDoc\" varchar(200), \"expectedKeywords\" text, \"category\" varchar(32), "
-                + "\"retrievedDocs\" text, \"topDoc\" varchar(200), \"firstHitRank\" int4, "
+                + "\"retrievedDocs\" text, \"retrievedHits\" text, "
+                + "\"topDoc\" varchar(200), \"firstHitRank\" int4, "
                 + "\"recall\" float8, \"precision\" float8, \"reciprocalRank\" float8, "
                 + "\"ndcg\" float8, \"keywordHit\" boolean, \"keywordEvaluated\" boolean, "
                 + "\"durationMs\" int8, \"errorMessage\" text, "
@@ -110,6 +113,16 @@ public class TableSchemaInitializer implements ApplicationListener<ApplicationRe
                 + "ON ragevalcaseresultbean (\"runKey\", \"caseIndex\")");
         execute("CREATE INDEX IF NOT EXISTS idx_ragevalresult_user "
                 + "ON ragevalcaseresultbean (\"lastuser\")");
+
+        // 存量表补列：Top-K 明细与运行配置快照，旧运行保持 NULL，界面按「未记录」处理
+        execute("ALTER TABLE ragevalrunbean "
+                + "ADD COLUMN IF NOT EXISTS \"metricSpec\" varchar(32)");
+        execute("ALTER TABLE ragevalrunbean "
+                + "ADD COLUMN IF NOT EXISTS \"retrievalMode\" varchar(32)");
+        execute("ALTER TABLE ragevalrunbean "
+                + "ADD COLUMN IF NOT EXISTS \"rerankApplied\" boolean");
+        execute("ALTER TABLE ragevalcaseresultbean "
+                + "ADD COLUMN IF NOT EXISTS \"retrievedHits\" text");
     }
 
     /**

@@ -91,6 +91,9 @@ const baseRun = {
   missCount: 0,
   keywordEvaluatedCount: 2,
   embeddingModel: 'bge-m3',
+  metricSpec: 'rag-eval-v1',
+  retrievalMode: 'hybrid-rrf+rerank',
+  rerankApplied: true,
   startedAt: Date.UTC(2026, 10, 5, 9, 0, 0),
   durationMs: 2300,
   status: 'success' as const,
@@ -104,6 +107,8 @@ const baselineRun = {
   mrr: 0.7,
   ndcg: 0.75,
   keywordHitRate: 0.5,
+  retrievalMode: 'hybrid-rrf',
+  rerankApplied: false,
   startedAt: Date.UTC(2026, 10, 4, 9, 0, 0),
 }
 
@@ -135,6 +140,28 @@ const runDetail = {
       keywords: ['600', '住宿'],
       category: '数值型',
       retrievedDocs: ['差旅报销制度', '考勤制度'],
+      retrievedHits: [
+        {
+          rank: 1,
+          docName: '差旅报销制度',
+          chunkIndex: 3,
+          score: 0.0328,
+          denseScore: 0.91,
+          lexicalScore: 3,
+          channel: 'both',
+          contentPreview: '住宿标准：一线城市每晚上限 600 元',
+        },
+        {
+          rank: 2,
+          docName: '考勤制度',
+          chunkIndex: 0,
+          score: 0.0161,
+          denseScore: 0.42,
+          lexicalScore: -1,
+          channel: 'dense',
+          contentPreview: '迟到与旷工认定',
+        },
+      ],
       topDoc: '差旅报销制度',
       firstHitRank: 1,
       recall: 1,
@@ -153,6 +180,7 @@ const runDetail = {
       keywords: ['审批'],
       category: '事实型',
       retrievedDocs: ['考勤制度', '差旅报销制度'],
+      retrievedHits: [],
       topDoc: '考勤制度',
       firstHitRank: 2,
       recall: 1,
@@ -387,6 +415,52 @@ describe('RagEvalView', () => {
     expect(wrapper.text()).toContain('第 2 位')
     expect(wrapper.text()).toContain('命中')
     expect(wrapper.text()).toContain('未命中')
+  })
+
+  it('运行详情：展开行展示 Top-K 分数、来源与片段预览', async () => {
+    stubInitialLoad()
+    api.getRun.mockResolvedValue(ok(runDetail))
+    const wrapper = mountView()
+    await flushPromises()
+
+    await clickByText(wrapper, '.rag-eval-runs button', '详情')
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('口径 rag-eval-v1')
+    expect(wrapper.text()).toContain('检索链路 hybrid-rrf+rerank')
+    expect(wrapper.text()).not.toContain('口径不同')
+
+    const expandIcons = wrapper.findAll('.el-table__expand-icon')
+    expect(expandIcons.length).toBe(2)
+    await expandIcons[0].trigger('click')
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('Top-2 命中明细')
+    expect(wrapper.text()).toContain('融合排序分')
+    expect(wrapper.text()).toContain('双路')
+    expect(wrapper.text()).toContain('向量路')
+    expect(wrapper.text()).toContain('块 3')
+    expect(wrapper.text()).toContain('住宿标准：一线城市每晚上限 600 元')
+    expect(wrapper.text()).toContain('未参与')
+
+    const iconsAfterFirst = wrapper.findAll('.el-table__expand-icon')
+    await iconsAfterFirst[1].trigger('click')
+    await flushPromises()
+    expect(wrapper.text()).toContain('本次运行未记录 Top-K 明细')
+  })
+
+  it('运行详情：基线口径与当前不一致时提示差值仅供参考', async () => {
+    stubInitialLoad()
+    api.getRun.mockResolvedValue(
+      ok({ ...runDetail, baseline: { ...baselineRun, metricSpec: 'rag-eval-v0' } }),
+    )
+    const wrapper = mountView()
+    await flushPromises()
+
+    await clickByText(wrapper, '.rag-eval-runs button', '详情')
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('口径不同，差值仅供参考')
   })
 
   it('删除数据集：确认后调用接口并回到空态；取消不调用', async () => {

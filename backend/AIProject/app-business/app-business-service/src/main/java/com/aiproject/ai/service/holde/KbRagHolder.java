@@ -348,7 +348,8 @@ public class KbRagHolder {
                 diagnostics, embedding.getEmbedModel());
 
         int limit = topK == null ? 5 : Math.max(1, Math.min(MAX_TOP_K, topK));
-        fused = applyRerank(query.trim(), fused, limit);
+        RerankOutcome rerankOutcome = applyRerank(query.trim(), fused, limit);
+        fused = rerankOutcome.items;
         Map<Long, String> docNames = loadDocNames(uid);
         List<KbSearchItem> items = fused.size() > limit
                 ? new ArrayList<KbSearchItem>(fused.subList(0, limit)) : fused;
@@ -361,6 +362,7 @@ public class KbRagHolder {
         result.setModel(embedding.getEmbedModel());
         result.setScanned(chunks.size());
         result.setSkipped(diagnostics.skipped());
+        result.setRerankApplied(rerankOutcome.applied);
         result.setItems(items);
         List<String> warnings = new ArrayList<String>();
         if (diagnostics.skipped() > 0) {
@@ -398,11 +400,11 @@ public class KbRagHolder {
      * <p>任何失败（未配置 / 超时 / 响应异常）都降级返回原列表——
      * 精排是增强路径，绝不能阻塞检索主链路。</p>
      */
-    private List<KbSearchItem> applyRerank(String query, List<KbSearchItem> fused, int limit) {
+    private RerankOutcome applyRerank(String query, List<KbSearchItem> fused, int limit) {
         try {
             RerankResolver.ResolvedRerank config = rerankResolver.resolve();
             if (config == null || fused.size() <= 1) {
-                return fused;
+                return new RerankOutcome(fused, false);
             }
             int window = Math.min(Math.max(limit * 3, limit), 24);
             List<KbSearchItem> candidates = fused.size() > window
@@ -413,7 +415,7 @@ public class KbRagHolder {
             }
             List<Integer> order = rerankResolver.rerank(config, query, docs);
             if (order == null) {
-                return fused;
+                return new RerankOutcome(fused, false);
             }
             List<KbSearchItem> reranked = new ArrayList<KbSearchItem>(candidates.size());
             for (Integer idx : order) {
@@ -428,10 +430,21 @@ public class KbRagHolder {
                 }
             }
             log.info("[KbRag] rerank 生效: 候选 {} 条已重排", candidates.size());
-            return reranked;
+            return new RerankOutcome(reranked, true);
         } catch (Exception e) {
             log.warn("[KbRag] rerank 异常，降级混合排序: {}", e.getMessage());
-            return fused;
+            return new RerankOutcome(fused, false);
+        }
+    }
+
+    /** 精排结果与「是否真正生效」一起返回，避免调用方只能从顺序变化去猜 */
+    private static final class RerankOutcome {
+        private final List<KbSearchItem> items;
+        private final boolean applied;
+
+        private RerankOutcome(List<KbSearchItem> items, boolean applied) {
+            this.items = items;
+            this.applied = applied;
         }
     }
 

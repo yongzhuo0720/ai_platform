@@ -27,6 +27,9 @@ public class RagEvalCaseResultDto {
     @ApiModelProperty("前 k 条命中文档（保留顺序与重复）")
     private List<String> retrievedDocs;
 
+    @ApiModelProperty("Top-K 命中明细（分块、三路分数、命中来源、片段预览）")
+    private List<RagEvalHitDto> retrievedHits;
+
     @ApiModelProperty("首条命中文档")
     private String topDoc;
 
