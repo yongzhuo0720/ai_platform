@@ -253,7 +253,7 @@ npm run typecheck      # TypeScript 类型检查
 npm run check:icons    # 图标注册检查（模板图标必须 import 或全局注册）
 npm run check:styles   # 硬编码色值棘轮检查（只减不增，基线在 scripts/check-styles.baseline.json）
 npm run test            # 单元测试（Vitest），24 个文件 / 286 项
-npm run test:component  # 组件测试（真实渲染），30 个文件 / 300 项
+npm run test:component  # 组件测试（真实渲染），29 个文件 / 294 项
 npm run test:e2e        # 浏览器冒烟（真实 Chromium + 接口 mock），21 项
 npm run check:streaming # 流式超时/取消回归，14 项
 npm run check:markdown  # Markdown 与 XSS 消毒回归，10 项
@@ -269,12 +269,12 @@ npm run check:bundle     # 首屏 gzip 体积预算（需先 build）
 
 | 项目 | 结果 |
 |---|---|
-| 后端单元测试 | **629 项 / 57 份 Surefire 报告，0 失败 / 0 错误 / 0 跳过**（`mvn -o test`，JDK 8 Dragonwell 8；app-common 7、permission 71、service 524、app-start 27） |
+| 后端单元测试 | **634 项 / 58 份 Surefire 报告，0 失败 / 0 错误 / 0 跳过**（`mvn -o test`，JDK 8 Dragonwell 8；app-common 7、permission 71、service 529、app-start 27） |
 | 前端 TypeScript 检查 | 通过 |
 | 前端图标注册检查 | 通过 |
-| 硬编码色值棘轮检查 | 通过（48 个文件 / 2102 处，等于基线；新增即失败，只允许减少） |
+| 硬编码色值棘轮检查 | 通过（45 个文件 / 1777 处，等于基线；新增即失败，只允许减少） |
 | 前端逻辑单元测试 | 24 个文件 / **286 项通过** |
-| 前端组件测试 | 30 个文件 / **300 项通过**（@vue/test-utils 真实渲染） |
+| 前端组件测试 | 29 个文件 / **294 项通过**（@vue/test-utils 真实渲染） |
 | 浏览器冒烟（Playwright） | **21 项通过**（真实 Chromium + `page.route` 接口 mock，含 Agent 事件链路、模型可观测后台、文档流水线、目录页三态、登录守卫、SSE、配额、RAG 评估详情、404 兜底） |
 | 前端流式回归 | 14 项通过 |
 | 前端 Markdown / XSS 回归 | 10 项通过 |
@@ -418,7 +418,7 @@ npm run check:bundle     # 首屏 gzip 体积预算（需先 build）
     深色 + `data-theme="light"`）早就建好了，但组件里仍在抄旧文件的字面色，
     新写的越多、token 越收不拢。一次性换 2000 多处色值的风险远大于收益，
     所以改成棘轮：按文件记基线，**任何文件变差即失败，新增文件带色值也失败**，
-    改干净了跑 `--write` 重算基线。当前 48 个文件 / 2102 处（`tokens.css` 是色值
+    改干净了跑 `--write` 重算基线。当前 45 个文件 / 1777 处（`tokens.css` 是色值
     定义处，豁免）。顺带纠正了审查文档里「488 处」这个无法复现的估计。
     已接入 CI 与 `scripts/verify.ps1`。
 
