@@ -158,7 +158,6 @@
 .header-left h3,
 .login-title,
 .header-title h1,
-.brand-copy strong,
 .tag-dialog-title {
   font-family: "PingFang SC", "Microsoft YaHei", sans-serif;
 }
@@ -1065,7 +1064,6 @@ html[data-theme="light"] .page-header h2,
 html[data-theme="light"] .header-left h3,
 html[data-theme="light"] .login-title,
 html[data-theme="light"] .header-title h1,
-html[data-theme="light"] .brand-copy strong,
 html[data-theme="light"] .tag-dialog-title {
   font-family: "PingFang SC", "Microsoft YaHei", sans-serif;
 }

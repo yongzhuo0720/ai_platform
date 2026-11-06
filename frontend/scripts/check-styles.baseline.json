@@ -11,7 +11,7 @@
   "src/styles/layout.css": 20,
   "src/styles/markdown.css": 5,
   "src/styles/refinements.css": 5,
-  "src/styles/theme-light.css": 49,
+  "src/styles/theme-light.css": 48,
   "src/views/Admin/AiGatewayView/index.less": 42,
   "src/views/Admin/DifyConfigView/index.less": 13,
   "src/views/Admin/DifyConfigView/index.ts": 1,

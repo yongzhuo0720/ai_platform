@@ -16,11 +16,8 @@ html[data-theme="light"] .chat-composer-input,
 html[data-theme="light"] .user-table-card,
 html[data-theme="light"] .user-search-bar,
 html[data-theme="light"] .tag-filter-panel,
-html[data-theme="light"] .nav-side,
 html[data-theme="light"] .shell-header,
 html[data-theme="light"] .account-dropdown,
-html[data-theme="light"] .nav-submenu,
-html[data-theme="light"] .account-box,
 html[data-theme="light"] .kb-page,
 html[data-theme="light"] .kb-sidebar,
 html[data-theme="light"] .kb-content,
@@ -50,58 +47,13 @@ html[data-theme="light"] .pagination-container {
   -webkit-backdrop-filter: var(--glass-light-blur);
 }
 
-html[data-theme="light"] .nav-item-text,
-html[data-theme="light"] .brand-copy strong,
 html[data-theme="light"] .header-title h1,
 html[data-theme="light"] .header-user span {
   color: var(--text-primary);
 }
 
-html[data-theme="light"] .brand-copy span,
 html[data-theme="light"] .header-title span {
   color: var(--text-secondary);
-}
-
-html[data-theme="light"] .account-info strong {
-  color: var(--text-primary);
-}
-
-html[data-theme="light"] .account-info span {
-  color: var(--text-tertiary);
-}
-
-html[data-theme="light"] .nav-item {
-  color: var(--text-secondary);
-}
-
-html[data-theme="light"] .nav-item.is-active {
-  color: #ffffff;
-}
-
-html[data-theme="light"] .nav-item:hover,
-html[data-theme="light"] .nav-item:focus-visible {
-  color: var(--accent);
-}
-
-html[data-theme="light"] .nav-submenu-item {
-  color: var(--text-secondary);
-}
-
-html[data-theme="light"] .nav-submenu-item.is-active {
-  color: var(--accent);
-}
-
-html[data-theme="light"] .nav-submenu-item:hover {
-  color: var(--accent);
-}
-
-html[data-theme="light"] .nav-section-title,
-html[data-theme="light"] .nav-item-arrow {
-  color: var(--text-tertiary);
-}
-
-html[data-theme="light"] .nav-divider {
-  background: var(--border-soft);
 }
 
 html[data-theme="light"] .chat-side-card {

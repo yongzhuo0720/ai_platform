@@ -140,7 +140,7 @@ onBeforeUnmount(() => {
         </div>
         <div v-show="!isCollapsed" class="brand-copy">
           <span>智汇平台</span>
-          <span>系统管理后台</span>
+          <span>NEXUSAI ADMIN</span>
         </div>
       </div>
 
@@ -173,7 +173,7 @@ onBeforeUnmount(() => {
           @click="toggleCollapse"
         >
           <el-icon><component :is="isCollapsed ? Expand : Fold" /></el-icon>
-          <span v-show="!isCollapsed">{{ isCollapsed ? '展开' : '收起' }}</span>
+          <span v-show="!isCollapsed">收起菜单</span>
         </button>
       </div>
 
@@ -182,6 +182,7 @@ onBeforeUnmount(() => {
           <div class="account-avatar">{{ state.uname.charAt(0) }}</div>
           <div v-show="!isCollapsed" class="account-info">
             <strong>{{ state.uname }}</strong>
+            <span class="account-role">后台管理员</span>
           </div>
         </button>
 
