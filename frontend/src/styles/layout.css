@@ -251,6 +251,16 @@ html[data-theme="light"] {
   border-color: var(--layout-popper-border) !important;
 }
 
+.sidebar-notify {
+  flex-shrink: 0;
+  padding: 4px 12px 8px;
+  transition: padding 0.25s ease;
+}
+
+.shell.is-collapsed .sidebar-notify {
+  padding: 4px 0 8px;
+}
+
 .sidebar-footer {
   flex-shrink: 0;
   display: flex;
@@ -644,6 +654,7 @@ html[data-theme="light"] .shell-content {
   }
 
   .brand-box,
+  .sidebar-notify,
   .sidebar-footer,
   .account-box-wrapper {
     padding-left: 0;

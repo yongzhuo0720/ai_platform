@@ -25,7 +25,8 @@ _axios.interceptors.response.use(
     if (response.data.resp_code === 0 || response.data.resp_code === 200 || response.data.code === 200) {
     } else if (response.data.resp_code === 20102 || (response.data.resp_msg && response.data.resp_msg.indexOf('先登录') > -1)) {
       location.href = isAdmin() ? './#/admin/login' : './#/login'
-    } else if (response.data.resp_msg) {
+    } else if (response.data.resp_msg && !response.config?.silent) {
+      // silent：轮询类请求失败由调用方在界面内展示，不弹全局提示，避免每 30 秒骚扰一次
       ElMessage.error(response.data.resp_msg);
     }
     return Promise.resolve(response);
@@ -50,7 +51,9 @@ _axios.interceptors.response.use(
       }
     }
 
-    ElMessage.error(message)
+    if (!error.config?.silent) {
+      ElMessage.error(message)
+    }
     return Promise.reject(error)
   }
 )

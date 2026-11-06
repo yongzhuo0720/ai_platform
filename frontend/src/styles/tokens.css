@@ -42,6 +42,8 @@
   --text-primary: rgb(255, 255, 255);
   --text-secondary: rgba(255, 255, 255, 0.95);
   --text-tertiary: rgba(255, 255, 255, 0.55);
+  /* 实心强调色（红色角标、渐变按钮）上的文字，深浅主题一致 */
+  --text-on-accent: #ffffff;
 
   --accent: #7c93ff;
   --accent-hover: #96aaff;

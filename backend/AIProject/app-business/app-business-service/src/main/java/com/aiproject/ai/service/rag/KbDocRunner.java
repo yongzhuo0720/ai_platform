@@ -3,11 +3,14 @@ package com.aiproject.ai.service.rag;
 import com.aiproject.ai.service.bean.KbChunkBean;
 import com.aiproject.ai.service.bean.KbDocBean;
 import com.aiproject.ai.service.bean.KbDocContentBean;
+import com.aiproject.ai.service.bean.NotificationBean;
 import com.aiproject.ai.service.gateway.EmbeddingClient;
 import com.aiproject.ai.service.holde.KbRagHolder;
+import com.aiproject.ai.service.holde.NotificationHolder;
 import com.aiproject.ai.service.mapper.KbChunkBeanMapper;
 import com.aiproject.ai.service.mapper.KbDocBeanMapper;
 import com.aiproject.ai.service.mapper.KbDocContentBeanMapper;
+import com.aiproject.ai.service.notification.NotificationTypes;
 import com.heneng.hnsp.common.db.utils.PageRequest;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -50,6 +53,9 @@ public class KbDocRunner {
 
     @Autowired
     EmbeddingClient embeddingClient;
+
+    @Autowired
+    NotificationHolder notificationHolder;
 
     /** 后台执行入口：任何未捕获异常都必须落成 failed，不能让文档永久停在 processing */
     public void execute(Long docIid, String uid) {
@@ -180,7 +186,13 @@ public class KbDocRunner {
             // 所有分块写完后文档被删除：把刚落库的分块清掉，避免检索命中已删除文档
             log.warn("[KbDoc] 文档在落库完成时已被删除，清理分块, docIid={}", docIid);
             deleteChunks(uid, docIid);
+            return;
         }
+        notificationHolder.push(uid, notification("doc:" + docIid + ":ready",
+                NotificationTypes.LEVEL_SUCCESS, "文档处理完成",
+                "《" + displayName(doc) + "》已完成解析与向量化，共 " + chunks.size()
+                        + " 个分块，现在可以检索了。",
+                "/kb-search"));
     }
 
     private List<double[]> embedWithRetry(EmbeddingClient.ResolvedEmbedding embedding,
@@ -248,6 +260,12 @@ public class KbDocRunner {
                     }
                     // CAS 成功后再清残片；Runner 后续的状态更新会因状态已变而停止
                     deleteChunks(doc.getLastuser(), doc.getIid());
+                    notificationHolder.push(doc.getLastuser(),
+                            notification("doc:" + doc.getIid() + ":stale",
+                                    NotificationTypes.LEVEL_ERROR, "文档处理超时",
+                                    "《" + displayName(doc) + "》超过 30 分钟未完成，"
+                                            + "已自动终止，请重试。",
+                                    "/kb-search"));
                     recovered++;
                 } catch (Exception e) {
                     log.warn("[KbDoc] 回收僵死任务失败, docIid={}: {}", doc.getIid(), e.getMessage());
@@ -308,6 +326,32 @@ public class KbDocRunner {
         } catch (Exception e) {
             log.error("[KbDoc] 标记文档失败时出错, docIid={}: {}", docIid, e.getMessage(), e);
         }
+        KbDocBean doc = findDoc(uid, docIid);
+        if (doc != null) {
+            // 每次重试失败都提醒一次：attemptCount 由重试入口递增，事件键不会互相覆盖
+            int attempt = doc.getAttemptCount() == null ? 0 : doc.getAttemptCount();
+            notificationHolder.push(uid, notification("doc:" + docIid + ":failed:" + attempt,
+                    NotificationTypes.LEVEL_ERROR, "文档处理失败",
+                    "《" + displayName(doc) + "》处理失败：" + truncate(message),
+                    "/kb-search"));
+        }
+    }
+
+    private static NotificationBean notification(String eventKey, String level, String title,
+                                                 String content, String link) {
+        NotificationBean notice = new NotificationBean();
+        notice.setEventKey(eventKey);
+        notice.setCategory(NotificationTypes.CATEGORY_DOC);
+        notice.setLevel(level);
+        notice.setTitle(title);
+        notice.setContent(content);
+        notice.setLink(link);
+        return notice;
+    }
+
+    private static String displayName(KbDocBean doc) {
+        String name = doc == null ? null : doc.getName();
+        return name == null || name.trim().isEmpty() ? "未命名文档" : name.trim();
     }
 
     private void deleteChunks(String uid, Long docIid) {

@@ -1,4 +1,5 @@
-import { computed, onMounted, onUnmounted, reactive } from 'vue'
+import { computed, onMounted, onUnmounted, reactive, watch } from 'vue'
+import { useRoute } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
   ragEvalApi,
@@ -70,6 +71,7 @@ const readFileAsText = (file: File) =>
   })
 
 export function useIndex() {
+  const route = useRoute()
   const state = reactive({
     datasets: [] as RagEvalDataset[],
     datasetsLoading: false,
@@ -189,8 +191,24 @@ export function useIndex() {
   })
 
   onMounted(() => {
-    loadDatasets()
+    // 站内通知会带 ?datasetKey=xxx 深链，首次加载直接选中对应数据集
+    loadDatasets(queryDatasetKey())
   })
+
+  // 已经停留在本页时再点另一条通知，路由复用组件，需要监听查询参数变化
+  watch(
+    () => route.query.datasetKey,
+    (value) => {
+      if (typeof value === 'string' && value) {
+        void loadDatasets(value)
+      }
+    },
+  )
+
+  function queryDatasetKey(): string | undefined {
+    const value = route.query.datasetKey
+    return typeof value === 'string' && value ? value : undefined
+  }
 
   onUnmounted(() => {
     stopPolling()

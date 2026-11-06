@@ -10,6 +10,13 @@
  */
 import type { AxiosInstance } from 'axios'
 
+declare module 'axios' {
+  interface AxiosRequestConfig<D = any> {
+    /** 静默请求：拦截器跳过全局错误提示，由调用方在界面内展示（如未读数轮询） */
+    silent?: boolean
+  }
+}
+
 declare const http: AxiosInstance
 
 export default http

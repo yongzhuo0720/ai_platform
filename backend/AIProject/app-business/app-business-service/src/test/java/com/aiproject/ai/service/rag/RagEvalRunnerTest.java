@@ -1,5 +1,6 @@
 package com.aiproject.ai.service.rag;
 
+import com.aiproject.ai.service.bean.NotificationBean;
 import com.aiproject.ai.service.bean.RagEvalCaseBean;
 import com.aiproject.ai.service.bean.RagEvalCaseResultBean;
 import com.aiproject.ai.service.bean.RagEvalDatasetBean;
@@ -7,6 +8,8 @@ import com.aiproject.ai.service.bean.RagEvalRunBean;
 import com.aiproject.ai.service.gateway.dto.KbSearchItem;
 import com.aiproject.ai.service.gateway.dto.KbSearchResult;
 import com.aiproject.ai.service.holde.KbRagHolder;
+import com.aiproject.ai.service.holde.NotificationHolder;
+import com.aiproject.ai.service.notification.NotificationTypes;
 import com.aiproject.ai.service.mapper.RagEvalCaseBeanMapper;
 import com.aiproject.ai.service.mapper.RagEvalCaseResultBeanMapper;
 import com.aiproject.ai.service.mapper.RagEvalDatasetBeanMapper;
@@ -73,6 +76,9 @@ class RagEvalRunnerTest {
 
     @Mock
     KbRagHolder kbRagHolder;
+
+    @Mock
+    NotificationHolder notificationHolder;
 
     @InjectMocks
     RagEvalRunner runner;
@@ -325,6 +331,49 @@ class RagEvalRunnerTest {
         verify(kbRagHolder, never())
                 .search(anyString(), anyString(), anyString(), anyInt(), any());
         verify(runMapper, never()).update(any(RagEvalRunBean.class), any(RagEvalRunBean.class));
+    }
+
+    @Test
+    void execute_shouldNotifyOwnerWithFinalMetrics() {
+        stubRunAndDataset(caseBean("问题", "A.pdf"));
+        when(runMapper.update(any(RagEvalRunBean.class), any(RagEvalRunBean.class))).thenReturn(1);
+        when(resultMapper.install(any(RagEvalCaseResultBean.class))).thenReturn(1);
+        when(kbRagHolder.search(anyString(), anyString(), anyString(), anyInt(), any()))
+                .thenReturn(searchResult(hit("A.pdf", "正文")));
+
+        runner.execute(RUN_KEY, UID);
+
+        ArgumentCaptor<NotificationBean> captor =
+                ArgumentCaptor.forClass(NotificationBean.class);
+        verify(notificationHolder).push(eq(UID), captor.capture());
+        NotificationBean notice = captor.getValue();
+        assertEquals("rag-eval:" + RUN_KEY + ":terminal", notice.getEventKey());
+        assertEquals(NotificationTypes.CATEGORY_RAG_EVAL, notice.getCategory());
+        assertEquals(NotificationTypes.LEVEL_SUCCESS, notice.getLevel());
+        assertEquals("RAG 评估完成", notice.getTitle());
+        assertTrue(notice.getContent().contains("100.0%"), "通知里的指标必须来自本轮真实结果");
+        assertTrue(notice.getLink().contains(DATASET_KEY));
+    }
+
+    @Test
+    void execute_shouldNotifyOwnerWhenRunFails() {
+        when(runMapper.select(isNull(), any(RagEvalRunBean.class)))
+                .thenReturn(Collections.singletonList(run(RagEvalStatus.QUEUED)));
+        when(runMapper.update(any(RagEvalRunBean.class), any(RagEvalRunBean.class))).thenReturn(1);
+        when(datasetMapper.select(isNull(), any(RagEvalDatasetBean.class)))
+                .thenReturn(Collections.<RagEvalDatasetBean>emptyList());
+
+        runner.execute(RUN_KEY, UID);
+
+        ArgumentCaptor<NotificationBean> captor =
+                ArgumentCaptor.forClass(NotificationBean.class);
+        verify(notificationHolder).push(eq(UID), captor.capture());
+        NotificationBean notice = captor.getValue();
+        assertEquals("rag-eval:" + RUN_KEY + ":terminal", notice.getEventKey(),
+                "失败与成功共用终态事件键，恢复任务并发时不会重复通知");
+        assertEquals(NotificationTypes.LEVEL_ERROR, notice.getLevel());
+        assertEquals("RAG 评估失败", notice.getTitle());
+        assertTrue(notice.getContent().contains("数据集已被删除"));
     }
 
     @Test

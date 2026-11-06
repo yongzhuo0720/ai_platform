@@ -1,6 +1,14 @@
 import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from 'vitest'
 import { enableAutoUnmount, flushPromises, mount } from '@vue/test-utils'
 import { ElMessage, ElMessageBox } from 'element-plus'
+import { reactive } from 'vue'
+
+// 通知深链带来的查询参数；默认空对象保持原有首屏行为
+const routeState = reactive({ query: {} as Record<string, string> })
+
+vi.mock('vue-router', () => ({
+  useRoute: () => routeState,
+}))
 
 vi.mock('@/api/ragEval', () => ({
   ragEvalApi: {
@@ -257,9 +265,33 @@ const stubInitialLoad = () => {
 
 beforeEach(() => {
   vi.clearAllMocks()
+  routeState.query = {}
 })
 
 describe('RagEvalView', () => {
+  it('通知深链带 datasetKey 时直接选中对应数据集', async () => {
+    routeState.query = { datasetKey: 'd2' }
+    stubInitialLoad()
+
+    mountView()
+    await flushPromises()
+
+    expect(api.getDataset).toHaveBeenCalledWith('d2')
+    expect(api.listRuns).toHaveBeenCalledWith('d2')
+  })
+
+  it('已在本页时收到新的通知深链会切换数据集', async () => {
+    stubInitialLoad()
+    mountView()
+    await flushPromises()
+    expect(api.getDataset).toHaveBeenLastCalledWith('d1')
+
+    routeState.query = { datasetKey: 'd2' }
+    await flushPromises()
+
+    expect(api.getDataset).toHaveBeenLastCalledWith('d2')
+  })
+
   it('首屏加载数据集并默认选中第一个，展示用例、历史指标与状态', async () => {
     stubInitialLoad()
     const wrapper = mountView()

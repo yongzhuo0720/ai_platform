@@ -46,6 +46,7 @@ declare module 'vue' {
     ElTreeSelect: typeof import('element-plus/es')['ElTreeSelect']
     ElUpload: typeof import('element-plus/es')['ElUpload']
     KbChatPanel: typeof import('./src/components/KbChatPanel/index.vue')['default']
+    NotificationBell: typeof import('./src/components/NotificationBell/index.vue')['default']
     RepoPreviewPanel: typeof import('./src/components/RepoPreviewPanel/index.vue')['default']
     RouterLink: typeof import('vue-router')['RouterLink']
     RouterView: typeof import('vue-router')['RouterView']

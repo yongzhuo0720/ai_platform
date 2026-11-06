@@ -14,6 +14,7 @@ import {
 } from "@element-plus/icons-vue";
 import { userApi } from "@/api/user";
 import { roleApi } from "@/api/role";
+import NotificationBell from "@/components/NotificationBell/index.vue";
 import { navigationSections } from "@/data/platform";
 import { useThemeStore } from "@/stores/theme";
 import Cookies from "js-cookie";
@@ -280,6 +281,10 @@ onBeforeUnmount(() => {
           </template>
         </el-menu>
       </nav>
+
+      <div class="sidebar-notify">
+        <NotificationBell :collapsed="isCollapsed" />
+      </div>
 
       <div class="sidebar-footer">
         <button

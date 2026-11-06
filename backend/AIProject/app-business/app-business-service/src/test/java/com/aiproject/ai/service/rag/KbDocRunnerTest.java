@@ -3,10 +3,13 @@ package com.aiproject.ai.service.rag;
 import com.aiproject.ai.service.bean.KbChunkBean;
 import com.aiproject.ai.service.bean.KbDocBean;
 import com.aiproject.ai.service.bean.KbDocContentBean;
+import com.aiproject.ai.service.bean.NotificationBean;
 import com.aiproject.ai.service.gateway.EmbeddingClient;
+import com.aiproject.ai.service.holde.NotificationHolder;
 import com.aiproject.ai.service.mapper.KbChunkBeanMapper;
 import com.aiproject.ai.service.mapper.KbDocBeanMapper;
 import com.aiproject.ai.service.mapper.KbDocContentBeanMapper;
+import com.aiproject.ai.service.notification.NotificationTypes;
 import com.heneng.hnsp.common.db.utils.PageRequest;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -58,6 +61,9 @@ class KbDocRunnerTest {
 
     @Mock
     EmbeddingClient embeddingClient;
+
+    @Mock
+    NotificationHolder notificationHolder;
 
     @InjectMocks
     KbDocRunner runner;
@@ -296,6 +302,50 @@ class KbDocRunnerTest {
         runner.recoverStaleDocs();
 
         verify(chunkMapper, never()).delete(any(KbChunkBean.class));
+    }
+
+    @Test
+    void execute_shouldNotifyOwnerWhenDocumentReady() throws Exception {
+        stubQueuedDoc(paragraphs(2));
+        when(embeddingClient.resolve()).thenReturn(embedding());
+        when(embeddingClient.embed(any(EmbeddingClient.ResolvedEmbedding.class), anyList()))
+                .thenAnswer(invocation -> vectors(invocation.getArgument(1)));
+        when(docMapper.update(any(KbDocBean.class), any(KbDocBean.class))).thenReturn(1);
+        when(chunkMapper.install(any(KbChunkBean.class))).thenReturn(1);
+
+        runner.execute(DOC_IID, UID);
+
+        ArgumentCaptor<NotificationBean> captor =
+                ArgumentCaptor.forClass(NotificationBean.class);
+        verify(notificationHolder).push(org.mockito.ArgumentMatchers.eq(UID), captor.capture());
+        NotificationBean notice = captor.getValue();
+        assertEquals("doc:" + DOC_IID + ":ready", notice.getEventKey());
+        assertEquals(NotificationTypes.CATEGORY_DOC, notice.getCategory());
+        assertEquals(NotificationTypes.LEVEL_SUCCESS, notice.getLevel());
+        assertEquals("/kb-search", notice.getLink(),
+                "本地文档流水线的界面在知识检索页，通知必须跳到能看到该文档的地方");
+        assertTrue(notice.getContent().contains("制度.txt"));
+    }
+
+    @Test
+    void execute_shouldNotifyOwnerWhenEmbeddingFails() throws Exception {
+        stubQueuedDoc(paragraphs(2));
+        when(embeddingClient.resolve()).thenReturn(embedding());
+        when(embeddingClient.embed(any(EmbeddingClient.ResolvedEmbedding.class), anyList()))
+                .thenThrow(new RuntimeException("向量服务超时"));
+        when(docMapper.update(any(KbDocBean.class), any(KbDocBean.class))).thenReturn(1);
+
+        runner.execute(DOC_IID, UID);
+
+        ArgumentCaptor<NotificationBean> captor =
+                ArgumentCaptor.forClass(NotificationBean.class);
+        verify(notificationHolder).push(org.mockito.ArgumentMatchers.eq(UID), captor.capture());
+        NotificationBean notice = captor.getValue();
+        assertEquals("doc:" + DOC_IID + ":failed:0", notice.getEventKey(),
+                "attemptCount 为空按 0 处理，重试后的事件键会随次数变化");
+        assertEquals(NotificationTypes.LEVEL_ERROR, notice.getLevel());
+        assertEquals("/kb-search", notice.getLink());
+        assertTrue(notice.getContent().contains("向量服务超时"));
     }
 
     // ------------------------------------------------------------------

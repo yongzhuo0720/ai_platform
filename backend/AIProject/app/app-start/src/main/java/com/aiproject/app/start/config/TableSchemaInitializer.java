@@ -39,6 +39,7 @@ public class TableSchemaInitializer implements ApplicationListener<ApplicationRe
         ensureControllerLogIndex();
         ensureRagEvalTables();
         ensureAgentTables();
+        ensureNotificationTable();
     }
 
     /**
@@ -415,6 +416,32 @@ public class TableSchemaInitializer implements ApplicationListener<ApplicationRe
         execute("ALTER TABLE aicalllogbean ADD COLUMN IF NOT EXISTS \"stepNo\" int4");
         execute("CREATE INDEX IF NOT EXISTS idx_aicalllog_runkey "
                 + "ON aicalllogbean (\"runKey\")");
+    }
+
+    /**
+     * 站内通知表。
+     *
+     * <p>{@code eventKey} 唯一索引是幂等闸门：文档处理的重试、僵死回收任务与
+     * 正常收尾可能在同一时刻结束，没有唯一约束就会给用户发两条一样的通知。</p>
+     *
+     * <p>两个复合索引分别服务两类查询：面板按用户时间倒序翻页，
+     * 铃铛角标按用户数未读。未读用字符串状态而不是时间戳 IS NULL，
+     * 是为了让框架的等值条件能直接命中索引。</p>
+     */
+    private void ensureNotificationTable() {
+        execute("CREATE TABLE IF NOT EXISTS notificationbean ("
+                + "\"eventKey\" varchar(128), \"category\" varchar(32), "
+                + "\"level\" varchar(16), \"title\" varchar(200), \"content\" text, "
+                + "\"link\" varchar(255), \"readStatus\" varchar(16), \"readAt\" int8, "
+                + "\"iid\" bigserial NOT NULL PRIMARY KEY, \"lastuser\" varchar(255), "
+                + "\"createtime\" timestamp DEFAULT now(), \"updatetime\" timestamp, "
+                + "\"enable\" boolean DEFAULT true, \"app\" varchar(255))");
+        execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_notification_event "
+                + "ON notificationbean (\"eventKey\")");
+        execute("CREATE INDEX IF NOT EXISTS idx_notification_user_time "
+                + "ON notificationbean (\"lastuser\", \"iid\")");
+        execute("CREATE INDEX IF NOT EXISTS idx_notification_user_unread "
+                + "ON notificationbean (\"lastuser\", \"readStatus\")");
     }
 
     /**

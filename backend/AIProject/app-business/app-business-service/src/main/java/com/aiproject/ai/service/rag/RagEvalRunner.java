@@ -2,11 +2,14 @@ package com.aiproject.ai.service.rag;
 
 import com.aiproject.ai.service.bean.RagEvalCaseBean;
 import com.aiproject.ai.service.bean.RagEvalCaseResultBean;
+import com.aiproject.ai.service.bean.NotificationBean;
 import com.aiproject.ai.service.bean.RagEvalDatasetBean;
 import com.aiproject.ai.service.bean.RagEvalRunBean;
 import com.aiproject.ai.service.gateway.dto.KbSearchItem;
 import com.aiproject.ai.service.gateway.dto.KbSearchResult;
 import com.aiproject.ai.service.holde.KbRagHolder;
+import com.aiproject.ai.service.holde.NotificationHolder;
+import com.aiproject.ai.service.notification.NotificationTypes;
 import com.aiproject.ai.service.mapper.RagEvalCaseBeanMapper;
 import com.aiproject.ai.service.mapper.RagEvalCaseResultBeanMapper;
 import com.aiproject.ai.service.mapper.RagEvalDatasetBeanMapper;
@@ -24,6 +27,7 @@ import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicLong;
@@ -69,6 +73,9 @@ public class RagEvalRunner {
 
     @Autowired
     KbRagHolder kbRagHolder;
+
+    @Autowired
+    NotificationHolder notificationHolder;
 
     /**
      * 后台执行入口。任何未捕获异常都要落到运行记录上，否则前端会一直看到
@@ -222,7 +229,73 @@ public class RagEvalRunner {
         finished.setDurationMs(finishedAt - startedAt);
         if (!updateRun(runKey, uid, finished)) {
             log.error("[RagEval] 评估结果落库失败，运行记录可能已被删除, runKey={}", runKey);
+            return;
         }
+        notifyFinished(uid, run, dataset, finished);
+    }
+
+    /**
+     * 评估结束后给发起人留一条通知：用户可能早已离开评估页，
+     * 铃铛是唯一能主动告诉他「跑完了 / 失败了」的渠道。
+     *
+     * <p>同一 runKey 的终态事件共用 eventKey，正常收尾与僵死回收
+     * 即使并发也不会给用户发两条结论。</p>
+     */
+    private void notifyFinished(String uid, RagEvalRunBean run, RagEvalDatasetBean dataset,
+                                RagEvalRunBean finished) {
+        String datasetName = dataset != null && dataset.getName() != null
+                ? dataset.getName() : "评估数据集";
+        String status = finished.getStatus();
+        String level;
+        String title;
+        String content;
+        if (RagEvalStatus.SUCCESS.equals(status)) {
+            level = NotificationTypes.LEVEL_SUCCESS;
+            title = "RAG 评估完成";
+            content = "数据集《" + datasetName + "》共 " + finished.getTotal() + " 题：Recall@k "
+                    + percent(finished.getRecall()) + "，MRR " + decimal(finished.getMrr())
+                    + "，耗时 " + seconds(finished.getDurationMs()) + " 秒。";
+        } else if (RagEvalStatus.PARTIAL.equals(status)) {
+            level = NotificationTypes.LEVEL_WARNING;
+            title = "RAG 评估部分完成";
+            content = "数据集《" + datasetName + "》有部分用例失败：" + finished.getErrorMessage();
+        } else {
+            level = NotificationTypes.LEVEL_ERROR;
+            title = "RAG 评估失败";
+            content = "数据集《" + datasetName + "》评估失败："
+                    + (finished.getErrorMessage() == null ? "全部用例检索失败" : finished.getErrorMessage());
+        }
+        notificationHolder.push(uid, notification("rag-eval:" + run.getRunKey() + ":terminal",
+                level, title, content, ragEvalLink(run.getDatasetKey())));
+    }
+
+    private static String percent(Double value) {
+        return value == null ? "-" : String.format(Locale.ROOT, "%.1f%%", value * 100);
+    }
+
+    private static String decimal(Double value) {
+        return value == null ? "-" : String.format(Locale.ROOT, "%.3f", value);
+    }
+
+    private static String seconds(Long durationMs) {
+        return durationMs == null ? "-" : String.format(Locale.ROOT, "%.1f", durationMs / 1000.0);
+    }
+
+    private static String ragEvalLink(String datasetKey) {
+        return datasetKey == null || datasetKey.trim().isEmpty()
+                ? "/rag-eval" : "/rag-eval?datasetKey=" + datasetKey;
+    }
+
+    private static NotificationBean notification(String eventKey, String level, String title,
+                                                 String content, String link) {
+        NotificationBean notice = new NotificationBean();
+        notice.setEventKey(eventKey);
+        notice.setCategory(NotificationTypes.CATEGORY_RAG_EVAL);
+        notice.setLevel(level);
+        notice.setTitle(title);
+        notice.setContent(content);
+        notice.setLink(link);
+        return notice;
     }
 
     private RunCaseData evaluateCase(String runKey, String uid, RagEvalCaseBean item,
@@ -426,9 +499,20 @@ public class RagEvalRunner {
             update.setDurationMs(run != null && run.getStartedAt() != null
                     ? now - run.getStartedAt() : 0L);
             updateRun(runKey, uid, update);
+            if (run != null) {
+                notificationHolder.push(uid, notification("rag-eval:" + runKey + ":terminal",
+                        NotificationTypes.LEVEL_ERROR, "RAG 评估失败",
+                        "数据集《" + datasetName(run) + "》评估失败：" + message,
+                        ragEvalLink(run.getDatasetKey())));
+            }
         } catch (Exception e) {
             log.error("[RagEval] 标记运行失败时出错, runKey={}: {}", runKey, e.getMessage(), e);
         }
+    }
+
+    private static String datasetName(RagEvalRunBean run) {
+        String name = run == null ? null : run.getDatasetName();
+        return name == null || name.trim().isEmpty() ? "评估数据集" : name.trim();
     }
 
     /**
@@ -469,6 +553,12 @@ public class RagEvalRunner {
                     RagEvalRunBean runWhere = new RagEvalRunBean();
                     runWhere.setRunKey(run.getRunKey());
                     if (runMapper.update(update, runWhere) > 0) {
+                        notificationHolder.push(run.getLastuser(),
+                                notification("rag-eval:" + run.getRunKey() + ":terminal",
+                                        NotificationTypes.LEVEL_ERROR, "RAG 评估超时",
+                                        "数据集《" + datasetName(run) + "》超过 30 分钟未完成，"
+                                                + "已自动终止，请重新发起。",
+                                        ragEvalLink(run.getDatasetKey())));
                         recovered++;
                     }
                 } catch (Exception e) {
