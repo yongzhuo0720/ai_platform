@@ -345,12 +345,42 @@
             >
               检索链路 {{ state.runDetail.run.retrievalMode }}
             </el-tag>
-            <span v-if="state.runDetail.baseline" class="rag-eval-baseline">
-              对比基线：{{ formatDateTime(state.runDetail.baseline.startedAt) }}（TopK
-              {{ state.runDetail.baseline.topK }}）
-              <template v-if="baselineMetricMismatch">· 口径不同，差值仅供参考</template>
+            <span class="rag-eval-baseline">
+              <span>对比基线</span>
+              <el-select
+                v-model="state.baselineRunKey"
+                size="small"
+                class="rag-eval-baseline-select"
+                placeholder="自动选择更早的可对比运行"
+                @change="selectBaseline"
+              >
+                <el-option label="自动（优先同一用例集）" value="" />
+                <el-option
+                  v-for="run in baselineCandidates"
+                  :key="run.runKey"
+                  :label="baselineOptionLabel(run)"
+                  :value="run.runKey"
+                />
+              </el-select>
+              <el-tag v-if="state.runDetail.baselineExplicit" size="small" type="warning">
+                手动指定
+              </el-tag>
+              <span v-if="state.runDetail.baseline" class="rag-eval-muted">
+                {{ formatDateTime(state.runDetail.baseline.startedAt) }} · TopK
+                {{ state.runDetail.baseline.topK }} · {{ statusMeta(state.runDetail.baseline.status).label }}
+              </span>
+              <span v-else class="rag-eval-muted">暂无可对比的历史运行</span>
             </span>
           </div>
+
+          <el-alert
+            v-if="baselineWarnings.length"
+            type="warning"
+            :title="`对比提示：${baselineWarnings.join('；')}`"
+            :closable="false"
+            show-icon
+            class="rag-eval-alert"
+          />
 
           <el-alert
             v-if="state.runDetail.run.errorMessage"
@@ -377,6 +407,46 @@
             {{ state.runDetail.run.keywordEvaluatedCount ?? 0 }} 条 · 关键词命中率
             {{ formatPercent(state.runDetail.run.keywordHitRate) }}
           </div>
+
+          <template v-if="state.runDetail.baseline && state.runDetail.caseDiffs?.length">
+            <div class="rag-eval-diff-head">
+              <strong>逐题对比</strong>
+              <span class="rag-eval-muted">
+                退化 {{ state.runDetail.regressedCount ?? 0 }} 条 · 提升
+                {{ state.runDetail.improvedCount ?? 0 }} 条
+              </span>
+              <span v-if="!state.runDetail.baselineCompatible" class="rag-eval-diff-warn">
+                两次运行并非严格可比，差值与状态仅供参考
+              </span>
+            </div>
+            <el-table
+              :data="state.runDetail.caseDiffs"
+              size="small"
+              border
+              max-height="260"
+              style="width: 100%; margin-bottom: 12px"
+            >
+              <el-table-column prop="caseIndex" label="#" width="44" align="center" />
+              <el-table-column prop="question" label="问题" min-width="200" show-overflow-tooltip />
+              <el-table-column label="状态" width="92" align="center">
+                <template #default="scope">
+                  <el-tag size="small" :type="diffStatusMeta(scope.row.status).type">
+                    {{ diffStatusMeta(scope.row.status).label }}
+                  </el-tag>
+                </template>
+              </el-table-column>
+              <el-table-column label="首位命中（基线 → 本次）" width="180" align="center">
+                <template #default="scope">
+                  {{ formatRank(scope.row.baselineFirstHitRank) }} →
+                  {{ formatRank(scope.row.currentFirstHitRank) }}
+                </template>
+              </el-table-column>
+              <el-table-column label="Recall 差值" width="110" align="right">
+                <template #default="scope">{{ formatPp(scope.row.recallDelta) }}</template>
+              </el-table-column>
+              <el-table-column prop="note" label="变化说明" min-width="240" show-overflow-tooltip />
+            </el-table>
+          </template>
 
           <el-table
             :data="state.runDetail.results"
@@ -507,11 +577,13 @@ const {
   hasActiveRun,
   selectedDataset,
   metricCards,
-  baselineMetricMismatch,
+  baselineWarnings,
+  baselineCandidates,
   loadRuns,
   selectDataset,
   startRun,
   openRun,
+  selectBaseline,
   deleteRun,
   deleteDataset,
   openCreateEditor,
@@ -525,6 +597,10 @@ const {
   channelMeta,
   formatScore,
   formatLexicalScore,
+  diffStatusMeta,
+  formatRank,
+  formatPp,
+  baselineOptionLabel,
   formatMetric,
   formatPercent,
   formatDelta,

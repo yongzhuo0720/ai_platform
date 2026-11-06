@@ -2,11 +2,12 @@ import { computed, onMounted, onUnmounted, reactive } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
   ragEvalApi,
-  type RagEvalCaseResult,
   type RagEvalDataset,
   type RagEvalDatasetDetail,
   type RagEvalDatasetRequest,
+  type RagEvalDiffStatus,
   type RagEvalRun,
+  type RagEvalRunDetail,
   type RagEvalRunStatus,
 } from '@/api/ragEval'
 import { debug } from '@/utils/debug'
@@ -36,6 +37,14 @@ const CHANNEL_META: Record<string, { label: string; type: TagType }> = {
   both: { label: '双路', type: 'success' },
   dense: { label: '向量路', type: 'info' },
   lexical: { label: '关键词路', type: 'warning' },
+}
+
+const DIFF_META: Record<RagEvalDiffStatus, { label: string; type: TagType }> = {
+  regressed: { label: '退化', type: 'danger' },
+  improved: { label: '提升', type: 'success' },
+  mixed: { label: '有升有降', type: 'warning' },
+  unchanged: { label: '持平', type: 'info' },
+  unknown: { label: '不可比', type: 'info' },
 }
 
 const isActiveStatus = (status: RagEvalRunStatus) =>
@@ -71,9 +80,8 @@ export function useIndex() {
     topK: 5,
     startingRun: false,
     selectedRunKey: '',
-    runDetail: null as
-      | { run: RagEvalRun; results: RagEvalCaseResult[]; baseline?: RagEvalRun | null }
-      | null,
+    baselineRunKey: '',
+    runDetail: null as RagEvalRunDetail | null,
     runDetailLoading: false,
     runDialogVisible: false,
     editorVisible: false,
@@ -138,11 +146,15 @@ export function useIndex() {
   })
 
   /** 基线口径未知（历史运行）不算不一致；两边都有版本且不同才提示 */
-  const baselineMetricMismatch = computed(() => {
-    const current = state.runDetail?.run?.metricSpec
-    const base = state.runDetail?.baseline?.metricSpec
-    return Boolean(current && base && current !== base)
-  })
+  const baselineWarnings = computed(() => state.runDetail?.baselineWarnings ?? [])
+
+  const baselineCandidates = computed(() =>
+    state.runs.filter(
+      (run) =>
+        run.runKey !== state.selectedRunKey &&
+        (run.status === 'success' || run.status === 'partial'),
+    ),
+  )
 
   onMounted(() => {
     loadDatasets()
@@ -173,6 +185,7 @@ export function useIndex() {
         state.detail = null
         state.runs = []
         state.selectedRunKey = ''
+        state.baselineRunKey = ''
         state.runDetail = null
         state.runDialogVisible = false
         stopPolling()
@@ -192,6 +205,7 @@ export function useIndex() {
     state.selectedDatasetKey = datasetKey
     state.detail = null
     state.selectedRunKey = ''
+    state.baselineRunKey = ''
     state.runDetail = null
     state.runDialogVisible = false
     stopPolling()
@@ -232,8 +246,12 @@ export function useIndex() {
         state.runs = res.datas ?? []
         if (state.selectedRunKey && !state.runs.some((run) => run.runKey === state.selectedRunKey)) {
           state.selectedRunKey = ''
+          state.baselineRunKey = ''
           state.runDetail = null
           state.runDialogVisible = false
+        }
+        if (state.baselineRunKey && !state.runs.some((run) => run.runKey === state.baselineRunKey)) {
+          state.baselineRunKey = ''
         }
         syncPolling()
       } else {
@@ -272,6 +290,9 @@ export function useIndex() {
       const { data: res } = await ragEvalApi.listRuns(key)
       if (res.resp_code === 0 && key === state.selectedDatasetKey) {
         state.runs = res.datas ?? []
+        if (state.baselineRunKey && !state.runs.some((run) => run.runKey === state.baselineRunKey)) {
+          state.baselineRunKey = ''
+        }
         syncPolling()
         if (state.selectedRunKey) {
           await loadRunDetail(state.selectedRunKey, true)
@@ -315,6 +336,7 @@ export function useIndex() {
 
   async function openRunByKey(runKey: string) {
     state.selectedRunKey = runKey
+    state.baselineRunKey = ''
     state.runDialogVisible = true
     await loadRunDetail(runKey, false)
   }
@@ -323,12 +345,19 @@ export function useIndex() {
     openRunByKey(row.runKey)
   }
 
+  async function selectBaseline(runKey: string) {
+    state.baselineRunKey = runKey
+    if (!state.selectedRunKey) return
+    await loadRunDetail(state.selectedRunKey, false)
+  }
+
   async function loadRunDetail(runKey: string, silent: boolean) {
     if (!silent) state.runDetailLoading = true
+    const baselineKey = state.baselineRunKey
     try {
-      const { data: res } = await ragEvalApi.getRun(runKey)
+      const { data: res } = await ragEvalApi.getRun(runKey, baselineKey || undefined)
       if (res.resp_code === 0) {
-        if (state.selectedRunKey === runKey) {
+        if (state.selectedRunKey === runKey && state.baselineRunKey === baselineKey) {
           state.runDetail = res.datas ?? null
         }
       } else if (!silent) {
@@ -358,12 +387,18 @@ export function useIndex() {
       const { data: res } = await ragEvalApi.deleteRun(row.runKey)
       if (res.resp_code === 0) {
         ElMessage.success('运行记录已删除')
+        if (state.baselineRunKey === row.runKey) {
+          state.baselineRunKey = ''
+        }
         if (state.selectedRunKey === row.runKey) {
           state.selectedRunKey = ''
           state.runDetail = null
           state.runDialogVisible = false
         }
         await loadRuns()
+        if (state.runDialogVisible && state.selectedRunKey) {
+          await loadRunDetail(state.selectedRunKey, true)
+        }
       } else {
         ElMessage.error(res.resp_msg || '删除运行记录失败')
       }
@@ -593,19 +628,44 @@ export function useIndex() {
     return `${(value / 1000).toFixed(1)}s`
   }
 
+  function diffStatusMeta(status?: string | null) {
+    return DIFF_META[status as RagEvalDiffStatus] ?? { label: status || '-', type: 'info' as const }
+  }
+
+  function formatRank(rank: number | null | undefined) {
+    return rank && rank > 0 ? `第 ${rank} 位` : '未命中'
+  }
+
+  function formatPp(delta: number | null | undefined) {
+    if (delta === null || delta === undefined) return '-'
+    const pp = delta * 100
+    if (Math.abs(pp) < 0.05) return '0.0 pp'
+    return `${pp > 0 ? '+' : ''}${pp.toFixed(1)} pp`
+  }
+
+  function baselineOptionLabel(run: RagEvalRun) {
+    const parts = [formatDateTime(run.startedAt), `TopK ${run.topK}`, statusMeta(run.status).label]
+    const currentSet = state.runDetail?.run?.caseSetKey
+    if (currentSet && run.caseSetKey === currentSet) parts.push('题目一致')
+    if (run.metricSpec) parts.push(run.metricSpec)
+    return parts.join(' · ')
+  }
+
   return {
     state,
     isEditing,
     hasActiveRun,
     selectedDataset,
     metricCards,
-    baselineMetricMismatch,
+    baselineWarnings,
+    baselineCandidates,
     loadDatasets,
     selectDataset,
     loadRuns,
     startRun,
     openRun,
     openRunByKey,
+    selectBaseline,
     deleteRun,
     deleteDataset,
     openCreateEditor,
@@ -619,6 +679,10 @@ export function useIndex() {
     channelMeta,
     formatScore,
     formatLexicalScore,
+    diffStatusMeta,
+    formatRank,
+    formatPp,
+    baselineOptionLabel,
     formatMetric,
     formatPercent,
     formatDelta,

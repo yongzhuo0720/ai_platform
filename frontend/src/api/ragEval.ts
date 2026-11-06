@@ -45,6 +45,7 @@ export interface RagEvalRun {
   iid?: number | null
   runKey: string
   datasetKey: string
+  caseSetKey?: string | null
   datasetName?: string | null
   kbName?: string | null
   topK: number
@@ -102,10 +103,33 @@ export interface RagEvalCaseResult {
   errorMessage?: string | null
 }
 
+export type RagEvalDiffStatus = 'improved' | 'regressed' | 'mixed' | 'unchanged' | 'unknown'
+
+/** 逐题对比：只在两次运行用例集版本一致时才有内容 */
+export interface RagEvalCaseDiff {
+  caseIndex: number
+  question: string
+  baselineRecall?: number | null
+  currentRecall?: number | null
+  recallDelta?: number | null
+  baselineFirstHitRank?: number | null
+  currentFirstHitRank?: number | null
+  baselineKeywordHit?: boolean | null
+  currentKeywordHit?: boolean | null
+  status: RagEvalDiffStatus
+  note?: string | null
+}
+
 export interface RagEvalRunDetail {
   run: RagEvalRun
   results: RagEvalCaseResult[]
   baseline?: RagEvalRun | null
+  baselineExplicit?: boolean
+  baselineCompatible?: boolean
+  baselineWarnings?: string[]
+  caseDiffs?: RagEvalCaseDiff[]
+  regressedCount?: number
+  improvedCount?: number
 }
 
 // HNSP 按方法参数名映射请求体：DTO 必须包在 data 字段里
@@ -123,8 +147,10 @@ export const ragEvalApi = {
     axios.post('/ai/api/ragEval/startRun', { data: { datasetKey, topK } }),
   listRuns: (datasetKey?: string) =>
     axios.post('/ai/api/ragEval/listRuns', { data: { datasetKey: datasetKey ?? null } }),
-  getRun: (runKey: string) =>
-    axios.post('/ai/api/ragEval/getRun', { data: { runKey } }),
+  getRun: (runKey: string, baselineRunKey?: string) =>
+    axios.post('/ai/api/ragEval/getRun', {
+      data: { runKey, baselineRunKey: baselineRunKey || null },
+    }),
   deleteRun: (runKey: string) =>
     axios.post('/ai/api/ragEval/deleteRun', { data: { runKey } }),
 }

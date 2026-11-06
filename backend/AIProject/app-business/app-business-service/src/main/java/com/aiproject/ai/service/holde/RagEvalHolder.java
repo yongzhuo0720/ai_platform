@@ -10,9 +10,11 @@ import com.aiproject.ai.service.mapper.RagEvalCaseBeanMapper;
 import com.aiproject.ai.service.mapper.RagEvalCaseResultBeanMapper;
 import com.aiproject.ai.service.mapper.RagEvalDatasetBeanMapper;
 import com.aiproject.ai.service.mapper.RagEvalRunBeanMapper;
+import com.aiproject.ai.service.rag.RagEvalDiffStatus;
 import com.aiproject.ai.service.rag.RagEvalKeywordCodec;
 import com.aiproject.ai.service.rag.RagEvalRunner;
 import com.aiproject.ai.service.rag.RagEvalStatus;
+import com.aiproject.ai.service.rag.dto.RagEvalCaseDiffDto;
 import com.aiproject.ai.service.rag.dto.RagEvalCaseDto;
 import com.aiproject.ai.service.rag.dto.RagEvalCaseInput;
 import com.aiproject.ai.service.rag.dto.RagEvalCaseResultDto;
@@ -30,9 +32,13 @@ import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.Comparator;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import java.util.UUID;
 
@@ -296,7 +302,7 @@ public class RagEvalHolder {
         }
     }
 
-    public Result<RagEvalRunDetail> getRun(String uid, String runKey) {
+    public Result<RagEvalRunDetail> getRun(String uid, String runKey, String baselineRunKey) {
         if (notLoggedIn(uid)) {
             return Result.failed(null, "未登录或登录已过期");
         }
@@ -308,24 +314,54 @@ public class RagEvalHolder {
             if (run == null) {
                 return Result.failed(null, "运行记录不存在或不属于当前用户");
             }
-            RagEvalCaseResultBean where = new RagEvalCaseResultBean();
-            where.setRunKey(run.getRunKey());
-            where.setLastuser(uid);
-            PageRequest page = new PageRequest(1, MAX_CASES + 1);
-            page.setOrder("caseIndex");
-            page.setDesc("asc");
-            List<RagEvalCaseResultBean> rawResults = resultMapper.select(page, where);
-            List<RagEvalCaseResultDto> results = new ArrayList<RagEvalCaseResultDto>();
-            if (rawResults != null) {
-                for (RagEvalCaseResultBean bean : rawResults) {
-                    results.add(toResultDto(bean));
+            boolean explicit = !blank(baselineRunKey);
+            RagEvalRunBean baseline;
+            if (explicit) {
+                Result<RagEvalRunBean> resolved = resolveExplicitBaseline(uid, run, baselineRunKey.trim());
+                if (resolved.getDatas() == null) {
+                    return Result.failed(null, resolved.getResp_msg());
                 }
+                baseline = resolved.getDatas();
+            } else {
+                baseline = findBaseline(uid, run);
+            }
+
+            List<RagEvalCaseResultBean> rawResults = loadResults(uid, run.getRunKey());
+            List<RagEvalCaseResultDto> results = new ArrayList<RagEvalCaseResultDto>();
+            for (RagEvalCaseResultBean bean : rawResults) {
+                results.add(toResultDto(bean));
             }
 
             RagEvalRunDetail detail = new RagEvalRunDetail();
             detail.setRun(run);
             detail.setResults(results);
-            detail.setBaseline(findBaseline(uid, run));
+            detail.setBaseline(baseline);
+            detail.setBaselineExplicit(explicit);
+            detail.setBaselineWarnings(new ArrayList<String>());
+            detail.setBaselineCompatible(false);
+            detail.setCaseDiffs(new ArrayList<RagEvalCaseDiffDto>());
+            detail.setRegressedCount(0);
+            detail.setImprovedCount(0);
+            if (baseline != null) {
+                detail.setBaselineWarnings(buildBaselineWarnings(run, baseline));
+                detail.setBaselineCompatible(isStrictlyComparable(run, baseline));
+                List<RagEvalCaseDiffDto> diffs = compareCases(uid, run, baseline, rawResults);
+                detail.setCaseDiffs(diffs);
+                int regressed = 0;
+                int improved = 0;
+                for (RagEvalCaseDiffDto diff : diffs) {
+                    if (RagEvalDiffStatus.REGRESSED.equals(diff.getStatus())
+                            || RagEvalDiffStatus.MIXED.equals(diff.getStatus())) {
+                        regressed++;
+                    }
+                    if (RagEvalDiffStatus.IMPROVED.equals(diff.getStatus())
+                            || RagEvalDiffStatus.MIXED.equals(diff.getStatus())) {
+                        improved++;
+                    }
+                }
+                detail.setRegressedCount(regressed);
+                detail.setImprovedCount(improved);
+            }
             return Result.succeed(detail, "查询成功");
         } catch (Exception e) {
             log.error("[RagEval] 查询运行详情失败, uid={}, runKey={}: {}",
@@ -409,6 +445,7 @@ public class RagEvalHolder {
             RagEvalRunBean run = new RagEvalRunBean();
             run.setRunKey(runKey);
             run.setDatasetKey(datasetKey);
+            run.setCaseSetKey(dataset.getCaseSetKey());
             run.setDatasetName(dataset.getName());
             run.setKbName(dataset.getKbName());
             run.setTopK(topK);
@@ -691,6 +728,7 @@ public class RagEvalHolder {
 
     private RagEvalRunBean findBaseline(String uid, RagEvalRunBean current) {
         List<RagEvalRunBean> runs = selectRuns(uid, current.getDatasetKey(), 100);
+        RagEvalRunBean fallback = null;
         for (RagEvalRunBean candidate : runs) {
             if (current.getRunKey().equals(candidate.getRunKey())) {
                 continue;
@@ -699,11 +737,258 @@ public class RagEvalHolder {
                     && candidate.getIid() >= current.getIid()) {
                 continue;
             }
-            if (RagEvalStatus.isComparable(candidate.getStatus())) {
+            if (!RagEvalStatus.isComparable(candidate.getStatus())) {
+                continue;
+            }
+            // 优先同一套用例，避免默认基线因数据集编辑而失去可比性
+            if (sameKnownCaseSet(current, candidate)) {
                 return candidate;
             }
+            if (fallback == null) {
+                fallback = candidate;
+            }
         }
-        return null;
+        return fallback;
+    }
+
+    /**
+     * 校验用户手动指定的基线。
+     *
+     * <p>返回的 Result 在失败时 datas 为 null；成功时携带基线记录。
+     * 允许基线比当前运行更新：用户可能回看旧运行并主动选一次新运行作参照。</p>
+     */
+    private Result<RagEvalRunBean> resolveExplicitBaseline(String uid, RagEvalRunBean current,
+                                                          String baselineRunKey) {
+        if (current.getRunKey().equals(baselineRunKey)) {
+            return Result.failed(null, "对比基线不能是当前运行本身");
+        }
+        RagEvalRunBean candidate = findRun(uid, baselineRunKey);
+        if (candidate == null) {
+            return Result.failed(null, "对比基线不存在或不属于当前用户");
+        }
+        if (!Objects.equals(current.getDatasetKey(), candidate.getDatasetKey())) {
+            return Result.failed(null, "对比基线必须与当前运行属于同一数据集");
+        }
+        if (!RagEvalStatus.isComparable(candidate.getStatus())) {
+            return Result.failed(null, "对比基线尚未成功完成，无法用于对比");
+        }
+        return Result.succeed(candidate, "ok");
+    }
+
+    private List<RagEvalCaseResultBean> loadResults(String uid, String runKey) {
+        RagEvalCaseResultBean where = new RagEvalCaseResultBean();
+        where.setRunKey(runKey);
+        where.setLastuser(uid);
+        PageRequest page = new PageRequest(1, MAX_CASES + 1);
+        page.setOrder("caseIndex");
+        page.setDesc("asc");
+        List<RagEvalCaseResultBean> list = resultMapper.select(page, where);
+        return list == null ? Collections.<RagEvalCaseResultBean>emptyList() : list;
+    }
+
+    private boolean sameKnownCaseSet(RagEvalRunBean current, RagEvalRunBean baseline) {
+        return !blank(current.getCaseSetKey()) && !blank(baseline.getCaseSetKey())
+                && current.getCaseSetKey().equals(baseline.getCaseSetKey());
+    }
+
+    private boolean isStrictlyComparable(RagEvalRunBean current, RagEvalRunBean baseline) {
+        return sameKnownCaseSet(current, baseline)
+                && Objects.equals(current.getTopK(), baseline.getTopK())
+                && !blank(current.getMetricSpec())
+                && current.getMetricSpec().equals(baseline.getMetricSpec());
+    }
+
+    private List<String> buildBaselineWarnings(RagEvalRunBean current, RagEvalRunBean baseline) {
+        List<String> warnings = new ArrayList<String>();
+        String currentSet = current.getCaseSetKey();
+        String baselineSet = baseline.getCaseSetKey();
+        if (blank(currentSet) || blank(baselineSet)) {
+            warnings.add("历史运行未记录用例集版本，无法确认两次运行的题目完全一致");
+        } else if (!currentSet.equals(baselineSet)) {
+            warnings.add("两次运行使用的用例集不同，整体指标与逐题结果不可直接对比");
+        }
+        if (!Objects.equals(current.getTopK(), baseline.getTopK())) {
+            warnings.add("TopK 不同（" + current.getTopK() + " vs " + baseline.getTopK()
+                    + "），Recall/Precision/NDCG 不可直接对比");
+        }
+        if (blank(current.getMetricSpec()) || blank(baseline.getMetricSpec())) {
+            warnings.add("历史运行未记录指标口径，差值仅供参考");
+        } else if (!current.getMetricSpec().equals(baseline.getMetricSpec())) {
+            warnings.add("指标口径不同（" + current.getMetricSpec() + " vs "
+                    + baseline.getMetricSpec() + "），差值仅供参考");
+        }
+        if (!blank(current.getEmbeddingModel()) && !blank(baseline.getEmbeddingModel())
+                && !current.getEmbeddingModel().equals(baseline.getEmbeddingModel())) {
+            warnings.add("向量模型不同（" + current.getEmbeddingModel() + " vs "
+                    + baseline.getEmbeddingModel() + "），差异可能来自模型升级");
+        }
+        if (!blank(current.getRetrievalMode()) && !blank(baseline.getRetrievalMode())
+                && !current.getRetrievalMode().equals(baseline.getRetrievalMode())) {
+            warnings.add("检索链路不同（" + current.getRetrievalMode() + " vs "
+                    + baseline.getRetrievalMode() + "），差异可能来自精排");
+        }
+        return warnings;
+    }
+
+    /**
+     * 逐题对比只在用例集版本一致时计算。
+     *
+     * <p>退化判定取三条信号并集：Recall 下降、首位命中变差或消失、关键词命中丢失；
+     * 同一题同时出现退化与提升时标记为 mixed，两个计数都会加一。</p>
+     */
+    private List<RagEvalCaseDiffDto> compareCases(String uid, RagEvalRunBean current,
+                                                  RagEvalRunBean baseline,
+                                                  List<RagEvalCaseResultBean> currentResults) {
+        if (!sameKnownCaseSet(current, baseline)) {
+            return new ArrayList<RagEvalCaseDiffDto>();
+        }
+        Map<Integer, RagEvalCaseResultBean> baselineByIndex =
+                new HashMap<Integer, RagEvalCaseResultBean>();
+        for (RagEvalCaseResultBean bean : loadResults(uid, baseline.getRunKey())) {
+            if (bean.getCaseIndex() != null) {
+                baselineByIndex.put(bean.getCaseIndex(), bean);
+            }
+        }
+        List<RagEvalCaseDiffDto> diffs = new ArrayList<RagEvalCaseDiffDto>();
+        for (RagEvalCaseResultBean bean : currentResults) {
+            diffs.add(toCaseDiff(bean, baselineByIndex.get(bean.getCaseIndex())));
+        }
+        Collections.sort(diffs, new Comparator<RagEvalCaseDiffDto>() {
+            @Override
+            public int compare(RagEvalCaseDiffDto a, RagEvalCaseDiffDto b) {
+                int byStatus = statusRank(a.getStatus()) - statusRank(b.getStatus());
+                if (byStatus != 0) {
+                    return byStatus;
+                }
+                int left = a.getCaseIndex() == null ? Integer.MAX_VALUE : a.getCaseIndex();
+                int right = b.getCaseIndex() == null ? Integer.MAX_VALUE : b.getCaseIndex();
+                return Integer.compare(left, right);
+            }
+        });
+        return diffs;
+    }
+
+    private RagEvalCaseDiffDto toCaseDiff(RagEvalCaseResultBean current,
+                                          RagEvalCaseResultBean baseline) {
+        RagEvalCaseDiffDto diff = new RagEvalCaseDiffDto();
+        diff.setCaseIndex(current.getCaseIndex());
+        diff.setQuestion(current.getQuestion());
+        diff.setCurrentRecall(current.getRecall());
+        diff.setCurrentFirstHitRank(zeroIfNull(current.getFirstHitRank()));
+        diff.setCurrentKeywordHit(keywordHit(current));
+        if (baseline == null) {
+            diff.setStatus(RagEvalDiffStatus.UNKNOWN);
+            diff.setNote("基线运行缺少该题结果");
+            return diff;
+        }
+        diff.setBaselineRecall(baseline.getRecall());
+        diff.setBaselineFirstHitRank(zeroIfNull(baseline.getFirstHitRank()));
+        diff.setBaselineKeywordHit(keywordHit(baseline));
+        if (!blank(current.getErrorMessage()) || !blank(baseline.getErrorMessage())) {
+            diff.setStatus(RagEvalDiffStatus.UNKNOWN);
+            diff.setNote(blank(current.getErrorMessage()) ? "基线检索失败" : "本次检索失败");
+            return diff;
+        }
+        if (current.getRecall() != null && baseline.getRecall() != null) {
+            diff.setRecallDelta(round(current.getRecall() - baseline.getRecall()));
+        }
+        boolean recallDown = nz(current.getRecall()) < nz(baseline.getRecall()) - 1e-9;
+        boolean recallUp = nz(current.getRecall()) > nz(baseline.getRecall()) + 1e-9;
+        int currentRank = diff.getCurrentFirstHitRank();
+        int baselineRank = diff.getBaselineFirstHitRank();
+        boolean rankDown = baselineRank > 0 && (currentRank == 0 || currentRank > baselineRank);
+        boolean rankUp = currentRank > 0 && (baselineRank == 0 || currentRank < baselineRank);
+        boolean keywordDown = Boolean.TRUE.equals(diff.getBaselineKeywordHit())
+                && Boolean.FALSE.equals(diff.getCurrentKeywordHit());
+        boolean keywordUp = Boolean.FALSE.equals(diff.getBaselineKeywordHit())
+                && Boolean.TRUE.equals(diff.getCurrentKeywordHit());
+        boolean down = recallDown || rankDown || keywordDown;
+        boolean up = recallUp || rankUp || keywordUp;
+        if (down && up) {
+            diff.setStatus(RagEvalDiffStatus.MIXED);
+        } else if (down) {
+            diff.setStatus(RagEvalDiffStatus.REGRESSED);
+        } else if (up) {
+            diff.setStatus(RagEvalDiffStatus.IMPROVED);
+        } else {
+            diff.setStatus(RagEvalDiffStatus.UNCHANGED);
+        }
+        diff.setNote(buildDiffNote(diff));
+        return diff;
+    }
+
+    private String buildDiffNote(RagEvalCaseDiffDto diff) {
+        List<String> parts = new ArrayList<String>();
+        if (diff.getRecallDelta() != null && Math.abs(diff.getRecallDelta()) > 1e-9) {
+            parts.add("Recall " + formatMetric(diff.getBaselineRecall())
+                    + " → " + formatMetric(diff.getCurrentRecall()));
+        }
+        int currentRank = diff.getCurrentFirstHitRank() == null ? 0 : diff.getCurrentFirstHitRank();
+        int baselineRank = diff.getBaselineFirstHitRank() == null
+                ? 0 : diff.getBaselineFirstHitRank();
+        if (currentRank != baselineRank) {
+            parts.add("首位命中 " + rankText(baselineRank) + " → " + rankText(currentRank));
+        }
+        if (diff.getBaselineKeywordHit() != null && diff.getCurrentKeywordHit() != null
+                && !diff.getBaselineKeywordHit().equals(diff.getCurrentKeywordHit())) {
+            parts.add("关键词 " + (diff.getBaselineKeywordHit() ? "命中" : "未命中")
+                    + " → " + (diff.getCurrentKeywordHit() ? "命中" : "未命中"));
+        }
+        return parts.isEmpty() ? "指标与排名均无变化" : join(parts, "；");
+    }
+
+    private static int statusRank(String status) {
+        if (RagEvalDiffStatus.REGRESSED.equals(status)) {
+            return 0;
+        }
+        if (RagEvalDiffStatus.MIXED.equals(status)) {
+            return 1;
+        }
+        if (RagEvalDiffStatus.IMPROVED.equals(status)) {
+            return 2;
+        }
+        if (RagEvalDiffStatus.UNCHANGED.equals(status)) {
+            return 3;
+        }
+        return 4;
+    }
+
+    private static Boolean keywordHit(RagEvalCaseResultBean bean) {
+        if (!Boolean.TRUE.equals(bean.getKeywordEvaluated())) {
+            return null;
+        }
+        return Boolean.TRUE.equals(bean.getKeywordHit());
+    }
+
+    private static int zeroIfNull(Integer value) {
+        return value == null ? 0 : value;
+    }
+
+    private static double nz(Double value) {
+        return value == null ? 0D : value;
+    }
+
+    private static double round(double value) {
+        return Math.round(value * 10000D) / 10000D;
+    }
+
+    private static String formatMetric(Double value) {
+        return value == null ? "-" : String.format("%.3f", value);
+    }
+
+    private static String rankText(int rank) {
+        return rank <= 0 ? "未命中" : "第 " + rank + " 位";
+    }
+
+    private static String join(List<String> parts, String separator) {
+        StringBuilder sb = new StringBuilder();
+        for (int i = 0; i < parts.size(); i++) {
+            if (i > 0) {
+                sb.append(separator);
+            }
+            sb.append(parts.get(i));
+        }
+        return sb.toString();
     }
 
     private void failQueuedRun(String uid, String runKey, String message) {

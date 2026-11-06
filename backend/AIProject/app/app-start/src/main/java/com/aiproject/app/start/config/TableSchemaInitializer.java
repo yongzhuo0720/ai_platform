@@ -76,7 +76,8 @@ public class TableSchemaInitializer implements ApplicationListener<ApplicationRe
                 + "ON ragevalcasebean (\"lastuser\")");
 
         execute("CREATE TABLE IF NOT EXISTS ragevalrunbean ("
-                + "\"runKey\" varchar(64), \"datasetKey\" varchar(64), \"datasetName\" varchar(100), "
+                + "\"runKey\" varchar(64), \"datasetKey\" varchar(64), \"caseSetKey\" varchar(64), "
+                + "\"datasetName\" varchar(100), "
                 + "\"kbName\" varchar(100), \"topK\" int4, \"status\" varchar(16), "
                 + "\"total\" int4, \"processed\" int4, \"recall\" float8, \"precision\" float8, "
                 + "\"mrr\" float8, \"ndcg\" float8, \"keywordHitRate\" float8, "
@@ -115,6 +116,8 @@ public class TableSchemaInitializer implements ApplicationListener<ApplicationRe
                 + "ON ragevalcaseresultbean (\"lastuser\")");
 
         // 存量表补列：Top-K 明细与运行配置快照，旧运行保持 NULL，界面按「未记录」处理
+        execute("ALTER TABLE ragevalrunbean "
+                + "ADD COLUMN IF NOT EXISTS \"caseSetKey\" varchar(64)");
         execute("ALTER TABLE ragevalrunbean "
                 + "ADD COLUMN IF NOT EXISTS \"metricSpec\" varchar(32)");
         execute("ALTER TABLE ragevalrunbean "

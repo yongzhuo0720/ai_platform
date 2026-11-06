@@ -27,6 +27,10 @@ public class RagEvalRunBean extends DbEntityBase {
     String datasetKey;
 
     @SqlColumn()
+    @ApiModelProperty("用例集版本键快照，用于判断两次运行的题目是否一致")
+    String caseSetKey;
+
+    @SqlColumn()
     @ApiModelProperty("数据集名称快照")
     String datasetName;
 

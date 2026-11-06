@@ -50,6 +50,7 @@ CREATE INDEX IF NOT EXISTS idx_ragevalcase_user
 CREATE TABLE IF NOT EXISTS ragevalrunbean (
     "runKey" varchar(64),
     "datasetKey" varchar(64),
+    "caseSetKey" varchar(64),
     "datasetName" varchar(100),
     "kbName" varchar(100),
     "topK" int4,
@@ -121,7 +122,9 @@ CREATE INDEX IF NOT EXISTS idx_ragevalresult_user
     ON ragevalcaseresultbean ("lastuser");
 
 -- 存量环境补列（CREATE TABLE IF NOT EXISTS 不会修改已存在的表）：
--- Top-K 明细与运行配置快照。旧运行保持 NULL，界面按「未记录」处理。
+-- Top-K 明细、用例集版本与运行配置快照。旧运行保持 NULL，界面按「未记录」处理。
+ALTER TABLE ragevalrunbean
+    ADD COLUMN IF NOT EXISTS "caseSetKey" varchar(64);
 ALTER TABLE ragevalrunbean
     ADD COLUMN IF NOT EXISTS "metricSpec" varchar(32);
 ALTER TABLE ragevalrunbean

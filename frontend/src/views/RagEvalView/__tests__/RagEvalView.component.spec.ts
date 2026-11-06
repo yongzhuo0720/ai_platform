@@ -132,6 +132,35 @@ const runningRun = {
 const runDetail = {
   run: baseRun,
   baseline: baselineRun,
+  baselineExplicit: false,
+  baselineCompatible: true,
+  baselineWarnings: [] as string[],
+  regressedCount: 1,
+  improvedCount: 1,
+  caseDiffs: [
+    {
+      caseIndex: 1,
+      question: '出差 3 天以内由谁审批',
+      baselineFirstHitRank: 1,
+      currentFirstHitRank: 2,
+      recallDelta: 0,
+      baselineKeywordHit: true,
+      currentKeywordHit: false,
+      status: 'regressed' as const,
+      note: '首位命中 第 1 位 → 第 2 位；关键词 命中 → 未命中',
+    },
+    {
+      caseIndex: 0,
+      question: '出差住宿每晚上限多少',
+      baselineFirstHitRank: 2,
+      currentFirstHitRank: 1,
+      recallDelta: 0.5,
+      baselineKeywordHit: false,
+      currentKeywordHit: true,
+      status: 'improved' as const,
+      note: 'Recall 0.500 → 1.000；首位命中 第 2 位 → 第 1 位；关键词 未命中 → 命中',
+    },
+  ],
   results: [
     {
       caseIndex: 0,
@@ -391,7 +420,7 @@ describe('RagEvalView', () => {
 
     expect(api.startRun).toHaveBeenCalledWith('d1', 10)
     expect(spies.success).toHaveBeenCalledWith('评估已启动，共 2 条用例')
-    expect(api.getRun).toHaveBeenCalledWith('r2')
+    expect(api.getRun).toHaveBeenCalledWith('r2', undefined)
     expect((wrapper.vm as any).state.runDialogVisible).toBe(true)
     expect((wrapper.vm as any).hasActiveRun).toBe(true)
     expect(wrapper.text()).toContain('评估进行中')
@@ -406,7 +435,7 @@ describe('RagEvalView', () => {
     await clickByText(wrapper, '.rag-eval-runs button', '详情')
     await flushPromises()
 
-    expect(api.getRun).toHaveBeenCalledWith('r1')
+    expect(api.getRun).toHaveBeenCalledWith('r1', undefined)
     expect((wrapper.vm as any).state.runDialogVisible).toBe(true)
     expect(wrapper.text()).toContain('对比基线')
     expect(wrapper.text()).toContain('+10.0pp')
@@ -449,10 +478,15 @@ describe('RagEvalView', () => {
     expect(wrapper.text()).toContain('本次运行未记录 Top-K 明细')
   })
 
-  it('运行详情：基线口径与当前不一致时提示差值仅供参考', async () => {
+  it('运行详情：展示后端返回的基线不可比告警', async () => {
     stubInitialLoad()
     api.getRun.mockResolvedValue(
-      ok({ ...runDetail, baseline: { ...baselineRun, metricSpec: 'rag-eval-v0' } }),
+      ok({
+        ...runDetail,
+        baseline: { ...baselineRun, metricSpec: 'rag-eval-v0' },
+        baselineCompatible: false,
+        baselineWarnings: ['指标口径不同（rag-eval-v1 vs rag-eval-v0），差值仅供参考'],
+      }),
     )
     const wrapper = mountView()
     await flushPromises()
@@ -460,7 +494,52 @@ describe('RagEvalView', () => {
     await clickByText(wrapper, '.rag-eval-runs button', '详情')
     await flushPromises()
 
-    expect(wrapper.text()).toContain('口径不同，差值仅供参考')
+    expect(wrapper.text()).toContain('对比提示')
+    expect(wrapper.text()).toContain('指标口径不同（rag-eval-v1 vs rag-eval-v0）')
+    expect(wrapper.text()).toContain('并非严格可比')
+  })
+
+  it('运行详情：逐题对比先列退化项并给出差值', async () => {
+    stubInitialLoad()
+    api.getRun.mockResolvedValue(ok(runDetail))
+    const wrapper = mountView()
+    await flushPromises()
+
+    await clickByText(wrapper, '.rag-eval-runs button', '详情')
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('逐题对比')
+    expect(wrapper.text()).toContain('退化 1 条')
+    expect(wrapper.text()).toContain('提升 1 条')
+    expect(wrapper.text()).toContain('首位命中 第 1 位 → 第 2 位')
+    expect(wrapper.text()).toContain('+50.0 pp')
+    expect(wrapper.text()).toContain('Recall 0.500 → 1.000')
+  })
+
+  it('运行详情：手动选择基线后携带 baselineRunKey 重新请求', async () => {
+    stubInitialLoad()
+    api.getRun.mockResolvedValueOnce(ok(runDetail))
+    const wrapper = mountView()
+    await flushPromises()
+
+    await clickByText(wrapper, '.rag-eval-runs button', '详情')
+    await flushPromises()
+
+    api.getRun.mockResolvedValueOnce(
+      ok({
+        ...runDetail,
+        baseline: { ...baselineRun, runKey: 'r9' },
+        baselineExplicit: true,
+        baselineCompatible: false,
+        baselineWarnings: ['TopK 不同（5 vs 10），Recall/Precision/NDCG 不可直接对比'],
+      }),
+    )
+    await (wrapper.vm as any).selectBaseline('r9')
+    await flushPromises()
+
+    expect(api.getRun).toHaveBeenLastCalledWith('r1', 'r9')
+    expect(wrapper.text()).toContain('手动指定')
+    expect(wrapper.text()).toContain('TopK 不同（5 vs 10）')
   })
 
   it('删除数据集：确认后调用接口并回到空态；取消不调用', async () => {

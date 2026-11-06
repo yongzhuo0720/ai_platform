@@ -10,8 +10,10 @@ import com.aiproject.ai.service.mapper.RagEvalCaseBeanMapper;
 import com.aiproject.ai.service.mapper.RagEvalCaseResultBeanMapper;
 import com.aiproject.ai.service.mapper.RagEvalDatasetBeanMapper;
 import com.aiproject.ai.service.mapper.RagEvalRunBeanMapper;
+import com.aiproject.ai.service.rag.RagEvalDiffStatus;
 import com.aiproject.ai.service.rag.RagEvalRunner;
 import com.aiproject.ai.service.rag.RagEvalStatus;
+import com.aiproject.ai.service.rag.dto.RagEvalCaseDiffDto;
 import com.aiproject.ai.service.rag.dto.RagEvalCaseInput;
 import com.aiproject.ai.service.rag.dto.RagEvalDatasetRequest;
 import com.aiproject.ai.service.rag.dto.RagEvalHitDto;
@@ -347,6 +349,7 @@ class RagEvalHolderTest {
         assertEquals(8, run.getTopK().intValue());
         assertEquals(2, run.getTotal().intValue());
         assertEquals(0, run.getProcessed().intValue());
+        assertEquals("set-key", run.getCaseSetKey(), "运行开始时必须快照用例集版本");
         assertEquals(UID, run.getLastuser());
         verify(ragEvalExecutor).execute(any(Runnable.class));
     }
@@ -386,13 +389,151 @@ class RagEvalHolderTest {
         when(resultMapper.select(any(PageRequest.class), any(RagEvalCaseResultBean.class)))
                 .thenReturn(Collections.<RagEvalCaseResultBean>emptyList());
 
-        Result<RagEvalRunDetail> result = holder.getRun(UID, "r3");
+        Result<RagEvalRunDetail> result = holder.getRun(UID, "r3", null);
 
         assertTrue(ok(result), result.getResp_msg());
         RagEvalRunDetail detail = result.getDatas();
         assertEquals("r3", detail.getRun().getRunKey());
         assertNotNull(detail.getBaseline());
         assertEquals("r2", detail.getBaseline().getRunKey(), "基线必须是更早且可比较的运行");
+        assertFalse(detail.getBaselineCompatible(), "历史运行没有用例集版本与口径，不能算严格可比");
+        assertTrue(detail.getBaselineWarnings().toString().contains("未记录用例集版本"));
+        assertTrue(detail.getCaseDiffs().isEmpty(), "用例集版本未知时不计算逐题差异");
+    }
+
+    @Test
+    void getRun_shouldPreferEarlierBaselineWithSameCaseSet() {
+        RagEvalRunBean current = run("r3", RagEvalStatus.SUCCESS, 10);
+        current.setCaseSetKey("set-1");
+        RagEvalRunBean newestEarlier = run("r2", RagEvalStatus.SUCCESS, 8);
+        newestEarlier.setCaseSetKey("set-2");
+        RagEvalRunBean sameSet = run("r1", RagEvalStatus.SUCCESS, 5);
+        sameSet.setCaseSetKey("set-1");
+        when(runMapper.select(isNull(), any(RagEvalRunBean.class)))
+                .thenReturn(Collections.singletonList(current));
+        when(runMapper.select(any(PageRequest.class), any(RagEvalRunBean.class)))
+                .thenReturn(Arrays.asList(current, newestEarlier, sameSet));
+        when(resultMapper.select(any(PageRequest.class), any(RagEvalCaseResultBean.class)))
+                .thenReturn(Collections.<RagEvalCaseResultBean>emptyList());
+
+        Result<RagEvalRunDetail> result = holder.getRun(UID, "r3", null);
+
+        assertTrue(ok(result), result.getResp_msg());
+        assertEquals("r1", result.getDatas().getBaseline().getRunKey(),
+                "自动基线应优先同一用例集，而不是只看时间最近");
+    }
+
+    @Test
+    void getRun_shouldHonorExplicitBaselineAndReportIncompatibilities() {
+        RagEvalRunBean current = run("r3", RagEvalStatus.SUCCESS, 10);
+        current.setCaseSetKey("set-new");
+        current.setTopK(5);
+        current.setMetricSpec("rag-eval-v1");
+        current.setEmbeddingModel("embed-v2");
+        RagEvalRunBean baseline = run("r1", RagEvalStatus.SUCCESS, 5);
+        baseline.setCaseSetKey("set-old");
+        baseline.setTopK(10);
+        baseline.setMetricSpec("rag-eval-v0");
+        baseline.setEmbeddingModel("embed-v1");
+        when(runMapper.select(isNull(), any(RagEvalRunBean.class)))
+                .thenReturn(Collections.singletonList(current),
+                        Collections.singletonList(baseline));
+        when(resultMapper.select(any(PageRequest.class), any(RagEvalCaseResultBean.class)))
+                .thenReturn(Collections.<RagEvalCaseResultBean>emptyList());
+
+        Result<RagEvalRunDetail> result = holder.getRun(UID, "r3", "r1");
+
+        assertTrue(ok(result), result.getResp_msg());
+        RagEvalRunDetail detail = result.getDatas();
+        assertEquals("r1", detail.getBaseline().getRunKey());
+        assertTrue(detail.getBaselineExplicit());
+        assertFalse(detail.getBaselineCompatible(), "用例集/TopK/口径不同不能算严格可比");
+        String warnings = detail.getBaselineWarnings().toString();
+        assertTrue(warnings.contains("用例集不同"), warnings);
+        assertTrue(warnings.contains("TopK 不同"), warnings);
+        assertTrue(warnings.contains("指标口径不同"), warnings);
+        assertTrue(warnings.contains("向量模型不同"), warnings);
+        assertTrue(detail.getCaseDiffs().isEmpty(), "用例集不一致时不计算逐题差异");
+    }
+
+    @Test
+    void getRun_shouldRejectBaselineEqualToCurrentRun() {
+        RagEvalRunBean current = run("r1", RagEvalStatus.SUCCESS, 10);
+        when(runMapper.select(isNull(), any(RagEvalRunBean.class)))
+                .thenReturn(Collections.singletonList(current));
+
+        Result<RagEvalRunDetail> result = holder.getRun(UID, "r1", "r1");
+
+        assertFailed(result, "不能是当前运行本身");
+    }
+
+    @Test
+    void getRun_shouldRejectExplicitBaselineOutsideDataset() {
+        RagEvalRunBean current = run("r3", RagEvalStatus.SUCCESS, 10);
+        RagEvalRunBean otherDataset = run("r2", RagEvalStatus.SUCCESS, 8);
+        otherDataset.setDatasetKey("dk2");
+        when(runMapper.select(isNull(), any(RagEvalRunBean.class)))
+                .thenReturn(Collections.singletonList(current),
+                        Collections.singletonList(otherDataset));
+
+        Result<RagEvalRunDetail> result = holder.getRun(UID, "r3", "r2");
+
+        assertFailed(result, "同一数据集");
+    }
+
+    @Test
+    void getRun_shouldRejectExplicitBaselineThatFailed() {
+        RagEvalRunBean current = run("r3", RagEvalStatus.SUCCESS, 10);
+        RagEvalRunBean failed = run("r2", RagEvalStatus.FAILED, 8);
+        when(runMapper.select(isNull(), any(RagEvalRunBean.class)))
+                .thenReturn(Collections.singletonList(current),
+                        Collections.singletonList(failed));
+
+        Result<RagEvalRunDetail> result = holder.getRun(UID, "r3", "r2");
+
+        assertFailed(result, "尚未成功完成");
+    }
+
+    @Test
+    void getRun_shouldListRegressedCasesFirstWhenCaseSetMatches() {
+        RagEvalRunBean current = run("r3", RagEvalStatus.SUCCESS, 10);
+        current.setCaseSetKey("set-1");
+        current.setTopK(5);
+        current.setMetricSpec("rag-eval-v1");
+        RagEvalRunBean baseline = run("r2", RagEvalStatus.SUCCESS, 5);
+        baseline.setCaseSetKey("set-1");
+        baseline.setTopK(5);
+        baseline.setMetricSpec("rag-eval-v1");
+        when(runMapper.select(isNull(), any(RagEvalRunBean.class)))
+                .thenReturn(Collections.singletonList(current),
+                        Collections.singletonList(baseline));
+
+        RagEvalCaseResultBean worse = resultBean(0, "问题一", 0D, 0, true, false);
+        RagEvalCaseResultBean better = resultBean(1, "问题二", 1D, 1, true, true);
+        RagEvalCaseResultBean flat = resultBean(2, "问题三", 0.5D, 2, false, false);
+        RagEvalCaseResultBean baseWorse = resultBean(0, "问题一", 1D, 2, true, true);
+        RagEvalCaseResultBean baseBetter = resultBean(1, "问题二", 0D, 0, true, false);
+        RagEvalCaseResultBean baseFlat = resultBean(2, "问题三", 0.5D, 2, false, false);
+        when(resultMapper.select(any(PageRequest.class), any(RagEvalCaseResultBean.class)))
+                .thenReturn(Arrays.asList(worse, better, flat))
+                .thenReturn(Arrays.asList(baseWorse, baseBetter, baseFlat));
+
+        Result<RagEvalRunDetail> result = holder.getRun(UID, "r3", "r2");
+
+        assertTrue(ok(result), result.getResp_msg());
+        RagEvalRunDetail detail = result.getDatas();
+        assertTrue(detail.getBaselineCompatible(), "用例集、TopK、口径一致时应为严格可比");
+        assertTrue(detail.getBaselineWarnings().isEmpty(), detail.getBaselineWarnings().toString());
+        assertEquals(1, detail.getRegressedCount().intValue());
+        assertEquals(1, detail.getImprovedCount().intValue());
+        assertEquals(3, detail.getCaseDiffs().size());
+
+        RagEvalCaseDiffDto regressed = detail.getCaseDiffs().get(0);
+        assertEquals(RagEvalDiffStatus.REGRESSED, regressed.getStatus());
+        assertEquals(0, regressed.getCaseIndex().intValue());
+        assertTrue(regressed.getNote().contains("首位命中 第 2 位 → 未命中"), regressed.getNote());
+        assertEquals(RagEvalDiffStatus.IMPROVED, detail.getCaseDiffs().get(1).getStatus());
+        assertEquals(RagEvalDiffStatus.UNCHANGED, detail.getCaseDiffs().get(2).getStatus());
     }
 
     @Test
@@ -415,7 +556,7 @@ class RagEvalHolderTest {
         when(resultMapper.select(any(PageRequest.class), any(RagEvalCaseResultBean.class)))
                 .thenReturn(Arrays.asList(withHits, legacy));
 
-        Result<RagEvalRunDetail> result = holder.getRun(UID, "r1");
+        Result<RagEvalRunDetail> result = holder.getRun(UID, "r1", null);
 
         assertTrue(ok(result), result.getResp_msg());
         RagEvalHitDto hit = result.getDatas().getResults().get(0).getRetrievedHits().get(0);
@@ -434,7 +575,7 @@ class RagEvalHolderTest {
         when(runMapper.select(isNull(), any(RagEvalRunBean.class)))
                 .thenReturn(Collections.<RagEvalRunBean>emptyList());
 
-        Result<RagEvalRunDetail> result = holder.getRun(UID, "other-run");
+        Result<RagEvalRunDetail> result = holder.getRun(UID, "other-run", null);
 
         assertFailed(result, "不属于当前用户");
         verify(resultMapper, never()).select(any(PageRequest.class),
@@ -503,6 +644,20 @@ class RagEvalHolderTest {
         bean.setLastuser(UID);
         bean.setTotal(2);
         bean.setProcessed(2);
+        return bean;
+    }
+
+    private static RagEvalCaseResultBean resultBean(int caseIndex, String question, double recall,
+                                                    int firstHitRank, Boolean keywordEvaluated,
+                                                    Boolean keywordHit) {
+        RagEvalCaseResultBean bean = new RagEvalCaseResultBean();
+        bean.setCaseIndex(caseIndex);
+        bean.setQuestion(question);
+        bean.setRecall(recall);
+        bean.setFirstHitRank(firstHitRank);
+        bean.setKeywordEvaluated(keywordEvaluated);
+        bean.setKeywordHit(keywordHit);
+        bean.setLastuser(UID);
         return bean;
     }
 

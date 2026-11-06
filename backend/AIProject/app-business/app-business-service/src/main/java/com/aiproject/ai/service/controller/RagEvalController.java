@@ -84,11 +84,14 @@ public class RagEvalController {
         return ragEvalHolder.listRuns(uid, data == null ? null : data.getDatasetKey());
     }
 
-    @ApiOperation(value = "运行详情", httpMethod = "POST", notes = "整体指标 + 逐题结果 + 对比基线")
+    @ApiOperation(value = "运行详情", httpMethod = "POST",
+            notes = "整体指标 + 逐题结果 + 对比基线；baselineRunKey 为空时自动选择")
     @PostMapping("/getRun")
     public Result<RagEvalRunDetail> getRun(@LoginUserId String uid,
                                            @RequestBody RagEvalKeyRequest data) {
-        return ragEvalHolder.getRun(uid, data == null ? null : data.getRunKey());
+        return ragEvalHolder.getRun(uid,
+                data == null ? null : data.getRunKey(),
+                data == null ? null : data.getBaselineRunKey());
     }
 
     @ApiOperation(value = "删除运行记录", httpMethod = "POST")

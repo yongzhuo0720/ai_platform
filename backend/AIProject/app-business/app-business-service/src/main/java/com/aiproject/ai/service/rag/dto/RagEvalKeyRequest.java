@@ -12,4 +12,7 @@ public class RagEvalKeyRequest {
 
     @ApiModelProperty("运行业务键")
     private String runKey;
+
+    @ApiModelProperty("手动指定的基线运行键；为空时自动选择更早的可对比运行")
+    private String baselineRunKey;
 }
