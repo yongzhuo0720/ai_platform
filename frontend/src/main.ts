@@ -10,6 +10,7 @@ import './styles/element-override.css'
 import { useThemeStore } from './stores/theme'
 import { installCodeCopy } from './utils/markdown'
 import { installPreloadRecovery } from './utils/preloadRecovery'
+import { installGlobalErrorHandling } from './utils/globalError'
 
 // 代码块复制按钮的点击委托：全局一次，聊天页与知识库聊天的 v-html 均生效
 installCodeCopy()
@@ -43,6 +44,7 @@ ensureLoaded().catch((err) => {
 })
 
 const app = createApp(App).use(router).use(createPinia())
+installGlobalErrorHandling(app)
 useThemeStore().apply()
 for (const [key, component] of Object.entries(globalIcons)) {
   app.component(key, component)

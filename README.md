@@ -220,6 +220,7 @@ frontend/src/
 | 上传限制 | **两层限制，勿混用**：AI 网关透传链路为单文件 50MB / 整请求 120MB，超限返回 413 `payload_too_large` 并记审计，不再伪装成 502；本地 RAG 文档流水线另有更严的业务上限——单文件 20MB、解析后 20 万字符、单篇最多 500 块，超限在服务端解析阶段直接拒绝（不静默截断） |
 | 上游地址 | Dify 与直连模型的目标地址取服务端配置，由管理员维护 |
 | XSS | 助手回答中的原始 HTML 做转义，图片 URL 做协议校验 |
+| 前端错误兜底 | Vue 渲染异常与未处理 rejection 统一进顶部横幅，带错误编号、支持关闭/重载；chunk 404 由 `preloadRecovery` 单独重载，axios 错误仍走原 toast，互不重复提示 |
 
 ### 运行测试
 
@@ -247,8 +248,8 @@ cd frontend
 npm run typecheck      # TypeScript 类型检查
 npm run check:icons    # 图标注册检查（模板图标必须 import 或全局注册）
 npm run check:styles   # 硬编码色值棘轮检查（只减不增，基线在 scripts/check-styles.baseline.json）
-npm run test            # 单元测试（Vitest），23 个文件 / 275 项
-npm run test:component  # 组件测试（真实渲染），29 个文件 / 295 项
+npm run test            # 单元测试（Vitest），24 个文件 / 286 项
+npm run test:component  # 组件测试（真实渲染），30 个文件 / 300 项
 npm run test:e2e        # 浏览器冒烟（真实 Chromium + 接口 mock），15 项
 npm run check:streaming # 流式超时/取消回归，14 项
 npm run check:markdown  # Markdown 与 XSS 消毒回归，10 项
@@ -268,8 +269,8 @@ npm run check:bundle     # 首屏 gzip 体积预算（需先 build）
 | 前端 TypeScript 检查 | 通过 |
 | 前端图标注册检查 | 通过 |
 | 硬编码色值棘轮检查 | 通过（48 个文件 / 2102 处，等于基线；新增即失败，只允许减少） |
-| 前端逻辑单元测试 | 23 个文件 / **275 项通过** |
-| 前端组件测试 | 29 个文件 / **295 项通过**（@vue/test-utils 真实渲染） |
+| 前端逻辑单元测试 | 24 个文件 / **286 项通过** |
+| 前端组件测试 | 30 个文件 / **300 项通过**（@vue/test-utils 真实渲染） |
 | 浏览器冒烟（Playwright） | **15 项通过**（真实 Chromium + `page.route` 接口 mock，含文档流水线、目录页三态、登录守卫、SSE、配额、RAG 评估详情、404 兜底） |
 | 前端流式回归 | 14 项通过 |
 | 前端 Markdown / XSS 回归 | 10 项通过 |

@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   installPreloadRecovery,
+  isChunkLoadError,
   PRELOAD_RELOAD_GUARD_KEY,
   type PreloadEventTarget,
   type ReloadStorage,
@@ -102,5 +103,14 @@ describe("preloadRecovery", () => {
     fire();
 
     expect(storage.values.get(PRELOAD_RELOAD_GUARD_KEY)).toBe("42000");
+  });
+
+  it("识别常见的 chunk 加载失败文案", () => {
+    expect(isChunkLoadError(new Error("Failed to fetch dynamically imported module: /a.js"))).toBe(true);
+    expect(isChunkLoadError("error loading dynamically imported module")).toBe(true);
+    expect(isChunkLoadError(new Error("Importing a module script failed."))).toBe(true);
+    expect(isChunkLoadError(new Error("ChunkLoadError: Loading chunk 3 failed"))).toBe(true);
+    expect(isChunkLoadError(new Error("Cannot read properties of undefined"))).toBe(false);
+    expect(isChunkLoadError(null)).toBe(false);
   });
 });

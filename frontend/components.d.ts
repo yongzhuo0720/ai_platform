@@ -45,6 +45,7 @@ declare module 'vue' {
     ElTree: typeof import('element-plus/es')['ElTree']
     ElTreeSelect: typeof import('element-plus/es')['ElTreeSelect']
     ElUpload: typeof import('element-plus/es')['ElUpload']
+    GlobalErrorBanner: typeof import('./src/components/GlobalErrorBanner/index.vue')['default']
     GlobalSearch: typeof import('./src/components/GlobalSearch/index.vue')['default']
     KbChatPanel: typeof import('./src/components/KbChatPanel/index.vue')['default']
     NotificationBell: typeof import('./src/components/NotificationBell/index.vue')['default']

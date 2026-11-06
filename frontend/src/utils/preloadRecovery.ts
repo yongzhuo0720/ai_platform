@@ -14,6 +14,16 @@
 export const PRELOAD_RELOAD_GUARD_KEY = "ai-platform:preload-reload-at";
 const RELOAD_MIN_INTERVAL_MS = 30_000;
 
+// Vite / 浏览器 / 旧打包器对「懒加载 chunk 拿不到」的几种常见文案
+const CHUNK_ERROR_PATTERN =
+  /Failed to fetch dynamically imported module|error loading dynamically imported module|Importing a module script failed|ChunkLoadError/i;
+
+export function isChunkLoadError(error: unknown): boolean {
+  const message =
+    error instanceof Error ? error.message : typeof error === "string" ? error : "";
+  return CHUNK_ERROR_PATTERN.test(message);
+}
+
 export interface PreloadEventTarget {
   addEventListener(type: string, handler: (event: Event) => void): void;
 }
