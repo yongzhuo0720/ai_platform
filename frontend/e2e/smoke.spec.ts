@@ -265,9 +265,9 @@ test.describe("浏览器冒烟", () => {
 
     await page.getByRole("button", { name: "发起评估" }).click();
     await expect.poll(() => ragEvalStartRequests.length).toBe(1);
-    // HNSP 按方法参数名映射请求体：DTO 必须包在 data 里，topK 来自页面选择
+    // HNSP 按方法参数名映射请求体：DTO 必须包在 data 里，topK 与 rerankMode 来自页面默认值
     expect(ragEvalStartRequests[0]).toEqual({
-      data: { datasetKey: "d-e2e", topK: 5 },
+      data: { datasetKey: "d-e2e", topK: 5, rerankMode: "auto" },
     });
     await expect(page.getByText("评估已启动，共 2 条用例")).toBeVisible();
   });

@@ -218,7 +218,7 @@ frontend/src/
 | 操作日志 | 框架写的 `usercontrollerlog` 由本项目自己的 `POST /ai/api/controllerLog/query` 只读暴露：仅超管可查，日期区间严格解析成 `yyyy-MM-dd`，排序固定 `iid desc` 不接受前端传值，实体不映射 `params` 列（请求参数快照，可能含口令），所以那条链路上取不到请求体 |
 | AI 调用治理 | Dify、OpenAI 兼容模型与 `/v1` 外部调用共用网关：按用户限流，记录 tokens、耗时、请求 ID 与成本；支持用户与部门 Token 配额；Redis / 配额表不可用时 **fail-closed**（503 `guard_unavailable`），不放行。客户端取消会被识别并关闭上游连接，但 SSE 读循环是同步阻塞的，上游静默时最长要等 `readTimeoutMs`（默认 300s）才进入收尾，已在 `docs/第二轮深度升级-审查报告-2026-11-05.md` §5.2 列为待修项 |
 | 统计完整性 | 周报不再在 5 万行处静默截断：读到不满一页才结束；超过 50 万行或分页中途读失败时显式失败且**不落库**，避免保存一份看似正常的残缺统计 |
-| 成本缓存 | 模型单价首次加载失败时不再把空表缓存 5 分钟（否则故障窗口内调用全被记 0 成本）；本次返回空、下次调用立即重试，已有旧缓存时仍沿用旧值 |
+| 成本缓存 | 模型单价首次加载失败时不再把空表缓存 5 分钟（否则故障窗口内调用全被记 0 成本）；本次返回空、下次调用立即重试，已有旧缓存时仍沿用旧值（设计细节见 `docs/学习文档-阶段1-子阶段7E-周报全量聚合与价格缓存自愈.md`） |
 | 上传限制 | **两层限制，勿混用**：AI 网关透传链路为单文件 50MB / 整请求 120MB，超限返回 413 `payload_too_large` 并记审计，不再伪装成 502；本地 RAG 文档流水线另有更严的业务上限——单文件 20MB、解析后 20 万字符、单篇最多 500 块，超限在服务端解析阶段直接拒绝（不静默截断） |
 | 上游地址 | Dify 与直连模型的目标地址取服务端配置，由管理员维护 |
 | XSS | 助手回答中的原始 HTML 做转义，图片 URL 做协议校验 |
@@ -252,7 +252,7 @@ npm run check:icons    # 图标注册检查（模板图标必须 import 或全�
 npm run check:styles   # 硬编码色值棘轮检查（只减不增，基线在 scripts/check-styles.baseline.json）
 npm run test            # 单元测试（Vitest），24 个文件 / 286 项
 npm run test:component  # 组件测试（真实渲染），30 个文件 / 300 项
-npm run test:e2e        # 浏览器冒烟（真实 Chromium + 接口 mock），15 项
+npm run test:e2e        # 浏览器冒烟（真实 Chromium + 接口 mock），21 项
 npm run check:streaming # 流式超时/取消回归，14 项
 npm run check:markdown  # Markdown 与 XSS 消毒回归，10 项
 npm run build            # 生产构建
@@ -267,13 +267,13 @@ npm run check:bundle     # 首屏 gzip 体积预算（需先 build）
 
 | 项目 | 结果 |
 |---|---|
-| 后端单元测试 | **606 项 / 55 份 Surefire 报告，0 失败 / 0 错误 / 0 跳过**（`mvn -o test`，JDK 8 Dragonwell 8；app-common 7、permission 71、service 501、app-start 27） |
+| 后端单元测试 | **629 项 / 57 份 Surefire 报告，0 失败 / 0 错误 / 0 跳过**（`mvn -o test`，JDK 8 Dragonwell 8；app-common 7、permission 71、service 524、app-start 27） |
 | 前端 TypeScript 检查 | 通过 |
 | 前端图标注册检查 | 通过 |
 | 硬编码色值棘轮检查 | 通过（48 个文件 / 2102 处，等于基线；新增即失败，只允许减少） |
 | 前端逻辑单元测试 | 24 个文件 / **286 项通过** |
 | 前端组件测试 | 30 个文件 / **300 项通过**（@vue/test-utils 真实渲染） |
-| 浏览器冒烟（Playwright） | **15 项通过**（真实 Chromium + `page.route` 接口 mock，含文档流水线、目录页三态、登录守卫、SSE、配额、RAG 评估详情、404 兜底） |
+| 浏览器冒烟（Playwright） | **21 项通过**（真实 Chromium + `page.route` 接口 mock，含 Agent 事件链路、模型可观测后台、文档流水线、目录页三态、登录守卫、SSE、配额、RAG 评估详情、404 兜底） |
 | 前端流式回归 | 14 项通过 |
 | 前端 Markdown / XSS 回归 | 10 项通过 |
 | 前端生产构建 | 通过（element-plus 按路由分包） |
