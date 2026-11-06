@@ -238,8 +238,8 @@ cd frontend
 npm run typecheck      # TypeScript 类型检查
 npm run check:icons    # 图标注册检查（模板图标必须 import 或全局注册）
 npm run check:styles   # 硬编码色值棘轮检查（只减不增，基线在 scripts/check-styles.baseline.json）
-npm run test            # 单元测试（Vitest），18 个文件 / 212 项
-npm run test:component  # 组件测试（真实渲染），26 个文件 / 230 项
+npm run test            # 单元测试（Vitest），23 个文件 / 275 项
+npm run test:component  # 组件测试（真实渲染），28 个文件 / 280 项
 npm run test:e2e        # 浏览器冒烟（真实 Chromium + 接口 mock），15 项
 npm run check:streaming # 流式超时/取消回归，14 项
 npm run check:markdown  # Markdown 与 XSS 消毒回归，10 项
@@ -251,16 +251,16 @@ npm run check:bundle     # 首屏 gzip 体积预算（需先 build）
 跑完会打印 `后端单测汇总：N 项 / M 份报告`，一份报告都没生成就直接判失败——这是为了
 堵住「测试被静默跳过但 BUILD SUCCESS」这类最危险的绿色）。日志统一 UTF-8，可直接重定向存档。
 
-### 当前测试结果（2026-11-05 实测）
+### 当前测试结果（2026-11-06 实测）
 
 | 项目 | 结果 |
 |---|---|
-| 后端单元测试 | **434 项 / 40 份 Surefire 报告，0 失败 / 0 错误 / 0 跳过**（`mvn -o test`，JDK 8 Dragonwell 8；app-common 7、permission 71、service 330、app-start 26） |
+| 后端单元测试 | **596 项 / 53 份 Surefire 报告，0 失败 / 0 错误 / 0 跳过**（`mvn -o test`，JDK 8 Dragonwell 8；app-common 7、permission 71、service 491、app-start 27） |
 | 前端 TypeScript 检查 | 通过 |
 | 前端图标注册检查 | 通过 |
 | 硬编码色值棘轮检查 | 通过（48 个文件 / 2102 处，等于基线；新增即失败，只允许减少） |
-| 前端逻辑单元测试 | 18 个文件 / **212 项通过** |
-| 前端组件测试 | 26 个文件 / **230 项通过**（@vue/test-utils 真实渲染） |
+| 前端逻辑单元测试 | 23 个文件 / **275 项通过** |
+| 前端组件测试 | 28 个文件 / **280 项通过**（@vue/test-utils 真实渲染） |
 | 浏览器冒烟（Playwright） | **15 项通过**（真实 Chromium + `page.route` 接口 mock，含文档流水线、目录页三态、登录守卫、SSE、配额、RAG 评估详情、404 兜底） |
 | 前端流式回归 | 14 项通过 |
 | 前端 Markdown / XSS 回归 | 10 项通过 |
@@ -273,7 +273,7 @@ npm run check:bundle     # 首屏 gzip 体积预算（需先 build）
 > Vitest 的 unhandled errors、Vite 构建的 `EPERM`，或 Playwright 清理 `test-results`
 > 时触发 `SAFE_DELETE_BULK_CONFIRM_REQUIRED`。这三类失败**不是用例回归**：
 > 单独执行 `npm run test` / `test:component` / `build` / `test:e2e`（E2E 先把旧
-> `test-results` 移到临时目录）均为 exit=0。上表数字来自 2026-11-05 的逐项复现
+> `test-results` 移到临时目录）均为 exit=0。上表数字来自 2026-11-06 的逐项复现
 > 与后端 Maven 实际输出；后端仍以 `verify.ps1` 为唯一门禁。
 
 2026-10-30 前端改进：
