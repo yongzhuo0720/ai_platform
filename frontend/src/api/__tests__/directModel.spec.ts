@@ -4,7 +4,9 @@ import type { KbSearchItemDto } from "../kbRag";
 
 vi.mock("@/stores/difyConfig", () => ({
   getModelsGatewayBase: () => "/gateway/models",
-  gatewayAuthHeaders: () => ({}),
+  getChatConfig: () => ({ apiUrl: "/gateway/chat", apiKey: "server-side" }),
+  ensureLoaded: async () => undefined,
+  gatewayRequestHeaders: () => ({}),
 }));
 
 const sseResponse = (chunks: string[]): Response => {
@@ -161,6 +163,38 @@ describe("streamDirectChat 知识库来源事件", () => {
     });
 
     expect(error.message).toBe("今日 AI 额度已用完（已用 1500 / 1500 tokens），请明天再试");
+  });
+
+  it("OpenAI 错误信封也能取到 message，并附带请求 ID", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        async () =>
+          new Response(
+            JSON.stringify({
+              error: {
+                message: "今日 AI 额度已用完",
+                type: "quota_exceeded",
+                code: "quota_exceeded",
+                request_id: "req-body",
+              },
+            }),
+            {
+              status: 429,
+              headers: { "Content-Type": "application/json", "X-Request-Id": "req-header" },
+            }
+          )
+      )
+    );
+
+    const error = await new Promise<Error>((resolve) => {
+      streamDirectChat("7", [{ role: "user", content: "问题" }], {
+        onChunk: () => undefined,
+        onError: resolve,
+      });
+    });
+
+    expect(error.message).toBe("今日 AI 额度已用完（请求 ID：req-header）");
   });
 
   it("网络不可达时给出中文提示，不把 Failed to fetch 显示给用户", async () => {

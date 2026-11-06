@@ -42,13 +42,79 @@ function plainMessage(text: string): string | null {
   return trimmed
 }
 
+const REQUEST_ID_SUFFIX = /\s*（请求 ID：([^）]*)）\s*$/
+
+/** 分类前先剥掉请求 ID 后缀：UUID 里可能出现 400/500 这类数字，不能参与状态码判断 */
+function stripRequestId(text: string): string {
+  return text.replace(REQUEST_ID_SUFFIX, '').trim()
+}
+
+/** 从已清洗文案或原始 JSON 错误体里取请求 ID */
+function extractRequestId(text: string): string {
+  const suffix = text.match(REQUEST_ID_SUFFIX)
+  if (suffix?.[1]) {
+    return suffix[1]
+  }
+  const start = text.indexOf('{')
+  if (start === -1) {
+    return ''
+  }
+  try {
+    const parsed = JSON.parse(text.slice(start))
+    if (typeof parsed?.requestId === 'string') {
+      return parsed.requestId
+    }
+    return typeof parsed?.error?.request_id === 'string' ? parsed.error.request_id : ''
+  } catch {
+    return ''
+  }
+}
+
 /**
  * 解析对话流式请求中产生的错误，返回用户友好的提示
  * @param error - fetch/SSE 抛出的 Error 对象
  */
 export function parseChatError(error: Error): ParsedChatError {
-  const errorText = error.message || String(error)
+  const rawText = error.message || String(error)
+  const parsed = classifyChatError(stripRequestId(rawText))
+  const requestId = extractRequestId(rawText)
+  if (!requestId || parsed.message.includes('（请求 ID：')) {
+    return parsed
+  }
+  // 兜底文案同样带上请求 ID，用户报障时能直接定位到这次调用
+  return { ...parsed, message: `${parsed.message}（请求 ID：${requestId}）` }
+}
+
+function classifyChatError(errorText: string): ParsedChatError {
   const serverMessage = extractServerMessage(errorText)
+
+  /*
+   * 幂等冲突：上一次相同请求已被网关接受，这次没有产生任何效果。
+   * 重试只会继续撞同一个键，必须等用户确认后作为新操作重新发起。
+   */
+  if (errorText.includes('idempotency_conflict') || errorText.includes('请勿重复提交')) {
+    return {
+      message: serverMessage || plainMessage(errorText)
+        || '相同请求已提交，请勿重复提交。',
+      retryable: false,
+      suggestSwitchModel: false,
+      suggestCheckConfig: false,
+    }
+  }
+
+  /*
+   * 幂等服务不可用：占位失败，网关拒绝执行请求（没有计费也没有建数据）。
+   * 这种情况可以稍后重试。
+   */
+  if (errorText.includes('idempotency_unavailable') || errorText.includes('幂等服务暂不可用')) {
+    return {
+      message: serverMessage || plainMessage(errorText)
+        || '幂等服务暂不可用，请稍后重试。',
+      retryable: true,
+      suggestSwitchModel: false,
+      suggestCheckConfig: false,
+    }
+  }
 
   /*
    * 每日配额用完：这是「今天不能再用了」，重试或换模型都无济于事，

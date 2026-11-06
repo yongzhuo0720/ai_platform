@@ -5,7 +5,7 @@ import type {
   DifyIndexingStatusResponse,
 } from '@/types/knowledge';
 import { ElMessage } from 'element-plus';
-import { getKnowledgeFileConfig, gatewayAuthHeaders } from '@/stores/difyConfig'
+import { getKnowledgeFileConfig, gatewayRequestHeaders } from '@/stores/difyConfig'
 
 const getBase = () => {
   const { apiUrl } = getKnowledgeFileConfig()
@@ -20,7 +20,7 @@ const getKey = () => {
 const getHeaders = (isJson = true) => {
   const headers: Record<string, string> = {
     'Authorization': `Bearer ${getKey()}`,
-    ...gatewayAuthHeaders(),
+    ...gatewayRequestHeaders(),
   };
   if (isJson) {
     headers['Content-Type'] = 'application/json';

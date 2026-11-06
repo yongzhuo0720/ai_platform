@@ -8,7 +8,7 @@ import type {
 } from '@/types/knowledge';
 import {
   getKnowledgeFileConfig,
-  gatewayAuthHeaders,
+  gatewayRequestHeaders,
   isGatewayMode,
   isGatewayModuleConfigured,
 } from '@/stores/difyConfig'
@@ -26,7 +26,7 @@ const getKey = () => {
 const getHeaders = (isJson = true) => {
   const headers: Record<string, string> = {
     'Authorization': `Bearer ${getKey()}`,
-    ...gatewayAuthHeaders(),
+    ...gatewayRequestHeaders(),
   };
   if (isJson) {
     headers['Content-Type'] = 'application/json';

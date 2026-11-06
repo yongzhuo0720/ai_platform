@@ -3,7 +3,7 @@
  * 统一处理请求头、错误处理等
  */
 
-import { getChatConfig, ensureLoaded, gatewayAuthHeaders } from '@/stores/difyConfig'
+import { getChatConfig, ensureLoaded, gatewayRequestHeaders } from '@/stores/difyConfig'
 import { debug } from '@/utils/debug'
 
 export interface RequestConfig {
@@ -29,28 +29,82 @@ export interface RequestConfig {
 const DEFAULT_REQUEST_TIMEOUT_MS = 30000;
 
 /**
- * 把 HTTP 错误响应转成可直接展示的文案。
+ * 服务端错误体有两种协议：
+ * - 站内网关：`{code, message, status, requestId}`
+ * - OpenAI 兼容：`{error: {message, type, code, request_id}}`
+ */
+const extractServerMessage = (parsed: unknown): string => {
+  if (!parsed || typeof parsed !== 'object') {
+    return '';
+  }
+  const body = parsed as Record<string, unknown>;
+  if (typeof body.message === 'string' && body.message.trim()) {
+    return body.message.trim();
+  }
+  const err = body.error;
+  if (err && typeof err === 'object') {
+    const message = (err as Record<string, unknown>).message;
+    if (typeof message === 'string' && message.trim()) {
+      return message.trim();
+    }
+  }
+  return '';
+};
+
+/** 请求 ID 优先取响应头（网关对所有响应都回显），再退回错误体 */
+const extractRequestId = (response: Response, parsed: unknown): string => {
+  const fromHeader = response.headers.get('X-Request-Id');
+  if (fromHeader && fromHeader.trim()) {
+    return fromHeader.trim();
+  }
+  if (!parsed || typeof parsed !== 'object') {
+    return '';
+  }
+  const body = parsed as Record<string, unknown>;
+  if (typeof body.requestId === 'string' && body.requestId.trim()) {
+    return body.requestId.trim();
+  }
+  const err = body.error;
+  if (err && typeof err === 'object') {
+    const rid = (err as Record<string, unknown>).request_id;
+    if (typeof rid === 'string' && rid.trim()) {
+      return rid.trim();
+    }
+  }
+  return '';
+};
+
+/**
+ * 把 HTTP 错误响应转成可直接展示的文案，并附上请求 ID。
  *
  * 网关错误体是 `{code,message,status,requestId}`，配额不足等提示都在 message 里。
  * 修复前直接把整段响应文本拼进异常，用户看到的是「请求失败 (429): {"code":...}」，
  * 既难读，也让后续错误分类只能靠状态码猜。
+ *
+ * 附上请求 ID 是为了让用户报障时能把这串 ID 直接交给管理员，
+ * 后端审计、上游日志与浏览器这次请求就能对上，不用靠「大概几点」猜。
  */
 export const readErrorMessage = async (
   response: Response,
   action = '请求失败'
 ): Promise<string> => {
   const text = await response.text().catch(() => '');
+  let parsed: unknown;
   try {
-    const parsed = JSON.parse(text);
-    const message = parsed && typeof parsed.message === 'string' ? parsed.message.trim() : '';
-    if (message) {
-      return message;
-    }
+    parsed = JSON.parse(text);
   } catch {
-    // 非 JSON 响应体（如网关 502 HTML），使用原文
+    // 非 JSON 响应体（如网关 502 HTML），保留原文
+  }
+  const requestId = extractRequestId(response, parsed);
+  const suffix = requestId ? `（请求 ID：${requestId}）` : '';
+  const message = extractServerMessage(parsed);
+  if (message) {
+    return `${message}${suffix}`;
   }
   const detail = text.trim() || response.statusText;
-  return detail ? `${action} (${response.status}): ${detail}` : `${action} (${response.status})`;
+  return detail
+    ? `${action} (${response.status}): ${detail}${suffix}`
+    : `${action} (${response.status})${suffix}`;
 };
 
 /**
@@ -60,7 +114,7 @@ export const getDefaultHeaders = (isJson = true): Record<string, string> => {
   const { apiKey } = getChatConfig()
   const headers: Record<string, string> = {
     'Authorization': `Bearer ${apiKey}`,
-    ...gatewayAuthHeaders(),
+    ...gatewayRequestHeaders(),
   };
   if (isJson) {
     headers['Content-Type'] = 'application/json';
@@ -114,7 +168,7 @@ export const uploadFileToDify = async (file: File): Promise<DifyFileUploadRespon
     method: 'POST',
     headers: {
       'Authorization': `Bearer ${apiKey}`,
-      ...gatewayAuthHeaders(),
+      ...gatewayRequestHeaders(),
     },
     body: formData,
   });
@@ -242,7 +296,9 @@ export const request = async <T>(
       // 这里只抛明确错误，不做自动跳转：
       // request() 被聊天、知识库等多处复用，贸然 redirect 会打断正常流程，
       // 由调用方决定是提示还是跳登录页（axios.js 那边已经有 401 跳转逻辑）。
-      throw new Error(`登录状态已失效，请重新登录 (${response.status})`);
+      const requestId = response.headers.get('X-Request-Id')?.trim();
+      const suffix = requestId ? `（请求 ID：${requestId}）` : '';
+      throw new Error(`登录状态已失效，请重新登录 (${response.status})${suffix}`);
     }
     throw new Error(await readErrorMessage(response));
   }

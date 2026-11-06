@@ -167,7 +167,14 @@ test.describe("浏览器冒烟", () => {
     expect(lastUser?.content).toBe("用一句话介绍你自己");
   });
 
-  test("配额用尽时对话展示服务端原因，而不是裸错误码", async ({ page }) => {
+  test("配额用尽时展示服务端原因与请求 ID，请求带追踪和幂等头", async ({ page }) => {
+    const sentHeaders: Record<string, string>[] = [];
+    page.on("request", (request) => {
+      if (request.url().includes("/ai/api/aiGateway/chat/chat-messages")) {
+        sentHeaders.push(request.headers());
+      }
+    });
+
     await installBackendMocks(page, {
       difyChatError: {
         status: 429,
@@ -192,6 +199,14 @@ test.describe("浏览器冒烟", () => {
     const assistant = page.locator(".chat-message-item.assistant").last();
     await expect(assistant).toContainText("今日 AI 额度已用完");
     await expect(assistant).not.toContainText("quota_exceeded");
+    // 请求 ID 回显到用户可见的提示里，报障时可直接提供
+    await expect(assistant).toContainText("（请求 ID：e2e-quota）");
+
+    await expect.poll(() => sentHeaders.length).toBe(1);
+    const headers = sentHeaders[0];
+    // UUID（36 位）或非安全上下文回退串，均满足后端 64 字符上限
+    expect(headers["x-request-id"]).toMatch(/^[A-Za-z0-9._:-]{8,64}$/);
+    expect(headers["idempotency-key"]).toMatch(/^[A-Za-z0-9._:-]{8,128}$/);
   });
 
   test("知识库文件模块未配置时展示引导，不再请求数据集", async ({ page }) => {

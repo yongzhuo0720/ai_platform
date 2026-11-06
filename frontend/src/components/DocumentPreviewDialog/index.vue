@@ -117,7 +117,7 @@
 import { ref, computed, watch, nextTick } from 'vue'
 import { Close, Document, Files, WarningFilled } from '@element-plus/icons-vue'
 import { renderMarkdown } from '@/utils/markdown'
-import { getKnowledgeFileConfig, gatewayAuthHeaders } from '@/stores/difyConfig'
+import { getKnowledgeFileConfig, gatewayRequestHeaders } from '@/stores/difyConfig'
 import type { KnowledgeBaseDocument, KnowledgeBaseChunk } from '@/types/knowledge'
 
 const props = defineProps<{
@@ -205,7 +205,7 @@ async function fetchDownloadUrl() {
         method: 'GET',
         headers: {
           Authorization: `Bearer ${apiKey}`,
-          ...gatewayAuthHeaders(),
+          ...gatewayRequestHeaders(),
         },
       }
     )

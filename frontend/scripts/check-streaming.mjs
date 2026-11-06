@@ -18,7 +18,7 @@ for (const name of ['directModel', 'request']) {
           contents: path.endsWith('difyConfig')
             ? `export const getChatConfig = () => ({ apiUrl: '/gateway/chat', apiKey: 'server-side' });
                export const ensureLoaded = async () => {};
-               export const gatewayAuthHeaders = () => ({});
+               export const gatewayRequestHeaders = () => ({});
                export const getModelsGatewayBase = () => '/gateway/models';`
             // 桩必须与 src/utils/debug.ts 的导出形状同步：少一个方法，
             // SSE 解析会在调用处抛错并被 catch 吞掉，表现为「一个 chunk 都没收到」。

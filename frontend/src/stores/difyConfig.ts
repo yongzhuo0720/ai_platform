@@ -14,6 +14,7 @@
 
 import Cookies from 'js-cookie'
 import axios from '@/api/axios'
+import { newIdempotencyKey, newRequestId } from '@/api/requestId'
 import { debug } from '@/utils/debug'
 
 interface DifyConfigItem {
@@ -96,11 +97,19 @@ export async function isGatewayModuleConfigured(
 }
 
 /**
- * 网关模式下附加到原生 fetch 的鉴权头。
+ * 网关请求头：鉴权 + 请求追踪 + 幂等键。
+ *
  * axios 请求由拦截器统一处理，但知识库模块用了多处原生 fetch，需要手动补上。
  * 管理后台与业务页面使用不同的登录 Cookie，先取当前场景的，再兜底另一场景。
+ *
+ * 每个请求生成一个 `X-Request-Id`：后端会原样回显并写进审计与错误响应，
+ * 用户报障时把这个 ID 给管理员，就能直接捞出整条调用链。
+ *
+ * 同时带上 `Idempotency-Key`。后端对 GET/HEAD/OPTIONS 直接忽略，因此这里无需区分方法；
+ * 浏览器、代理层把同一个 POST 重放两次时请求头会一起重发，第二次会被网关以 409 挡住，
+ * 避免对话重复计费与数据集重复创建。用户主动重发属于新意图，会拿到新键。
  */
-export function gatewayAuthHeaders(): Record<string, string> {
+export function gatewayRequestHeaders(): Record<string, string> {
   if (!GATEWAY_MODE) {
     return {}
   }
@@ -108,7 +117,14 @@ export function gatewayAuthHeaders(): Record<string, string> {
   const token =
     Cookies.get(admin ? 'admin_loginToken' : 'loginToken') ||
     Cookies.get(admin ? 'loginToken' : 'admin_loginToken')
-  return token ? { 'x-access-token': token } : {}
+  const headers: Record<string, string> = {
+    'X-Request-Id': newRequestId(),
+    'Idempotency-Key': newIdempotencyKey(),
+  }
+  if (token) {
+    headers['x-access-token'] = token
+  }
+  return headers
 }
 
 let loaded = false

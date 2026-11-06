@@ -4,7 +4,7 @@
  */
 
 import { streamingRequest, type StreamingOptions, get, del } from './request'
-import { getChatConfig, getKnowledgeFileConfig, gatewayAuthHeaders } from '@/stores/difyConfig'
+import { getChatConfig, getKnowledgeFileConfig, gatewayRequestHeaders } from '@/stores/difyConfig'
 
 /** 会话类接口（chat-messages/parameters/conversations 等）使用问答聊天对话配置 */
 const getBase = () => {
@@ -84,7 +84,7 @@ export const retrieveFromDataset = async (
     headers: {
       'Authorization': `Bearer ${getRetrieveKey()}`,
       'Content-Type': 'application/json',
-      ...gatewayAuthHeaders(),
+      ...gatewayRequestHeaders(),
     },
     // 原先这里写死 query: '海光服务器'（调试残留），导致选中知识库时预取的片段
     // 永远只跟这一个词相关，与用户实际提问无关。现改为由调用方传入查询词。

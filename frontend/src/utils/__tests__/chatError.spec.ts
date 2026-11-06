@@ -42,3 +42,39 @@ describe("parseChatError 配额与限流", () => {
     expect(parsed.suggestCheckConfig).toBe(true);
   });
 });
+
+describe("parseChatError 请求 ID 与幂等", () => {
+  it("幂等冲突不可重试，保留服务端文案与请求 ID", () => {
+    const parsed = parseChatError(
+      new Error("相同请求已处理或正在处理中，请勿重复提交（请求 ID：req-dup）")
+    );
+
+    expect(parsed.message).toBe("相同请求已处理或正在处理中，请勿重复提交（请求 ID：req-dup）");
+    expect(parsed.retryable).toBe(false);
+  });
+
+  it("幂等服务不可用可以重试", () => {
+    const parsed = parseChatError(
+      new Error("幂等服务暂不可用，请稍后重试（请求 ID：req-idem）")
+    );
+
+    expect(parsed.message).toBe("幂等服务暂不可用，请稍后重试（请求 ID：req-idem）");
+    expect(parsed.retryable).toBe(true);
+  });
+
+  it("配额文案里的请求 ID 原样保留，不影响不可重试结论", () => {
+    const message = "所在部门今日 AI 额度已用完（已用 5000 / 5000 tokens），请联系管理员";
+    const parsed = parseChatError(new Error(`${message}（请求 ID：req-quota）`));
+
+    expect(parsed.message).toBe(`${message}（请求 ID：req-quota）`);
+    expect(parsed.retryable).toBe(false);
+  });
+
+  it("请求 ID 里的数字不参与状态码分类", () => {
+    // 未剥离时 "req-400-abc" 会被 includes("400") 误判成请求参数错误
+    const parsed = parseChatError(new Error("上游模型异常（请求 ID：req-400-abc）"));
+
+    expect(parsed.message).toContain("消息发送失败");
+    expect(parsed.message).toContain("（请求 ID：req-400-abc）");
+  });
+});

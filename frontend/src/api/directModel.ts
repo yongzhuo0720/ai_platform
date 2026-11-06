@@ -8,8 +8,9 @@
  * 以 data: [DONE] 结束。
  */
 
-import { getModelsGatewayBase, gatewayAuthHeaders } from '@/stores/difyConfig'
+import { getModelsGatewayBase, gatewayRequestHeaders } from '@/stores/difyConfig'
 import type { KbSearchItemDto } from './kbRag'
+import { readErrorMessage } from './request'
 
 export interface DirectChatMessage {
   role: 'system' | 'user' | 'assistant'
@@ -40,20 +41,6 @@ export interface DirectStreamOptions {
   onKbSources?: (items: KbSearchItemDto[]) => void
   onComplete?: () => void
   onError?: (error: Error) => void
-}
-
-/** 解析网关错误响应，优先取 JSON 里的 message 字段 */
-const parseGatewayError = async (response: Response): Promise<Error> => {
-  const text = await response.text().catch(() => '')
-  try {
-    const parsed = JSON.parse(text)
-    if (parsed?.message) {
-      return new Error(parsed.message)
-    }
-  } catch {
-    // 非 JSON 响应体，使用原文
-  }
-  return new Error(text || `请求失败 (${response.status})`)
 }
 
 /**
@@ -125,14 +112,15 @@ export const streamDirectChat = (
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        ...gatewayAuthHeaders(),
+        ...gatewayRequestHeaders(),
       },
       body: JSON.stringify(body),
       signal: controller.signal,
     })
 
     if (!response.ok) {
-      throw await parseGatewayError(response)
+      // 与 Dify 通道共用错误清洗：兼容站内与 OpenAI 两种错误信封，并附带 requestId
+      throw new Error(await readErrorMessage(response))
     }
 
     // X-KB-Hits：本轮实际注入的知识库片段数（0 = 未命中或检索降级）
