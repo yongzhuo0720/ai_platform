@@ -12,4 +12,7 @@ public class RagEvalRunRequest {
 
     @ApiModelProperty("截断位置 k，1-20，默认 5")
     private Integer topK;
+
+    @ApiModelProperty("精排策略：auto 跟随全局（默认）/ off 本次关闭，用于 A/B 对比")
+    private String rerankMode;
 }

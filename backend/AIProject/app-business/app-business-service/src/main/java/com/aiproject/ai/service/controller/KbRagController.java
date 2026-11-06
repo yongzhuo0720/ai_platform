@@ -105,6 +105,7 @@ public class KbRagController {
     @PostMapping("/search")
     public Result<KbSearchResult> search(@LoginUserId String uid,
                                          @RequestBody KbSearchQuery data) {
-        return kbRagHolder.search(uid, data.getQuery(), data.getKbName(), data.getTopK());
+        return kbRagHolder.search(uid, data.getQuery(), data.getKbName(), data.getTopK(),
+                data.getRerankEnabled());
     }
 }

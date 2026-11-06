@@ -296,6 +296,15 @@ public class KbRagHolder {
      * 召回阶段用索引、精排阶段在内存，与当前「万块以内」的规模匹配。</p>
      */
     public Result<KbSearchResult> search(String uid, String query, String kbName, Integer topK) {
+        return search(uid, query, kbName, topK, null);
+    }
+
+    /**
+     * @param rerankEnabled null/true 跟随全局精排配置；false 仅本次检索关闭精排。
+     *                      A/B 评估用其固定「精排」这一个变量，其他链路保持原行为。
+     */
+    public Result<KbSearchResult> search(String uid, String query, String kbName, Integer topK,
+                                         Boolean rerankEnabled) {
         if (uid == null || uid.trim().isEmpty()) {
             return Result.failed(null, "未登录或登录已过期");
         }
@@ -348,7 +357,7 @@ public class KbRagHolder {
                 diagnostics, embedding.getEmbedModel());
 
         int limit = topK == null ? 5 : Math.max(1, Math.min(MAX_TOP_K, topK));
-        RerankOutcome rerankOutcome = applyRerank(query.trim(), fused, limit);
+        RerankOutcome rerankOutcome = applyRerank(query.trim(), fused, limit, rerankEnabled);
         fused = rerankOutcome.items;
         Map<Long, String> docNames = loadDocNames(uid);
         List<KbSearchItem> items = fused.size() > limit
@@ -400,7 +409,11 @@ public class KbRagHolder {
      * <p>任何失败（未配置 / 超时 / 响应异常）都降级返回原列表——
      * 精排是增强路径，绝不能阻塞检索主链路。</p>
      */
-    private RerankOutcome applyRerank(String query, List<KbSearchItem> fused, int limit) {
+    private RerankOutcome applyRerank(String query, List<KbSearchItem> fused, int limit,
+                                      Boolean rerankEnabled) {
+        if (Boolean.FALSE.equals(rerankEnabled)) {
+            return new RerankOutcome(fused, false);
+        }
         try {
             RerankResolver.ResolvedRerank config = rerankResolver.resolve();
             if (config == null || fused.size() <= 1) {

@@ -84,6 +84,7 @@ public class TableSchemaInitializer implements ApplicationListener<ApplicationRe
                 + "\"missCount\" int4, \"keywordEvaluatedCount\" int4, "
                 + "\"embeddingModel\" varchar(128), "
                 + "\"metricSpec\" varchar(32), \"retrievalMode\" varchar(32), \"rerankApplied\" boolean, "
+                + "\"rerankMode\" varchar(16), "
                 + "\"errorMessage\" text, "
                 + "\"startedAt\" int8, \"finishedAt\" int8, \"durationMs\" int8, "
                 + "\"iid\" bigserial NOT NULL PRIMARY KEY, \"lastuser\" varchar(255), "
@@ -124,6 +125,9 @@ public class TableSchemaInitializer implements ApplicationListener<ApplicationRe
                 + "ADD COLUMN IF NOT EXISTS \"retrievalMode\" varchar(32)");
         execute("ALTER TABLE ragevalrunbean "
                 + "ADD COLUMN IF NOT EXISTS \"rerankApplied\" boolean");
+        // 精排策略快照：旧运行保持 NULL，按 auto（跟随全局）解释
+        execute("ALTER TABLE ragevalrunbean "
+                + "ADD COLUMN IF NOT EXISTS \"rerankMode\" varchar(16)");
         execute("ALTER TABLE ragevalcaseresultbean "
                 + "ADD COLUMN IF NOT EXISTS \"retrievedHits\" text");
     }

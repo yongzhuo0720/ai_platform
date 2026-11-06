@@ -6,6 +6,7 @@ import {
   type RagEvalDatasetDetail,
   type RagEvalDatasetRequest,
   type RagEvalDiffStatus,
+  type RagEvalRerankMode,
   type RagEvalRun,
   type RagEvalRunDetail,
   type RagEvalRunStatus,
@@ -78,6 +79,7 @@ export function useIndex() {
     runs: [] as RagEvalRun[],
     runsLoading: false,
     topK: 5,
+    rerankMode: 'auto' as RagEvalRerankMode,
     startingRun: false,
     selectedRunKey: '',
     baselineRunKey: '',
@@ -155,6 +157,36 @@ export function useIndex() {
         (run.status === 'success' || run.status === 'partial'),
     ),
   )
+
+  const rerankModeLabel = computed(() =>
+    state.runDetail?.run.rerankMode === 'off' ? '主动关闭' : '跟随全局',
+  )
+
+  /** 区分「主动关闭」与「没生效」：两者 rerankApplied 都是 false，但原因不同 */
+  const rerankEffectHint = computed(() => {
+    const run = state.runDetail?.run
+    if (!run) return ''
+    if (isActiveStatus(run.status)) return '运行完成后可确认精排是否生效'
+    if (run.rerankMode === 'off') {
+      return '本次运行主动关闭精排，可与开启精排的运行做 A/B 对比'
+    }
+    if (run.rerankApplied) return '精排已在本轮真实生效'
+    return '未应用精排：全局未配置精排模型，或调用失败已降级'
+  })
+
+  const counterpartRerankMode = computed<RagEvalRerankMode>(() =>
+    state.runDetail?.run.rerankMode === 'off' ? 'auto' : 'off',
+  )
+
+  const counterpartRerankLabel = computed(() =>
+    counterpartRerankMode.value === 'off' ? '关闭精排再跑一次' : '跟随全局再跑一次',
+  )
+
+  const canStartCounterpart = computed(() => {
+    const run = state.runDetail?.run
+    if (!run || state.startingRun || hasActiveRun.value) return false
+    return run.status === 'success' || run.status === 'partial'
+  })
 
   onMounted(() => {
     loadDatasets()
@@ -316,6 +348,7 @@ export function useIndex() {
       const { data: res } = await ragEvalApi.startRun(
         state.selectedDatasetKey,
         state.topK,
+        state.rerankMode,
       )
       if (res.resp_code === 0) {
         ElMessage.success(res.resp_msg || '评估已启动')
@@ -329,6 +362,32 @@ export function useIndex() {
     } catch (err) {
       debug.error('启动 RAG 评估失败', err)
       ElMessage.error('启动评估失败，请稍后重试')
+    } finally {
+      state.startingRun = false
+    }
+  }
+
+  /** 以当前运行的精排策略的相反值复跑，其他变量（数据集、TopK）保持不变 */
+  async function startCounterpartRun() {
+    const run = state.runDetail?.run
+    if (!run || !canStartCounterpart.value) return
+    const mode = counterpartRerankMode.value
+    state.startingRun = true
+    try {
+      const { data: res } = await ragEvalApi.startRun(run.datasetKey, run.topK, mode)
+      if (res.resp_code === 0) {
+        ElMessage.success(mode === 'off' ? '已按「关闭精排」启动复跑' : '已按「跟随全局」启动复跑')
+        state.rerankMode = mode
+        await loadRuns()
+        if (res.datas) {
+          await openRunByKey(res.datas)
+        }
+      } else {
+        ElMessage.error(res.resp_msg || '启动复跑失败')
+      }
+    } catch (err) {
+      debug.error('启动 RAG 评估复跑失败', err)
+      ElMessage.error('启动复跑失败，请稍后重试')
     } finally {
       state.startingRun = false
     }
@@ -645,6 +704,7 @@ export function useIndex() {
 
   function baselineOptionLabel(run: RagEvalRun) {
     const parts = [formatDateTime(run.startedAt), `TopK ${run.topK}`, statusMeta(run.status).label]
+    parts.push(run.rerankMode === 'off' ? '关闭精排' : '跟随全局')
     const currentSet = state.runDetail?.run?.caseSetKey
     if (currentSet && run.caseSetKey === currentSet) parts.push('题目一致')
     if (run.metricSpec) parts.push(run.metricSpec)
@@ -659,10 +719,15 @@ export function useIndex() {
     metricCards,
     baselineWarnings,
     baselineCandidates,
+    rerankModeLabel,
+    rerankEffectHint,
+    counterpartRerankLabel,
+    canStartCounterpart,
     loadDatasets,
     selectDataset,
     loadRuns,
     startRun,
+    startCounterpartRun,
     openRun,
     openRunByKey,
     selectBaseline,

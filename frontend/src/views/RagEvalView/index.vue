@@ -87,6 +87,17 @@
                 <el-option v-for="k in [3, 5, 10, 20]" :key="k" :label="`Top ${k}`" :value="k" />
               </el-select>
             </div>
+            <div class="rag-eval-run-k">
+              <span>精排策略</span>
+              <el-select
+                v-model="state.rerankMode"
+                style="width: 150px"
+                :disabled="state.startingRun"
+              >
+                <el-option label="跟随全局" value="auto" />
+                <el-option label="本次关闭（A/B）" value="off" />
+              </el-select>
+            </div>
             <button
               type="button"
               class="btn btn-primary"
@@ -98,6 +109,9 @@
             </button>
             <span v-if="hasActiveRun" class="rag-eval-run-hint">
               任务在后台执行，进度每 2 秒自动刷新
+            </span>
+            <span v-else-if="state.rerankMode === 'off'" class="rag-eval-run-hint">
+              本轮跳过精排，可与跟随全局的运行对比，量化精排收益
             </span>
           </div>
 
@@ -345,6 +359,17 @@
             >
               检索链路 {{ state.runDetail.run.retrievalMode }}
             </el-tag>
+            <el-tag size="small" type="info">精排策略 {{ rerankModeLabel }}</el-tag>
+            <span class="rag-eval-muted">{{ rerankEffectHint }}</span>
+            <button
+              type="button"
+              class="btn rag-eval-counterpart"
+              :disabled="!canStartCounterpart"
+              @click="startCounterpartRun"
+            >
+              <Refresh />
+              {{ state.startingRun ? '提交中…' : counterpartRerankLabel }}
+            </button>
             <span class="rag-eval-baseline">
               <span>对比基线</span>
               <el-select
@@ -579,9 +604,14 @@ const {
   metricCards,
   baselineWarnings,
   baselineCandidates,
+  rerankModeLabel,
+  rerankEffectHint,
+  counterpartRerankLabel,
+  canStartCounterpart,
   loadRuns,
   selectDataset,
   startRun,
+  startCounterpartRun,
   openRun,
   selectBaseline,
   deleteRun,

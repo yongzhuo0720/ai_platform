@@ -41,6 +41,8 @@ export interface RagEvalDatasetRequest {
   cases: RagEvalCaseInput[]
 }
 
+export type RagEvalRerankMode = 'auto' | 'off'
+
 export interface RagEvalRun {
   iid?: number | null
   runKey: string
@@ -63,6 +65,8 @@ export interface RagEvalRun {
   metricSpec?: string | null
   retrievalMode?: string | null
   rerankApplied?: boolean | null
+  /** auto 跟随全局 / off 本次主动关闭；历史运行可能为空，按 auto 解释 */
+  rerankMode?: RagEvalRerankMode | null
   errorMessage?: string | null
   startedAt?: number | null
   finishedAt?: number | null
@@ -143,8 +147,8 @@ export const ragEvalApi = {
     axios.post('/ai/api/ragEval/updateDataset', { data: payload }),
   deleteDataset: (datasetKey: string) =>
     axios.post('/ai/api/ragEval/deleteDataset', { data: { datasetKey } }),
-  startRun: (datasetKey: string, topK: number) =>
-    axios.post('/ai/api/ragEval/startRun', { data: { datasetKey, topK } }),
+  startRun: (datasetKey: string, topK: number, rerankMode: RagEvalRerankMode = 'auto') =>
+    axios.post('/ai/api/ragEval/startRun', { data: { datasetKey, topK, rerankMode } }),
   listRuns: (datasetKey?: string) =>
     axios.post('/ai/api/ragEval/listRuns', { data: { datasetKey: datasetKey ?? null } }),
   getRun: (runKey: string, baselineRunKey?: string) =>

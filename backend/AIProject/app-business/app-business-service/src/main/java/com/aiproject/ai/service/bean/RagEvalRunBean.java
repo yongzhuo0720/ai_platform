@@ -98,6 +98,10 @@ public class RagEvalRunBean extends DbEntityBase {
     @ApiModelProperty("本次运行是否实际应用了 rerank 精排")
     Boolean rerankApplied;
 
+    @SqlColumn()
+    @ApiModelProperty("精排策略快照：auto 跟随全局 / off 本次主动关闭")
+    String rerankMode;
+
     @SqlColumn(method = "text")
     @ApiModelProperty("失败或降级说明")
     String errorMessage;

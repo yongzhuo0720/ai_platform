@@ -110,6 +110,7 @@ public class RagEvalRunner {
             return;
         }
         int topK = run.getTopK() == null ? 5 : run.getTopK();
+        String rerankMode = RagEvalRerankMode.normalize(run.getRerankMode());
 
         // 运行开始时快照数据集信息：编辑数据集不应改写正在跑的这一轮
         RagEvalRunBean snapshot = new RagEvalRunBean();
@@ -120,7 +121,8 @@ public class RagEvalRunner {
 
         List<RunCaseData> evaluated = new ArrayList<RunCaseData>(cases.size());
         for (int i = 0; i < cases.size(); i++) {
-            RunCaseData data = evaluateCase(runKey, uid, cases.get(i), dataset.getKbName(), topK, i);
+            RunCaseData data = evaluateCase(runKey, uid, cases.get(i), dataset.getKbName(),
+                    topK, rerankMode, i);
             evaluated.add(data);
             RagEvalRunBean progress = new RagEvalRunBean();
             progress.setProcessed(i + 1);
@@ -224,13 +226,15 @@ public class RagEvalRunner {
     }
 
     private RunCaseData evaluateCase(String runKey, String uid, RagEvalCaseBean item,
-                                     String kbName, int topK, int index) {
+                                     String kbName, int topK, String rerankMode, int index) {
         RunCaseData data = new RunCaseData();
         data.index = index;
         data.bean = item;
         long start = System.currentTimeMillis();
         try {
-            Result<KbSearchResult> result = kbRagHolder.search(uid, item.getQuestion(), kbName, topK);
+            Boolean rerankEnabled = RagEvalRerankMode.disabled(rerankMode) ? Boolean.FALSE : null;
+            Result<KbSearchResult> result =
+                    kbRagHolder.search(uid, item.getQuestion(), kbName, topK, rerankEnabled);
             KbSearchResult searchResult = result == null ? null : result.getDatas();
             if (searchResult == null) {
                 data.error = result == null ? "检索无响应" : result.getResp_msg();

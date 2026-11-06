@@ -83,7 +83,7 @@ class RagEvalRunnerTest {
                 caseBean("问题二", "C.pdf"));
         when(runMapper.update(any(RagEvalRunBean.class), any(RagEvalRunBean.class))).thenReturn(1);
         when(resultMapper.install(any(RagEvalCaseResultBean.class))).thenReturn(1);
-        when(kbRagHolder.search(eq(UID), anyString(), eq(KB_NAME), eq(5)))
+        when(kbRagHolder.search(eq(UID), anyString(), eq(KB_NAME), eq(5), any()))
                 .thenReturn(searchResult(
                                 scoredHit("A.pdf", 2, "alpha beta 的正文",
                                         0.0328, 0.91, 3, "both"),
@@ -153,7 +153,7 @@ class RagEvalRunnerTest {
         result.setRerankApplied(true);
         result.setItems(new ArrayList<KbSearchItem>(Collections.singletonList(
                 hit("A.pdf", "正文"))));
-        when(kbRagHolder.search(anyString(), anyString(), anyString(), anyInt()))
+        when(kbRagHolder.search(anyString(), anyString(), anyString(), anyInt(), any()))
                 .thenReturn(Result.succeed(result, "ok"));
 
         runner.execute(RUN_KEY, UID);
@@ -161,6 +161,37 @@ class RagEvalRunnerTest {
         RunUpdate finalUpdate = lastRunUpdate();
         assertEquals("hybrid-rrf+rerank", finalUpdate.retrievalMode);
         assertEquals(Boolean.TRUE, finalUpdate.rerankApplied);
+    }
+
+    /** 运行策略为 off 时必须明确告诉检索层关闭精排，而不是依赖全局配置 */
+    @Test
+    void execute_shouldDisableRerankWhenRunPolicyIsOff() {
+        RagEvalRunBean off = run(RagEvalStatus.QUEUED);
+        off.setRerankMode(RagEvalRerankMode.OFF);
+        stubRunAndDataset(off, caseBean("问题", "A.pdf"));
+        when(runMapper.update(any(RagEvalRunBean.class), any(RagEvalRunBean.class))).thenReturn(1);
+        when(resultMapper.install(any(RagEvalCaseResultBean.class))).thenReturn(1);
+        when(kbRagHolder.search(anyString(), anyString(), anyString(), anyInt(), any()))
+                .thenReturn(searchResult(hit("A.pdf", "正文")));
+
+        runner.execute(RUN_KEY, UID);
+
+        verify(kbRagHolder).search(eq(UID), eq("问题"), eq(KB_NAME), eq(5),
+                eq(Boolean.FALSE));
+    }
+
+    /** 历史运行没有策略快照时按 auto 处理，不改变既有检索行为 */
+    @Test
+    void execute_shouldFollowGlobalRerankWhenPolicyIsMissing() {
+        stubRunAndDataset(caseBean("问题", "A.pdf"));
+        when(runMapper.update(any(RagEvalRunBean.class), any(RagEvalRunBean.class))).thenReturn(1);
+        when(resultMapper.install(any(RagEvalCaseResultBean.class))).thenReturn(1);
+        when(kbRagHolder.search(anyString(), anyString(), anyString(), anyInt(), any()))
+                .thenReturn(searchResult(hit("A.pdf", "正文")));
+
+        runner.execute(RUN_KEY, UID);
+
+        verify(kbRagHolder).search(eq(UID), eq("问题"), eq(KB_NAME), eq(5), isNull());
     }
 
     @Test
@@ -173,7 +204,7 @@ class RagEvalRunnerTest {
             longContent.append('x');
         }
         longContent.append("关键结论");
-        when(kbRagHolder.search(anyString(), anyString(), anyString(), anyInt()))
+        when(kbRagHolder.search(anyString(), anyString(), anyString(), anyInt(), any()))
                 .thenReturn(searchResult(hit("A.pdf", longContent.toString())));
 
         runner.execute(RUN_KEY, UID);
@@ -195,7 +226,7 @@ class RagEvalRunnerTest {
         stubRunAndDataset(caseBean("问题", "A.pdf"));
         when(runMapper.update(any(RagEvalRunBean.class), any(RagEvalRunBean.class))).thenReturn(1);
         when(resultMapper.install(any(RagEvalCaseResultBean.class))).thenReturn(1);
-        when(kbRagHolder.search(anyString(), anyString(), anyString(), anyInt()))
+        when(kbRagHolder.search(anyString(), anyString(), anyString(), anyInt(), any()))
                 .thenReturn(searchResult(
                         hit("A.pdf", "第一块"),
                         hit("A.pdf", "第二块"),
@@ -216,7 +247,7 @@ class RagEvalRunnerTest {
         stubRunAndDataset(caseBean("问题一", "A.pdf"), caseBean("问题二", "C.pdf"));
         when(runMapper.update(any(RagEvalRunBean.class), any(RagEvalRunBean.class))).thenReturn(1);
         when(resultMapper.install(any(RagEvalCaseResultBean.class))).thenReturn(1);
-        when(kbRagHolder.search(anyString(), anyString(), anyString(), anyInt()))
+        when(kbRagHolder.search(anyString(), anyString(), anyString(), anyInt(), any()))
                 .thenReturn(searchResult(hit("A.pdf", "正文")))
                 .thenThrow(new RuntimeException("向量服务超时"));
 
@@ -239,7 +270,7 @@ class RagEvalRunnerTest {
     void execute_shouldFailRunWhenAllCasesFail() {
         stubRunAndDataset(caseBean("问题一", "A.pdf"), caseBean("问题二", "C.pdf"));
         when(runMapper.update(any(RagEvalRunBean.class), any(RagEvalRunBean.class))).thenReturn(1);
-        when(kbRagHolder.search(anyString(), anyString(), anyString(), anyInt()))
+        when(kbRagHolder.search(anyString(), anyString(), anyString(), anyInt(), any()))
                 .thenThrow(new RuntimeException("连接被拒绝"));
 
         runner.execute(RUN_KEY, UID);
@@ -255,7 +286,7 @@ class RagEvalRunnerTest {
         stubRunAndDataset(caseBean("问题", "A.pdf"));
         when(runMapper.update(any(RagEvalRunBean.class), any(RagEvalRunBean.class))).thenReturn(1);
         when(resultMapper.install(any(RagEvalCaseResultBean.class))).thenReturn(0);
-        when(kbRagHolder.search(anyString(), anyString(), anyString(), anyInt()))
+        when(kbRagHolder.search(anyString(), anyString(), anyString(), anyInt(), any()))
                 .thenReturn(searchResult(hit("A.pdf", "正文")));
 
         runner.execute(RUN_KEY, UID);
@@ -273,12 +304,13 @@ class RagEvalRunnerTest {
         // 第 1 次：置 running；第 2 次：快照；第 3 次：进度更新失败（运行记录被删除）
         when(runMapper.update(any(RagEvalRunBean.class), any(RagEvalRunBean.class)))
                 .thenReturn(1, 1, 0);
-        when(kbRagHolder.search(anyString(), anyString(), anyString(), anyInt()))
+        when(kbRagHolder.search(anyString(), anyString(), anyString(), anyInt(), any()))
                 .thenReturn(searchResult(hit("A.pdf", "正文")));
 
         runner.execute(RUN_KEY, UID);
 
-        verify(kbRagHolder, times(1)).search(anyString(), anyString(), anyString(), anyInt());
+        verify(kbRagHolder, times(1))
+                .search(anyString(), anyString(), anyString(), anyInt(), any());
         verify(resultMapper, never()).install(any(RagEvalCaseResultBean.class));
     }
 
@@ -290,7 +322,8 @@ class RagEvalRunnerTest {
 
         runner.execute(RUN_KEY, UID);
 
-        verify(kbRagHolder, never()).search(anyString(), anyString(), anyString(), anyInt());
+        verify(kbRagHolder, never())
+                .search(anyString(), anyString(), anyString(), anyInt(), any());
         verify(runMapper, never()).update(any(RagEvalRunBean.class), any(RagEvalRunBean.class));
     }
 
@@ -315,7 +348,7 @@ class RagEvalRunnerTest {
         when(runMapper.update(any(RagEvalRunBean.class), any(RagEvalRunBean.class))).thenReturn(1);
         when(resultMapper.install(any(RagEvalCaseResultBean.class))).thenReturn(1);
         // 关键词被拆在两个分块，另一个不相关文档里反而凑齐了：都不算命中
-        when(kbRagHolder.search(anyString(), anyString(), anyString(), anyInt()))
+        when(kbRagHolder.search(anyString(), anyString(), anyString(), anyInt(), any()))
                 .thenReturn(searchResult(
                         hit("A.pdf", "只有 alpha"),
                         hit("A.pdf", "只有 beta"),
@@ -367,8 +400,12 @@ class RagEvalRunnerTest {
     // ------------------------------------------------------------------
 
     private void stubRunAndDataset(RagEvalCaseBean... cases) {
+        stubRunAndDataset(run(RagEvalStatus.QUEUED), cases);
+    }
+
+    private void stubRunAndDataset(RagEvalRunBean run, RagEvalCaseBean... cases) {
         when(runMapper.select(isNull(), any(RagEvalRunBean.class)))
-                .thenReturn(Collections.singletonList(run(RagEvalStatus.QUEUED)));
+                .thenReturn(Collections.singletonList(run));
         RagEvalDatasetBean dataset = new RagEvalDatasetBean();
         dataset.setDatasetKey(DATASET_KEY);
         dataset.setName("评估集");

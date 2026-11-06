@@ -12,6 +12,7 @@ import com.aiproject.ai.service.mapper.RagEvalDatasetBeanMapper;
 import com.aiproject.ai.service.mapper.RagEvalRunBeanMapper;
 import com.aiproject.ai.service.rag.RagEvalDiffStatus;
 import com.aiproject.ai.service.rag.RagEvalKeywordCodec;
+import com.aiproject.ai.service.rag.RagEvalRerankMode;
 import com.aiproject.ai.service.rag.RagEvalRunner;
 import com.aiproject.ai.service.rag.RagEvalStatus;
 import com.aiproject.ai.service.rag.dto.RagEvalCaseDiffDto;
@@ -418,6 +419,10 @@ public class RagEvalHolder {
         if (topK < 1 || topK > KbRagHolder.MAX_TOP_K) {
             return Result.failed(null, "截断位置 k 必须在 1-" + KbRagHolder.MAX_TOP_K + " 之间");
         }
+        String rerankMode = RagEvalRerankMode.normalize(data.getRerankMode());
+        if (!RagEvalRerankMode.isValid(rerankMode)) {
+            return Result.failed(null, "精排策略只能是 auto（跟随全局）或 off（本次关闭）");
+        }
         String datasetKey = data.getDatasetKey().trim();
         try {
             RagEvalDatasetBean dataset = findDataset(uid, datasetKey);
@@ -449,6 +454,7 @@ public class RagEvalHolder {
             run.setDatasetName(dataset.getName());
             run.setKbName(dataset.getKbName());
             run.setTopK(topK);
+            run.setRerankMode(rerankMode);
             run.setStatus(RagEvalStatus.QUEUED);
             run.setTotal(cases.size());
             run.setProcessed(0);

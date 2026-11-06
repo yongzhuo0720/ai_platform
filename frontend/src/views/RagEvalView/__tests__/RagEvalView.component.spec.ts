@@ -94,6 +94,7 @@ const baseRun = {
   metricSpec: 'rag-eval-v1',
   retrievalMode: 'hybrid-rrf+rerank',
   rerankApplied: true,
+  rerankMode: 'auto' as const,
   startedAt: Date.UTC(2026, 10, 5, 9, 0, 0),
   durationMs: 2300,
   status: 'success' as const,
@@ -418,12 +419,71 @@ describe('RagEvalView', () => {
     ;(wrapper.vm as any).state.topK = 10
     await clickByText(wrapper, '.rag-eval-run-bar button', '发起评估')
 
-    expect(api.startRun).toHaveBeenCalledWith('d1', 10)
+    expect(api.startRun).toHaveBeenCalledWith('d1', 10, 'auto')
     expect(spies.success).toHaveBeenCalledWith('评估已启动，共 2 条用例')
     expect(api.getRun).toHaveBeenCalledWith('r2', undefined)
     expect((wrapper.vm as any).state.runDialogVisible).toBe(true)
     expect((wrapper.vm as any).hasActiveRun).toBe(true)
     expect(wrapper.text()).toContain('评估进行中')
+  })
+
+  it('发起评估：选择关闭精排时随请求提交策略', async () => {
+    messageSpies()
+    stubInitialLoad()
+    api.listRuns
+      .mockResolvedValueOnce(ok([baseRun]))
+      .mockResolvedValue(ok([runningRun, baseRun]))
+    api.startRun.mockResolvedValue(ok('r2', '评估已启动，共 2 条用例'))
+    api.getRun.mockResolvedValue(ok({ run: runningRun, baseline: baseRun, results: [] }))
+    const wrapper = mountView()
+    await flushPromises()
+
+    ;(wrapper.vm as any).state.rerankMode = 'off'
+    await flushPromises()
+    expect(wrapper.text()).toContain('本轮跳过精排')
+
+    await clickByText(wrapper, '.rag-eval-run-bar button', '发起评估')
+
+    expect(api.startRun).toHaveBeenCalledWith('d1', 5, 'off')
+  })
+
+  it('运行详情：展示精排策略、实际生效状态与反向复跑入口', async () => {
+    stubInitialLoad()
+    api.getRun.mockResolvedValue(ok(runDetail))
+    const wrapper = mountView()
+    await flushPromises()
+
+    await clickByText(wrapper, '.rag-eval-runs button', '详情')
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('精排策略 跟随全局')
+    expect(wrapper.text()).toContain('精排已在本轮真实生效')
+    expect(wrapper.find('.rag-eval-counterpart').text()).toContain('关闭精排再跑一次')
+  })
+
+  it('运行详情：主动关闭精排时说明原因，并可一键按跟随全局复跑', async () => {
+    stubInitialLoad()
+    const offRun = {
+      ...baseRun,
+      rerankMode: 'off' as const,
+      rerankApplied: false,
+      retrievalMode: 'hybrid-rrf',
+    }
+    api.getRun.mockResolvedValue(ok({ ...runDetail, run: offRun }))
+    api.startRun.mockResolvedValue(ok('r9', '评估已启动，共 2 条用例'))
+    const wrapper = mountView()
+    await flushPromises()
+
+    await clickByText(wrapper, '.rag-eval-runs button', '详情')
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('精排策略 主动关闭')
+    expect(wrapper.text()).toContain('本次运行主动关闭精排')
+
+    await clickByText(wrapper, '.rag-eval-counterpart', '跟随全局再跑一次')
+
+    expect(api.startRun).toHaveBeenCalledWith('d1', 5, 'auto')
+    expect((wrapper.vm as any).state.rerankMode).toBe('auto')
   })
 
   it('运行详情：展示指标、基线差值与逐题命中情况', async () => {

@@ -4,6 +4,7 @@ import com.aiproject.ai.service.bean.KbChunkBean;
 import com.aiproject.ai.service.bean.KbDocBean;
 import com.aiproject.ai.service.bean.KbDocContentBean;
 import com.aiproject.ai.service.gateway.EmbeddingClient;
+import com.aiproject.ai.service.gateway.RerankResolver;
 import com.aiproject.ai.service.gateway.dto.KbDocUpload;
 import com.aiproject.ai.service.gateway.dto.KbSearchItem;
 import com.aiproject.ai.service.mapper.KbChunkBeanMapper;
@@ -69,6 +70,9 @@ class KbRagHolderTest {
 
     @Mock
     EmbeddingClient embeddingClient;
+
+    @Mock
+    RerankResolver rerankResolver;
 
     @InjectMocks
     KbRagHolder holder;
@@ -537,6 +541,52 @@ class KbRagHolderTest {
         assertEquals("both", item.getChannel());
         assertTrue(item.getDenseScore() >= 0, "向量路分数应被记录");
         assertTrue(item.getLexicalScore() >= 0, "关键词路分数应被记录");
+    }
+
+    /**
+     * 显式关闭精排时不能再去解析全局配置：A/B 评估要求这一变量真正被固定，
+     * 否则全局配置变化会让对照组悄悄失真。
+     */
+    @Test
+    void search_shouldSkipRerank_whenExplicitlyDisabled() throws Exception {
+        stubTwoChunksForRerank();
+
+        Result<com.aiproject.ai.service.gateway.dto.KbSearchResult> result =
+                holder.search("u1", "报销", null, 5, Boolean.FALSE);
+
+        assertNotNull(result.getDatas());
+        assertFalse(result.getDatas().isRerankApplied());
+        verify(rerankResolver, never()).resolve();
+    }
+
+    /** 未指定策略时保持原行为：跟随全局配置，配置可用就精排 */
+    @Test
+    void search_shouldApplyRerank_whenFollowingGlobalConfig() throws Exception {
+        stubTwoChunksForRerank();
+        when(rerankResolver.resolve()).thenReturn(new RerankResolver.ResolvedRerank(
+                "https://api.example.com/v1", "sk-test", "rerank-model"));
+        when(rerankResolver.rerank(any(RerankResolver.ResolvedRerank.class),
+                anyString(), any(List.class))).thenReturn(Arrays.asList(1, 0));
+
+        Result<com.aiproject.ai.service.gateway.dto.KbSearchResult> result =
+                holder.search("u1", "报销", null, 5, null);
+
+        assertNotNull(result.getDatas());
+        assertTrue(result.getDatas().isRerankApplied(), "全局配置可用时应真实应用精排");
+        verify(rerankResolver).rerank(any(RerankResolver.ResolvedRerank.class),
+                anyString(), any(List.class));
+    }
+
+    private void stubTwoChunksForRerank() throws Exception {
+        when(embeddingClient.resolve()).thenReturn(embeddingConfig());
+        when(embeddingClient.embed(any(EmbeddingClient.ResolvedEmbedding.class), any(List.class)))
+                .thenReturn(Collections.singletonList(new double[]{1.0, 0.0}));
+        KbChunkBean first = chunk(1L, "默认知识库", "差旅报销需要部门负责人审批", "[1.0,0.0]");
+        KbChunkBean second = chunk(2L, "默认知识库", "住宿标准为每晚上限六百元", "[1.0,0.0]");
+        when(kbChunkBeanMapper.select(any(PageRequest.class), any(KbChunkBean.class)))
+                .thenReturn(Arrays.asList(first, second));
+        when(kbChunkBeanMapper.select(any(PageRequest.class), any(KbChunkBean.class), anyString()))
+                .thenReturn(Arrays.asList(first, second));
     }
 
     /** 词项重叠统计：中文走二元滑窗，英文按整词 */

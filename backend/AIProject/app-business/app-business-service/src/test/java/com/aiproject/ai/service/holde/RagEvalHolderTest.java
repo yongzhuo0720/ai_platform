@@ -350,8 +350,39 @@ class RagEvalHolderTest {
         assertEquals(2, run.getTotal().intValue());
         assertEquals(0, run.getProcessed().intValue());
         assertEquals("set-key", run.getCaseSetKey(), "运行开始时必须快照用例集版本");
+        assertEquals("auto", run.getRerankMode(), "未指定精排策略时按跟随全局处理");
         assertEquals(UID, run.getLastuser());
         verify(ragEvalExecutor).execute(any(Runnable.class));
+    }
+
+    @Test
+    void startRun_shouldPersistExplicitRerankOff() {
+        stubRunnableDataset();
+        when(runMapper.select(isNull(), any(RagEvalRunBean.class)))
+                .thenReturn(Collections.<RagEvalRunBean>emptyList());
+        when(runMapper.install(any(RagEvalRunBean.class))).thenReturn(1);
+        doNothing().when(ragEvalExecutor).execute(any(Runnable.class));
+        RagEvalRunRequest request = runRequest("dk1", 5);
+        request.setRerankMode(" OFF ");
+
+        Result<String> result = holder.startRun(UID, request);
+
+        assertTrue(ok(result), result.getResp_msg());
+        ArgumentCaptor<RagEvalRunBean> captor = ArgumentCaptor.forClass(RagEvalRunBean.class);
+        verify(runMapper).install(captor.capture());
+        assertEquals("off", captor.getValue().getRerankMode(),
+                "策略需归一化后落库，供 A/B 对比时解释差异来源");
+    }
+
+    @Test
+    void startRun_shouldRejectUnknownRerankMode() {
+        RagEvalRunRequest request = runRequest("dk1", 5);
+        request.setRerankMode("force");
+
+        Result<String> result = holder.startRun(UID, request);
+
+        assertFailed(result, "精排策略");
+        verify(runMapper, never()).install(any(RagEvalRunBean.class));
     }
 
     @Test

@@ -68,6 +68,7 @@ CREATE TABLE IF NOT EXISTS ragevalrunbean (
     "metricSpec" varchar(32),
     "retrievalMode" varchar(32),
     "rerankApplied" boolean,
+    "rerankMode" varchar(16),
     "errorMessage" text,
     "startedAt" int8,
     "finishedAt" int8,
@@ -131,6 +132,8 @@ ALTER TABLE ragevalrunbean
     ADD COLUMN IF NOT EXISTS "retrievalMode" varchar(32);
 ALTER TABLE ragevalrunbean
     ADD COLUMN IF NOT EXISTS "rerankApplied" boolean;
+ALTER TABLE ragevalrunbean
+    ADD COLUMN IF NOT EXISTS "rerankMode" varchar(16);
 ALTER TABLE ragevalcaseresultbean
     ADD COLUMN IF NOT EXISTS "retrievedHits" text;
 
