@@ -15,6 +15,7 @@ import {
 import { userApi } from "@/api/user";
 import { roleApi } from "@/api/role";
 import NotificationBell from "@/components/NotificationBell/index.vue";
+import GlobalSearch from "@/components/GlobalSearch/index.vue";
 import { navigationSections } from "@/data/platform";
 import { useThemeStore } from "@/stores/theme";
 import Cookies from "js-cookie";
@@ -283,6 +284,7 @@ onBeforeUnmount(() => {
       </nav>
 
       <div class="sidebar-notify">
+        <GlobalSearch :collapsed="isCollapsed" />
         <NotificationBell :collapsed="isCollapsed" />
       </div>
 

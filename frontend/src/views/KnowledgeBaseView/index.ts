@@ -1,6 +1,6 @@
-import { ref, computed, onMounted, nextTick } from 'vue'
+import { ref, computed, onMounted, nextTick, watch } from 'vue'
 import { isConfirmCancelled } from '@/utils/confirm'
-import { useRouter } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { datasetApi } from '@/api/dataset'
 import { knowledgeBaseMngApi } from '@/api/knowledgeBaseMng'
 import { knowledgeBaseMemberApi } from '@/api/knowledgeBaseMember'
@@ -33,6 +33,15 @@ export function useIndex() {
     return configured !== false
   }
   const searchQuery = ref('')
+  // 全局搜索跳转带 ?keyword=，同路由 query 变化不会重挂载组件，必须 watch
+  const route = useRoute()
+  const applyRouteKeyword = (value: unknown) => {
+    if (typeof value !== 'string') return
+    const keyword = value.trim()
+    if (keyword) searchQuery.value = keyword
+  }
+  applyRouteKeyword(route.query.keyword)
+  watch(() => route.query.keyword, applyRouteKeyword)
   const selectedCategories = ref<string[]>([])
   const allTags = ref<any[]>([])
   // 当前用户自己创建的知识库 ID 集合

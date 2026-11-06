@@ -1,6 +1,8 @@
 package com.aiproject.ai.service.holde;
 
+import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 
 import com.aiproject.ai.common.utils.WeekUtils;
 import com.aiproject.ai.permission.holde.MyUserBaseDbHolder;
@@ -184,6 +186,57 @@ public class ModelsBeanHolder {
     public Result<List<ModelsBean>> queryList(ModelsBean data) {
 
         return Result.succeed(modelsBeanMapper.select(null, data), "查询成功");
+    }
+
+    /**
+     * 全局搜索用的模型检索。
+     *
+     * <p>模型仓库是平台级公开目录，只按关键词过滤。目录规模远小于业务表，
+     * 因此沿用项目现有的「先取有界列表、再在内存中做大小写不敏感匹配」做法，
+     * 避免依赖生成 SQL 的 LIKE 语义；单次最多扫描
+     * {@value #SEARCH_SCAN_LIMIT} 行，防止异常数据量把接口拖慢。</p>
+     */
+    public List<ModelsBean> search(String keyword, int limit) {
+        String needle = normalize(keyword);
+        if (needle.isEmpty() || limit <= 0) {
+            return new ArrayList<ModelsBean>();
+        }
+        PageRequest page = new PageRequest(1, SEARCH_SCAN_LIMIT);
+        page.setOrder("iid");
+        page.setDesc("desc");
+        List<ModelsBean> rows = modelsBeanMapper.select(page, new ModelsBean());
+        List<ModelsBean> result = new ArrayList<ModelsBean>();
+        if (rows == null) {
+            return result;
+        }
+        for (ModelsBean row : rows) {
+            if (row == null) {
+                continue;
+            }
+            if (matches(needle, row.getName(), row.getDescription(),
+                    row.getProvider(), row.getCategory(), row.getTags())) {
+                result.add(row);
+                if (result.size() >= limit) {
+                    break;
+                }
+            }
+        }
+        return result;
+    }
+
+    private static final int SEARCH_SCAN_LIMIT = 500;
+
+    private static String normalize(String keyword) {
+        return keyword == null ? "" : keyword.trim().toLowerCase(Locale.ROOT);
+    }
+
+    private static boolean matches(String needle, String... fields) {
+        for (String field : fields) {
+            if (field != null && field.toLowerCase(Locale.ROOT).contains(needle)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /**

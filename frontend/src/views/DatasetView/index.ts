@@ -1,4 +1,5 @@
-import { ref, computed, onMounted, reactive } from 'vue'
+import { ref, computed, onMounted, reactive, watch } from 'vue'
+import { useRoute } from 'vue-router'
 import { ElLoading, ElMessage, ElMessageBox } from 'element-plus'
 import { debug } from '@/utils/debug'
 import { isConfirmCancelled } from '@/utils/confirm'
@@ -36,6 +37,16 @@ export function useIndex() {
   })
 
 
+
+  // 全局搜索跳转带 ?keyword=，同路由 query 变化不会重挂载组件，必须 watch
+  const route = useRoute()
+  const applyRouteKeyword = (value: unknown) => {
+    if (typeof value !== 'string') return
+    const keyword = value.trim()
+    if (keyword) searchKeyword.value = keyword
+  }
+  applyRouteKeyword(route.query.keyword)
+  watch(() => route.query.keyword, applyRouteKeyword)
 
   onMounted(() => {
     getDataList()

@@ -47,6 +47,15 @@ Dify                              本平台 PostgreSQL
 
 本地 RAG 是另一条链路，采用**双通道上传 + 异步流水线**：txt/md/markdown/csv/json/log 由浏览器把原始文件以 `multipart` 交给后端 `KbDocTextParser` 解码（UTF-8 / GBK / BOM），PDF/DOCX 由浏览器用 pdfjs / mammoth 提取正文后以 `content` 提交，两条都走 `POST /ai/api/kbRag/uploadFile`。接口只做解析、校验、正文 SHA-256 去重与建任务，分块和向量化交给 `KbDocRunner` 在专用线程池里执行，状态机为 `queued → chunking → embedding → ready / failed`；文档元数据与 `status/progress` 写 `kbdocbean`，原始正文写 `kbdoccontentbean`，分块与向量 JSON 写 `kbchunkbean`，前端每 2 秒轮询真实进度。检索限定当前用户，结合余弦相似度、PostgreSQL 全文候选与 RRF 融合；可选 Rerank 后，将最终顺序的片段注入直连模型请求。它需要同时考虑**数据归属、检索质量与存储一致性**。
 
+### 全局搜索（Ctrl/Cmd + K）
+
+侧边栏「搜索」入口打开命令面板，一次请求聚合五类资源：Agent、知识库、RAG 评估数据集、模型、数据集。
+服务端复用各领域 Holder 的可见性判断（Agent / 评估集按所有者，知识库按三种权限模型），
+每类最多 6 条；单个数据源失败只标记 `degraded` 并跳过，不影响其他分类。
+路由由服务端拼好并做 URL 编码，目标页读取 `?keyword=` / `?datasetKey=` / `?agentKey=` 自动过滤或选中；
+同路由 query 变化不会重挂载组件，视图用 `watch` 响应。设计细节见
+`docs/学习文档-阶段1-子阶段7C-全局搜索命令面板.md`。
+
 ---
 
 ## 权限模型
@@ -239,7 +248,7 @@ npm run typecheck      # TypeScript 类型检查
 npm run check:icons    # 图标注册检查（模板图标必须 import 或全局注册）
 npm run check:styles   # 硬编码色值棘轮检查（只减不增，基线在 scripts/check-styles.baseline.json）
 npm run test            # 单元测试（Vitest），23 个文件 / 275 项
-npm run test:component  # 组件测试（真实渲染），28 个文件 / 280 项
+npm run test:component  # 组件测试（真实渲染），29 个文件 / 295 项
 npm run test:e2e        # 浏览器冒烟（真实 Chromium + 接口 mock），15 项
 npm run check:streaming # 流式超时/取消回归，14 项
 npm run check:markdown  # Markdown 与 XSS 消毒回归，10 项
@@ -260,7 +269,7 @@ npm run check:bundle     # 首屏 gzip 体积预算（需先 build）
 | 前端图标注册检查 | 通过 |
 | 硬编码色值棘轮检查 | 通过（48 个文件 / 2102 处，等于基线；新增即失败，只允许减少） |
 | 前端逻辑单元测试 | 23 个文件 / **275 项通过** |
-| 前端组件测试 | 28 个文件 / **280 项通过**（@vue/test-utils 真实渲染） |
+| 前端组件测试 | 29 个文件 / **295 项通过**（@vue/test-utils 真实渲染） |
 | 浏览器冒烟（Playwright） | **15 项通过**（真实 Chromium + `page.route` 接口 mock，含文档流水线、目录页三态、登录守卫、SSE、配额、RAG 评估详情、404 兜底） |
 | 前端流式回归 | 14 项通过 |
 | 前端 Markdown / XSS 回归 | 10 项通过 |

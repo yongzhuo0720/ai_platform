@@ -3,6 +3,7 @@ package com.aiproject.ai.service.holde;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import java.util.Locale;
 import java.util.Set;
 import java.util.stream.Collectors;
 
@@ -243,6 +244,61 @@ public class KnowledgeBaseBeanHolder {
             list = visible;
         }
         return Result.succeed(list, "查询成功");
+    }
+
+    /**
+     * 全局搜索：只返回当前用户可见、且名称 / kbId 命中关键词的知识库记录。
+     *
+     * <p>可见性沿用广场语义（{@link #isVisibleToUser}），并额外放行所有者本人，
+     * 保证自己创建的库即使属于 {@code partial_invisible} 也不会在搜索里消失。
+     * 非管理员看不到他人的 {@code only_me} 记录，这一点与 {@link #queryList(String, KnowledgeBaseBean)}
+     * 保持一致，搜索不会成为越权旁路。</p>
+     */
+    public List<KnowledgeBaseBean> searchVisible(String uid, String keyword, int limit) {
+        List<KnowledgeBaseBean> result = new ArrayList<KnowledgeBaseBean>();
+        if (uid == null || uid.trim().isEmpty() || limit <= 0) {
+            return result;
+        }
+        String needle = keyword == null ? "" : keyword.trim().toLowerCase(Locale.ROOT);
+        if (needle.isEmpty()) {
+            return result;
+        }
+        PageRequest page = new PageRequest(1, 500);
+        page.setOrder("iid");
+        page.setDesc("desc");
+        List<KnowledgeBaseBean> rows = knowledgeBaseBeanMapper.select(page, new KnowledgeBaseBean());
+        if (rows == null) {
+            return result;
+        }
+        MyUserBaseDb userBaseDb = myUserBaseDbHolder.queryUserByUid(uid);
+        boolean admin = userBaseDb != null
+                && userBaseDb.getRid() != null
+                && userBaseDb.getRid() == 99999L;
+        for (KnowledgeBaseBean record : rows) {
+            if (record == null) {
+                continue;
+            }
+            boolean own = uid.equals(record.getOwnerUid());
+            if (!admin && !own && !isVisibleToUser(record, userBaseDb)) {
+                continue;
+            }
+            if (matches(needle, record.getName(), record.getKbId())) {
+                result.add(record);
+                if (result.size() >= limit) {
+                    break;
+                }
+            }
+        }
+        return result;
+    }
+
+    private static boolean matches(String needle, String... fields) {
+        for (String field : fields) {
+            if (field != null && field.toLowerCase(Locale.ROOT).contains(needle)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     public Result<List<String>> filterVisible(String uid, String context, List<String> kbIds) {

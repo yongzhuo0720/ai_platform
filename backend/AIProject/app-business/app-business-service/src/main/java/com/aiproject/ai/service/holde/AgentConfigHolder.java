@@ -12,6 +12,7 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Set;
 import java.util.UUID;
 
@@ -213,6 +214,54 @@ public class AgentConfigHolder {
             return "单工具超时需在 " + TOOL_TIMEOUT_MIN_MS + "~" + TOOL_TIMEOUT_MAX_MS + " 毫秒之间";
         }
         return null;
+    }
+
+    /**
+     * 全局搜索：只在当前用户自己的 Agent 配置里匹配名称与说明。
+     *
+     * <p>Agent 是私有资产，查询条件必须带 {@code lastuser=uid}；
+     * 不接受管理员越权，也不把 System Prompt 纳入检索范围，避免把大段提示词
+     * 当搜索结果外泄到命令面板里。</p>
+     */
+    public List<AgentBean> search(String uid, String keyword, int limit) {
+        List<AgentBean> result = new ArrayList<AgentBean>();
+        if (blank(uid) || limit <= 0) {
+            return result;
+        }
+        String needle = keyword == null ? "" : keyword.trim().toLowerCase(Locale.ROOT);
+        if (needle.isEmpty()) {
+            return result;
+        }
+        AgentBean where = new AgentBean();
+        where.setLastuser(uid);
+        PageRequest page = new PageRequest(1, 200);
+        page.setOrder("iid");
+        page.setDesc("desc");
+        List<AgentBean> rows = configMapper.select(page, where);
+        if (rows == null) {
+            return result;
+        }
+        for (AgentBean row : rows) {
+            if (row == null) {
+                continue;
+            }
+            if (matches(needle, row.getName(), row.getDescription())) {
+                result.add(row);
+                if (result.size() >= limit) {
+                    break;
+                }
+            }
+        }
+        return result;
+    }
+
+    private static boolean matches(String needle, String... fields) {
+        for (String field : fields) {
+            if (field != null && field.toLowerCase(Locale.ROOT).contains(needle)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private boolean owned(String uid, Long iid) {

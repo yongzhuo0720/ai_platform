@@ -1,4 +1,5 @@
-import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
+import { useRoute } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { agentApi, type AgentConfig, type AgentRun, type AgentRunDetail, type AgentTool } from '@/api/agent'
 import { modelsConfigApi } from '@/api/modelsConfig'
@@ -17,6 +18,11 @@ export function useAgentWorkspace() {
   const configEditor = ref<Partial<AgentConfig> | null>(null)
   const toolEditor = ref<AgentTool | null>(null)
   const selected = computed(() => state.agents.find((agent) => agent.agentKey === state.selectedKey))
+  const route = useRoute()
+  const routeAgentKey = () => {
+    const value = route.query.agentKey
+    return typeof value === 'string' ? value.trim() : ''
+  }
   let alive = true
   let selectionVersion = 0
   let listVersion = 0
@@ -256,7 +262,18 @@ export function useAgentWorkspace() {
     }
   }
 
-  onMounted(() => { void loadAgents(); void loadModels() })
+  onMounted(() => {
+    // 全局搜索带 ?agentKey= 进来时先选中它，loadAgents 会沿用 selectedKey
+    const initialKey = routeAgentKey()
+    if (initialKey) state.selectedKey = initialKey
+    void loadAgents()
+    void loadModels()
+  })
+  watch(() => route.query.agentKey, (value) => {
+    const key = typeof value === 'string' ? value.trim() : ''
+    if (!alive || !key || key === state.selectedKey) return
+    if (state.agents.some((agent) => agent.agentKey === key)) selectAgent(key)
+  })
   onBeforeUnmount(() => { alive = false; selectionVersion++ })
 
   return { state, selected, configEditor, toolEditor, locked, selectionLocked, canRun, ...run,

@@ -331,4 +331,48 @@ class KnowledgeBaseBeanHolderTest {
         verify(knowledgeBaseBeanMapper, never()).delete(any(KnowledgeBaseBean.class));
         verify(knowledgeBaseBeanMapper, never()).select(isNull(), any(KnowledgeBaseBean.class));
     }
+
+    @Test
+    void searchVisible_shouldHideOthersOnlyMe() {
+        when(myUserBaseDbHolder.queryUserByUid("u2")).thenReturn(user("u2", 5L, "dept01"));
+        KnowledgeBaseBean own = record("kb-own", "u2", "only_me", "[]", "[]");
+        own.setName("制度库-我的");
+        KnowledgeBaseBean otherOnlyMe = record("kb-other", "u1", "only_me", "[]", "[]");
+        otherOnlyMe.setName("制度库-他人");
+        KnowledgeBaseBean publicOther = record("kb-public", "u1", "public", "[]", "[]");
+        publicOther.setName("制度制度");
+        KnowledgeBaseBean noMatch = record("kb-other2", "u1", "public", "[]", "[]");
+        noMatch.setName("研发库");
+        when(knowledgeBaseBeanMapper.select(any(PageRequest.class), any(KnowledgeBaseBean.class)))
+                .thenReturn(Arrays.asList(own, otherOnlyMe, publicOther, noMatch));
+
+        List<KnowledgeBaseBean> result = holder.searchVisible("u2", "制度", 6);
+
+        assertEquals(2, result.size());
+        assertEquals("kb-own", result.get(0).getKbId());
+        assertEquals("kb-public", result.get(1).getKbId());
+        assertTrue(result.stream().noneMatch(r -> "kb-other".equals(r.getKbId())),
+                "他人的 only_me 不能出现在搜索结果里");
+    }
+
+    @Test
+    void searchVisible_adminSeesAllMatching() {
+        when(myUserBaseDbHolder.queryUserByUid("admin")).thenReturn(user("admin", 99999L, "dept01"));
+        KnowledgeBaseBean otherOnlyMe = record("kb-other", "u1", "only_me", "[]", "[]");
+        otherOnlyMe.setName("制度库");
+        when(knowledgeBaseBeanMapper.select(any(PageRequest.class), any(KnowledgeBaseBean.class)))
+                .thenReturn(Collections.singletonList(otherOnlyMe));
+
+        List<KnowledgeBaseBean> result = holder.searchVisible("admin", "制度", 6);
+
+        assertEquals(1, result.size());
+    }
+
+    @Test
+    void searchVisible_blankKeyword_shouldNotTouchDb() {
+        assertTrue(holder.searchVisible("u1", "  ", 6).isEmpty());
+        assertTrue(holder.searchVisible(null, "制度", 6).isEmpty());
+        verify(knowledgeBaseBeanMapper, never())
+                .select(any(PageRequest.class), any(KnowledgeBaseBean.class));
+    }
 }

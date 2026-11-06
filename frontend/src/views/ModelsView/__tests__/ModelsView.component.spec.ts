@@ -3,6 +3,9 @@ import { enableAutoUnmount, flushPromises, mount } from "@vue/test-utils";
 import { ElLoading, ElMessage, ElMessageBox } from "element-plus";
 
 const mocks = vi.hoisted(() => ({ rid: "99999" }));
+const route = vi.hoisted(() => ({ query: {} as Record<string, unknown> }));
+
+vi.mock("vue-router", () => ({ useRoute: () => route }));
 
 vi.mock("js-cookie", () => ({
   default: { get: vi.fn((key: string) => (key === "rid" ? mocks.rid : undefined)) },
@@ -111,6 +114,7 @@ const clickFooter = async (wrapper: ReturnType<typeof mountView>, text: string) 
 
 beforeEach(() => {
   mocks.rid = "99999";
+  route.query = {};
   query.mockResolvedValue(ok([...models]));
   weeklyTotal.mockResolvedValue(ok(321));
   tagsQuery.mockResolvedValue(ok(tags));
@@ -150,6 +154,17 @@ describe("ModelsView", () => {
 
     await input.setValue("不存在");
     expect(cardTitles(wrapper)).toEqual([]);
+  });
+
+  it("全局搜索带 ?keyword= 进入时预填搜索框并过滤", async () => {
+    route.query = { keyword: "向量" };
+    const wrapper = mountView();
+    await flushPromises();
+
+    expect(
+      (wrapper.find('input[placeholder="搜索模型..."]').element as HTMLInputElement).value
+    ).toBe("向量");
+    expect(cardTitles(wrapper)).toEqual(["BGE-M3"]);
   });
 
   it("排序与标签筛选：下载量/文件大小升降序、按标签过滤", async () => {

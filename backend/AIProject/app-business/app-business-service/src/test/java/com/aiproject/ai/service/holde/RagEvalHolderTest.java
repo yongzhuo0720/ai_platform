@@ -59,6 +59,7 @@ class RagEvalHolderTest {
 
     private static final String UID = "u1";
 
+
     @Mock
     RagEvalDatasetBeanMapper<RagEvalDatasetBean> datasetMapper;
 
@@ -699,6 +700,34 @@ class RagEvalHolderTest {
         request.setDescription("说明");
         request.setCases(new ArrayList<RagEvalCaseInput>(Arrays.asList(cases)));
         return request;
+    }
+
+    @Test
+    void searchDatasets_shouldFilterOwnDatasetsAndCapResults() {
+        RagEvalDatasetBean match = new RagEvalDatasetBean();
+        match.setDatasetKey("d1");
+        match.setName("制度评估");
+        match.setKbName("制度库");
+        RagEvalDatasetBean noMatch = new RagEvalDatasetBean();
+        noMatch.setDatasetKey("d2");
+        noMatch.setName("研发评估");
+        when(datasetMapper.select(any(PageRequest.class), any(RagEvalDatasetBean.class)))
+                .thenReturn(Arrays.asList(match, noMatch));
+
+        List<RagEvalDatasetBean> result = holder.searchDatasets(UID, "制度", 1);
+
+        assertEquals(1, result.size());
+        assertEquals("d1", result.get(0).getDatasetKey());
+        ArgumentCaptor<RagEvalDatasetBean> where = ArgumentCaptor.forClass(RagEvalDatasetBean.class);
+        verify(datasetMapper).select(any(PageRequest.class), where.capture());
+        assertEquals(UID, where.getValue().getLastuser(), "搜索条件必须带归属");
+    }
+
+    @Test
+    void searchDatasets_blankKeyword_shouldNotTouchDb() {
+        assertTrue(holder.searchDatasets(UID, "  ", 6).isEmpty());
+        assertTrue(holder.searchDatasets(null, "制度", 6).isEmpty());
+        verify(datasetMapper, never()).select(any(PageRequest.class), any(RagEvalDatasetBean.class));
     }
 
     private static RagEvalCaseInput item(String question, String doc, String... keywords) {

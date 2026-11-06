@@ -33,6 +33,8 @@ import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.List;
+import java.util.Locale;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -1047,6 +1049,53 @@ public class RagEvalHolder {
         dto.setDurationMs(bean.getDurationMs());
         dto.setErrorMessage(bean.getErrorMessage());
         return dto;
+    }
+
+    /**
+     * 全局搜索：只在当前用户自己的 RAG 评估数据集里匹配名称、说明与知识库名。
+     *
+     * <p>数据集按 {@code lastuser=uid} 归属收窄，与 {@link #listDatasets(String)}
+     * 使用同一套查询条件，避免搜索成为绕过归属校验的旁路。</p>
+     */
+    public List<RagEvalDatasetBean> searchDatasets(String uid, String keyword, int limit) {
+        List<RagEvalDatasetBean> result = new ArrayList<RagEvalDatasetBean>();
+        if (notLoggedIn(uid) || limit <= 0) {
+            return result;
+        }
+        String needle = keyword == null ? "" : keyword.trim().toLowerCase(Locale.ROOT);
+        if (needle.isEmpty()) {
+            return result;
+        }
+        RagEvalDatasetBean where = new RagEvalDatasetBean();
+        where.setLastuser(uid);
+        PageRequest page = new PageRequest(1, 200);
+        page.setOrder("iid");
+        page.setDesc("desc");
+        List<RagEvalDatasetBean> rows = datasetMapper.select(page, where);
+        if (rows == null) {
+            return result;
+        }
+        for (RagEvalDatasetBean row : rows) {
+            if (row == null) {
+                continue;
+            }
+            if (matches(needle, row.getName(), row.getDescription(), row.getKbName())) {
+                result.add(row);
+                if (result.size() >= limit) {
+                    break;
+                }
+            }
+        }
+        return result;
+    }
+
+    private static boolean matches(String needle, String... fields) {
+        for (String field : fields) {
+            if (field != null && field.toLowerCase(Locale.ROOT).contains(needle)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private static boolean notLoggedIn(String uid) {

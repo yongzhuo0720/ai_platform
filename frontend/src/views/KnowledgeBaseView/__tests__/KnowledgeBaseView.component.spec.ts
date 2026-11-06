@@ -9,6 +9,7 @@ const env = vi.hoisted(() => ({
   fileConfigured: true,
 }));
 const routerPush = vi.hoisted(() => vi.fn());
+const route = vi.hoisted(() => ({ query: {} as Record<string, unknown> }));
 
 vi.mock("js-cookie", () => ({
   default: {
@@ -19,6 +20,7 @@ vi.mock("js-cookie", () => ({
 }));
 vi.mock("vue-router", () => ({
   useRouter: () => ({ push: routerPush }),
+  useRoute: () => route,
 }));
 vi.mock("@/stores/difyConfig", () => ({
   isGatewayMode: vi.fn(() => env.gateway),
@@ -200,6 +202,7 @@ beforeEach(() => {
   env.gateway = false;
   env.fileConfigured = true;
   routerPush.mockReset();
+  route.query = {};
 
   getDatasets.mockResolvedValue({
     data: allKbs.map((kb) => ({ ...kb })),
@@ -286,6 +289,16 @@ describe("KnowledgeBaseView", () => {
     expect(vm.roleList).toEqual([{ iid: 2, name: "普通用户" }]);
     expect(vm.embeddingModelOptions).toHaveLength(1);
     expect(getDocuments).toHaveBeenCalledWith("kb-1", 1, 100);
+  });
+
+  it("全局搜索带 ?keyword= 进入时预填侧边栏搜索", async () => {
+    route.query = { keyword: "我的" };
+    const wrapper = mountView();
+    await flushPromises();
+
+    const vm = wrapper.vm as any;
+    expect(vm.sidebarSearchQuery).toBe("我的");
+    expect(groupNames(wrapper, "个人知识库")).toEqual(["我的知识库"]);
   });
 
   it("侧边栏搜索与标签筛选分别作用于个人、共享、订阅列表", async () => {

@@ -8,6 +8,8 @@ vi.mock('@/api/agent', () => ({
   streamAgentRun: vi.fn(),
 }))
 vi.mock('@/api/modelsConfig', () => ({ modelsConfigApi: { getList: vi.fn() } }))
+const route = vi.hoisted(() => ({ query: {} as Record<string, unknown> }))
+vi.mock('vue-router', () => ({ useRoute: () => route }))
 
 import AgentView from '../index.vue'
 import AgentEditor from '../components/AgentEditor.vue'
@@ -57,6 +59,7 @@ const start = async (wrapper: VueWrapper) => {
 
 beforeEach(() => {
   vi.resetAllMocks()
+  route.query = {}
   api.list.mockResolvedValue(ok(agents))
   api.listTools.mockResolvedValue(ok([]))
   api.listRuns.mockResolvedValue(ok([]))
@@ -95,6 +98,16 @@ describe('Agent 实时工作台', () => {
     expect(wrapper.text()).toContain('还没有 Agent')
     expect(wrapper.findAll('.agent-config-item')).toHaveLength(0)
     expect(wrapper.find('[name="question"]').exists()).toBe(false)
+  })
+
+  it('全局搜索带 ?agentKey= 进入时直接选中对应 Agent', async () => {
+    route.query = { agentKey: 'beta' }
+    const wrapper = mountView()
+    await flushPromises()
+
+    expect(wrapper.get('.agent-config-item.is-selected').text()).toContain('研发助手')
+    expect(api.listTools).toHaveBeenCalledWith(22)
+    expect(api.listRuns).toHaveBeenCalledWith(22)
   })
 
   it('新建只选择可用模型，校验表单并按服务端 agentKey 重拉 iid', async () => {

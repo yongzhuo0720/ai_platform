@@ -8,6 +8,7 @@ import com.aiproject.ai.service.bean.ModelsDownloadsBean;
 import com.aiproject.ai.service.mapper.ModelsBeanMapper;
 import com.aiproject.ai.service.mapper.ModelsDownloadsBeanMapper;
 import com.heneng.hnsp.common.croe.model.Result;
+import com.heneng.hnsp.common.db.utils.PageRequest;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
@@ -15,6 +16,7 @@ import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
 
@@ -135,5 +137,33 @@ class ModelsBeanHolderTest {
 
         assertFalse(result.getDatas() != null);
         verify(modelsDownloadsBeanMapper, never()).count(anyString());
+    }
+
+    @Test
+    void search_shouldMatchNameProviderAndCapResults() {
+        ModelsBean byName = new ModelsBean();
+        byName.setName("视觉模型");
+        ModelsBean byProvider = new ModelsBean();
+        byProvider.setName("文本模型");
+        byProvider.setProvider("SiliconFlow");
+        ModelsBean noMatch = new ModelsBean();
+        noMatch.setName("语音模型");
+        when(modelsBeanMapper.select(any(PageRequest.class), any(ModelsBean.class)))
+                .thenReturn(Arrays.asList(byName, byProvider, noMatch));
+
+        List<ModelsBean> result = holder.search("视觉", 6);
+        assertEquals(1, result.size());
+        assertEquals("视觉模型", result.get(0).getName());
+
+        List<ModelsBean> byProviderResult = holder.search("siliconflow", 1);
+        assertEquals(1, byProviderResult.size());
+        assertEquals("文本模型", byProviderResult.get(0).getName());
+    }
+
+    @Test
+    void search_blankKeyword_shouldNotTouchDb() {
+        assertTrue(holder.search("  ", 6).isEmpty());
+        assertTrue(holder.search("模型", 0).isEmpty());
+        verify(modelsBeanMapper, never()).select(any(PageRequest.class), any(ModelsBean.class));
     }
 }

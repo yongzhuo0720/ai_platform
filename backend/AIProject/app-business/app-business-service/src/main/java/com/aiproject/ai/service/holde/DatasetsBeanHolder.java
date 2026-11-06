@@ -3,6 +3,7 @@ package com.aiproject.ai.service.holde;
 import java.io.File;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 import com.heneng.hnsp.common.croe.model.Result;
 import com.heneng.hnsp.common.db.utils.PageResult;
 import com.heneng.hnsp.common.db.utils.PageRequest;
@@ -171,6 +172,51 @@ public  class DatasetsBeanHolder  {
         return Result.succeed(datasetsBeanMapper.select(null, data),"查询成功");
     }
 
+    /**
+     * 全局搜索用的数据集检索。
+     *
+     * <p>数据集市场是平台级公开目录，只按关键词过滤；扫描上限与模型仓库一致。</p>
+     */
+    public List<DatasetsBean> search(String keyword, int limit) {
+        String needle = normalize(keyword);
+        if (needle.isEmpty() || limit <= 0) {
+            return new ArrayList<DatasetsBean>();
+        }
+        PageRequest page = new PageRequest(1, SEARCH_SCAN_LIMIT);
+        page.setOrder("iid");
+        page.setDesc("desc");
+        List<DatasetsBean> rows = datasetsBeanMapper.select(page, new DatasetsBean());
+        List<DatasetsBean> result = new ArrayList<DatasetsBean>();
+        if (rows == null) {
+            return result;
+        }
+        for (DatasetsBean row : rows) {
+            if (row == null) {
+                continue;
+            }
+            if (matches(needle, row.getName(), row.getDescription(), row.getType())) {
+                result.add(row);
+                if (result.size() >= limit) {
+                    break;
+                }
+            }
+        }
+        return result;
+    }
 
+    private static final int SEARCH_SCAN_LIMIT = 500;
+
+    private static String normalize(String keyword) {
+        return keyword == null ? "" : keyword.trim().toLowerCase(Locale.ROOT);
+    }
+
+    private static boolean matches(String needle, String... fields) {
+        for (String field : fields) {
+            if (field != null && field.toLowerCase(Locale.ROOT).contains(needle)) {
+                return true;
+            }
+        }
+        return false;
+    }
 
 }

@@ -1,7 +1,8 @@
 import { debug } from '@/utils/debug'
 import { isConfirmCancelled } from '@/utils/confirm'
 import { pageDescriptions } from '@/data/platform'
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref, watch } from 'vue'
+import { useRoute } from 'vue-router'
 import { ElLoading, ElMessage, ElMessageBox } from 'element-plus'
 import { tagsApi } from '@/api/tags'
 import { useTagBinding } from '@/composables/useTagBinding'
@@ -33,6 +34,16 @@ export function useIndex() {
       description: [{ required: true, message: '请输入模型描述', trigger: 'blur' }],
     }
   })
+
+  // 全局搜索跳转带 ?keyword=，同路由 query 变化不会重挂载组件，必须 watch
+  const route = useRoute()
+  const applyRouteKeyword = (value: unknown) => {
+    if (typeof value !== 'string') return
+    const keyword = value.trim()
+    if (keyword) searchKeyword.value = keyword
+  }
+  applyRouteKeyword(route.query.keyword)
+  watch(() => route.query.keyword, applyRouteKeyword)
 
   onMounted(() => {
     getDataList()

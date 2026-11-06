@@ -25,6 +25,7 @@ import {
   Check,
 } from '@element-plus/icons-vue'
 import { ref, computed, nextTick, watch, onMounted, onUnmounted } from 'vue'
+import { useRoute } from 'vue-router'
 import {
   knowledgeChatStreaming,
   retrieveFromDataset,
@@ -237,6 +238,16 @@ function clearSharedSearch() {
 // 侧边栏知识库搜索
 const sidebarSearchQuery = ref('')
 const sidebarSearchInputRef = ref<HTMLInputElement | null>(null)
+
+// 全局搜索跳转带 ?keyword=：index.ts 负责筛选与选中，这里同步可见的搜索框
+const route = useRoute()
+const applyRouteKeyword = (value: unknown) => {
+  if (typeof value !== 'string') return
+  const keyword = value.trim()
+  if (keyword) sidebarSearchQuery.value = keyword
+}
+applyRouteKeyword(route.query.keyword)
+watch(() => route.query.keyword, applyRouteKeyword)
 
 // 侧边栏标签筛选
 const sidebarSelectedTag = ref<string[]>([])

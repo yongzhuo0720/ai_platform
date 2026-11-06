@@ -12,6 +12,7 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
 
@@ -179,6 +180,34 @@ class AgentConfigHolderTest {
         assertEquals(Boolean.FALSE, result.getDatas());
         assertTrue(result.getResp_msg().contains("Token 预算"));
         verify(configMapper, never()).select(any(), any(AgentBean.class));
+    }
+
+    @Test
+    void search_shouldStayInsideOwnAgentsAndCapResults() {
+        AgentBean match = new AgentBean();
+        match.setAgentKey("a1");
+        match.setName("报销助手");
+        match.setDescription("处理报销");
+        AgentBean noMatch = new AgentBean();
+        noMatch.setAgentKey("a2");
+        noMatch.setName("制度助手");
+        when(configMapper.select(any(PageRequest.class), any(AgentBean.class)))
+                .thenReturn(Arrays.asList(match, noMatch));
+
+        List<AgentBean> result = holder.search(UID, " 报销 ", 1);
+
+        assertEquals(1, result.size());
+        assertEquals("a1", result.get(0).getAgentKey());
+        ArgumentCaptor<AgentBean> where = ArgumentCaptor.forClass(AgentBean.class);
+        verify(configMapper).select(any(PageRequest.class), where.capture());
+        assertEquals(UID, where.getValue().getLastuser(), "搜索条件必须带归属，不能扫全表");
+    }
+
+    @Test
+    void search_blankKeyword_shouldNotTouchDb() {
+        assertTrue(holder.search(UID, "  ", 6).isEmpty());
+        assertTrue(holder.search(null, "报销", 6).isEmpty());
+        verify(configMapper, never()).select(any(PageRequest.class), any(AgentBean.class));
     }
 
     @Test
