@@ -78,6 +78,20 @@ class AiGatewayUsageParserTest {
         assertEquals(Long.valueOf(16), parser.getTotalTokens());
     }
 
+    /** 「没有 usage」与「usage 明确为 0」必须能区分：前者按预扣收费，后者按 0 结算 */
+    @Test
+    void distinguishesExplicitZeroUsageFromMissingUsage() {
+        AiGatewayUsageParser missing = new AiGatewayUsageParser();
+        missing.acceptJson("{\"choices\":[{\"message\":{\"content\":\"hi\"}}]}");
+        assertFalse(missing.isUsageSeen());
+        assertNull(missing.getTotalTokens());
+
+        AiGatewayUsageParser zero = new AiGatewayUsageParser();
+        zero.acceptJson("{\"usage\":{\"prompt_tokens\":0,\"completion_tokens\":0,\"total_tokens\":0}}");
+        assertTrue(zero.isUsageSeen());
+        assertNull(zero.getTotalTokens());
+    }
+
     @Test
     void capturesSseErrorEvent() {
         AiGatewayUsageParser parser = new AiGatewayUsageParser();

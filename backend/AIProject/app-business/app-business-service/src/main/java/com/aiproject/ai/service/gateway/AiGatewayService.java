@@ -872,24 +872,23 @@ public class AiGatewayService {
         Relayed relayed = new Relayed();
         // 同样提到 try 外：中断时已解析到的模型名、会话 ID 和部分用量仍要记进审计
         AiGatewayUsageParser parser = new AiGatewayUsageParser();
-        // 写请求的幂等占位必须在上游调用之前取得；拿不到占位时全额释放预扣
-        AiIdempotencyGuard.Acquisition idempotency =
-                idempotencyGuard.acquire(userId, module, request);
-        if (idempotency.isRejected()) {
-            writeError(response, idempotency.getHttpStatus(),
-                    idempotency.getCode(), idempotency.getMessage());
-            record(userId, module, auditEndpoint, method,
-                    idempotency.getHttpStatus() == 409 ? "blocked" : "failed",
-                    idempotency.getHttpStatus(), null, start, idempotency.getMessage(), clientIp);
-            if (reservation != null && reservation.isActive()) {
-                guard.settle(reservation, 0L);
-            }
-            return;
-        }
-        AiIdempotencyGuard.Lease idempotencyLease = idempotency.getLease();
+        // 占位必须在上游调用之前取得；放进 try 是为了 acquire 自身抛异常时
+        // 预扣也能走 finally 释放，而不是泄漏给 30 分钟后的回收任务
+        AiIdempotencyGuard.Lease idempotencyLease = null;
         // 响应是否为 SSE，提到 try 外供 catch 里的计费判断使用
         boolean sseResponse = false;
         try {
+            AiIdempotencyGuard.Acquisition idempotency =
+                    idempotencyGuard.acquire(userId, module, request);
+            if (idempotency.isRejected()) {
+                writeError(response, idempotency.getHttpStatus(),
+                        idempotency.getCode(), idempotency.getMessage());
+                record(userId, module, auditEndpoint, method,
+                        idempotency.getHttpStatus() == 409 ? "blocked" : "failed",
+                        idempotency.getHttpStatus(), null, start, idempotency.getMessage(), clientIp);
+                return;
+            }
+            idempotencyLease = idempotency.getLease();
             String target = config.getApiUrl() + "/" + upstreamEndpoint;
             String query = request.getQueryString();
             if (isDifyChatModule(module)) {
@@ -993,6 +992,16 @@ public class AiGatewayService {
                 if (reservation == null || !reservation.isActive()) {
                     guard.addTokens(userId, module, actualTokens);
                 }
+            } else if (!failed && parser.getTotalTokens() == null && !parser.isUsageSeen()
+                    && relayed.bytes > 0 && reservation != null && reservation.isActive()) {
+                // 上游正常结束但没给 usage（部分模型/供应商省略 usage 字段）。
+                // 用户已经拿到完整回答，上游也确实生成过：不能按「没拿到用量」全额退款，
+                // 否则这类供应商等于免费。usage 明确返回 0 的（isUsageSeen 为 true）不在此列。
+                billable = true;
+                actualTokens = reservation.getTokens();
+                parser.markBilledTokens(actualTokens);
+                log.warn("[AiGateway] 上游正常结束但未返回 usage，按预扣值计费: uid={}, module={}, relayedBytes={}, tokens={}",
+                        userId, module, relayed.bytes, actualTokens);
             } else if (failed && parser.getTotalTokens() == null && sseResponse
                     && shouldBillPartialOutput(relayed, upstreamStatus, true, false)
                     && reservation != null && reservation.isActive()) {

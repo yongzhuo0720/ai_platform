@@ -85,6 +85,26 @@ public class AiGatewayGuard {
     /** 超过该时长仍未结算，视为请求线程已经不在了；留足 5 分钟读超时的余量 */
     private static final long LEDGER_STALE_MS = 30 * 60 * 1000L;
 
+    /**
+     * 结算补偿队列：预扣已经认领、但 Token 计数调整失败时，记录待重试的「单个 key + 增量」。
+     * 每个记录只调整一个 key，避免用户池成功、部门池失败时整笔重放造成重复退款。
+     */
+    private static final String COMPENSATION_INDEX_KEY = "ai:gateway:compensation:index";
+    private static final String COMPENSATION_KEY_PREFIX = "ai:gateway:compensation:";
+    private static final long COMPENSATION_TTL_SECONDS = 2 * 24 * 60 * 60L;
+    private static final long COMPENSATION_RETRY_BASE_MS = 30 * 1000L;
+    private static final long COMPENSATION_RETRY_MAX_MS = 5 * 60 * 1000L;
+
+    /** 补偿脚本：计数调整与删除记录在 Redis 内一次完成，保证至多调整一次 */
+    private static final DefaultRedisScript<Long> APPLY_COMPENSATION_SCRIPT = new DefaultRedisScript<Long>(
+            "if redis.call('EXISTS', KEYS[1]) == 0 then return -1 end; "
+                    + "if redis.call('EXISTS', KEYS[2]) == 0 then "
+                    + "redis.call('DEL', KEYS[1]); redis.call('ZREM', KEYS[3], KEYS[1]); return 0 end; "
+                    + "redis.call('INCRBY', KEYS[2], ARGV[1]); "
+                    + "redis.call('EXPIRE', KEYS[2], ARGV[2]); "
+                    + "redis.call('DEL', KEYS[1]); redis.call('ZREM', KEYS[3], KEYS[1]); return 1",
+            Long.class);
+
     private static final DefaultRedisScript<Long> SETTLE_LEDGER_SCRIPT = new DefaultRedisScript<Long>(
             "local status = redis.call('HGET', KEYS[1], 'status') "
                     + "if not status then return -1 end "
@@ -143,7 +163,11 @@ public class AiGatewayGuard {
             return Decision.block(CODE_GUARD_UNAVAILABLE, GUARD_UNAVAILABLE_MSG);
         }
         if (userQuota > 0) {
-            long used = usedTokens(userId);
+            Long used = readTokenCount(userId);
+            if (used == null) {
+                log.error("[AiGateway] 读取用户已用 Token 失败，按不可用拒绝, uid={}", userId);
+                return Decision.block(CODE_GUARD_UNAVAILABLE, GUARD_UNAVAILABLE_MSG);
+            }
             if (used >= userQuota) {
                 return Decision.block("quota_exceeded",
                         "今日 AI 额度已用完（已用 " + used + " / " + userQuota + " tokens），请明天再试或联系管理员");
@@ -158,7 +182,11 @@ public class AiGatewayGuard {
                 long unitLimit = unitQuota == null || unitQuota.getDailyTokenQuota() == null
                         ? 0L : unitQuota.getDailyTokenQuota();
                 if (unitLimit > 0) {
-                    long unitUsed = usedTokens(UNIT_PREFIX + gid.trim());
+                    Long unitUsed = readTokenCount(UNIT_PREFIX + gid.trim());
+                    if (unitUsed == null) {
+                        log.error("[AiGateway] 读取部门已用 Token 失败，按不可用拒绝, uid={}", userId);
+                        return Decision.block(CODE_GUARD_UNAVAILABLE, GUARD_UNAVAILABLE_MSG);
+                    }
                     if (unitUsed >= unitLimit) {
                         return Decision.block("quota_exceeded",
                                 "所在部门今日 AI 额度已用完（" + unitUsed + " / " + unitLimit + " tokens），请联系管理员");
@@ -330,14 +358,145 @@ public class AiGatewayGuard {
             return;
         }
         long delta = actualTokens - reservation.getTokens();
-        try {
-            adjustTokens(userKeyOf(reservation), delta);
-            if (reservation.getUnitOwner() != null) {
-                adjustTokens(unitKeyOf(reservation), delta);
-            }
-        } catch (Exception e) {
-            log.warn("[AiGateway] 结算预扣配额失败, uid={}: {}", reservation.getUserId(), e.getMessage());
+        settleKey(userKeyOf(reservation), delta, reservation.getUserId());
+        if (reservation.getUnitOwner() != null) {
+            settleKey(unitKeyOf(reservation), delta, reservation.getUserId());
         }
+    }
+
+    /**
+     * 调整单个 Token 计数。失败时写入补偿队列，而不是只打一行 warn：
+     * 预扣已经认领，若不补偿，用户的已用额度会永久停在预扣值上。
+     */
+    private void settleKey(String key, long delta, String userId) {
+        if (delta == 0) {
+            return;
+        }
+        try {
+            adjustTokens(key, delta);
+        } catch (Exception e) {
+            log.error("[AiGateway] 调整 Token 计数失败，写入补偿队列, uid={}, key={}, delta={}: {}",
+                    userId, key, delta, e.getMessage());
+            enqueueCompensation(key, delta, userId, e.getMessage());
+        }
+    }
+
+    /**
+     * 记录一笔待补偿调整。
+     *
+     * <p>队列本身也依赖 Redis；Redis 整体不可用时只能打 error 日志，
+     * 不能再假装补偿已经入队。记录按单个 key 拆分，重试时不会重复调整另一个池。</p>
+     */
+    private void enqueueCompensation(String tokenKey, long delta, String userId, String reason) {
+        if (tokenKey == null || tokenKey.isEmpty() || delta == 0) {
+            return;
+        }
+        if (stringRedisTemplate == null) {
+            log.error("[AiGateway] 无 Redis 台账能力，Token 调整偏差无法补偿, uid={}, key={}, delta={}",
+                    userId, tokenKey, delta);
+            return;
+        }
+        String recordKey = COMPENSATION_KEY_PREFIX + UUID.randomUUID().toString().replace("-", "");
+        long now = System.currentTimeMillis();
+        try {
+            Map<String, String> fields = new LinkedHashMap<String, String>();
+            fields.put("tokenKey", tokenKey);
+            fields.put("delta", String.valueOf(delta));
+            fields.put("userId", userId == null ? "" : userId);
+            fields.put("attempts", "0");
+            fields.put("reason", reason == null ? "" : truncate(reason, 200));
+            fields.put("createdAt", String.valueOf(now));
+            stringRedisTemplate.opsForHash().putAll(recordKey, fields);
+            stringRedisTemplate.expire(recordKey, COMPENSATION_TTL_SECONDS, TimeUnit.SECONDS);
+            stringRedisTemplate.opsForZSet().add(COMPENSATION_INDEX_KEY, recordKey, (double) now);
+            log.warn("[AiGateway] 已写入结算补偿队列, uid={}, key={}, delta={}, record={}",
+                    userId, tokenKey, delta, recordKey);
+        } catch (Exception e) {
+            log.error("[AiGateway] 写入结算补偿队列失败, uid={}, key={}, delta={}: {}",
+                    userId, tokenKey, delta, e.getMessage());
+        }
+    }
+
+    /**
+     * 重试补偿队列。
+     *
+     * <p>Redis 脚本在一次原子操作里完成「调整计数 + 删除记录」，
+     * 因此重复执行不会重复退款；多个实例同时扫描也只有一个能真正应用。
+     * 计数 key 已过期（跨天清理）时直接丢弃记录，不重新创建旧日期的计数。</p>
+     */
+    @Scheduled(fixedDelay = 60 * 1000L, initialDelay = 45 * 1000L)
+    public void retryCompensations() {
+        if (stringRedisTemplate == null) {
+            return;
+        }
+        long now = System.currentTimeMillis();
+        Set<String> recordKeys;
+        try {
+            recordKeys = stringRedisTemplate.opsForZSet()
+                    .rangeByScore(COMPENSATION_INDEX_KEY, 0D, (double) now, 0, 100);
+        } catch (Exception e) {
+            log.warn("[AiGateway] 查询补偿队列失败: {}", e.getMessage());
+            return;
+        }
+        if (recordKeys == null || recordKeys.isEmpty()) {
+            return;
+        }
+        for (String recordKey : recordKeys) {
+            retryCompensation(recordKey);
+        }
+    }
+
+    private void retryCompensation(String recordKey) {
+        Map<Object, Object> fields;
+        try {
+            fields = stringRedisTemplate.opsForHash().entries(recordKey);
+        } catch (Exception e) {
+            log.warn("[AiGateway] 读取补偿记录失败, key={}: {}", recordKey, e.getMessage());
+            return;
+        }
+        if (fields == null || fields.isEmpty()) {
+            stringRedisTemplate.opsForZSet().remove(COMPENSATION_INDEX_KEY, recordKey);
+            return;
+        }
+        String tokenKey = asString(fields.get("tokenKey"));
+        long delta = parseLong(fields.get("delta"));
+        if (tokenKey == null || tokenKey.isEmpty() || delta == 0) {
+            stringRedisTemplate.delete(recordKey);
+            stringRedisTemplate.opsForZSet().remove(COMPENSATION_INDEX_KEY, recordKey);
+            return;
+        }
+        try {
+            Long applied = stringRedisTemplate.execute(APPLY_COMPENSATION_SCRIPT,
+                    Arrays.asList(recordKey, tokenKey, COMPENSATION_INDEX_KEY),
+                    String.valueOf(delta), String.valueOf(COMPENSATION_TTL_SECONDS));
+            if (applied != null && applied >= 0) {
+                log.info("[AiGateway] 补偿完成, key={}, delta={}, result={}",
+                        tokenKey, delta, applied);
+                return;
+            }
+            stringRedisTemplate.opsForZSet().remove(COMPENSATION_INDEX_KEY, recordKey);
+        } catch (Exception e) {
+            long attempts = parseLong(fields.get("attempts")) + 1;
+            long delay = Math.min(COMPENSATION_RETRY_MAX_MS,
+                    COMPENSATION_RETRY_BASE_MS * attempts);
+            try {
+                stringRedisTemplate.opsForHash().put(recordKey, "attempts", String.valueOf(attempts));
+                stringRedisTemplate.opsForZSet().add(COMPENSATION_INDEX_KEY, recordKey,
+                        (double) (System.currentTimeMillis() + delay));
+                stringRedisTemplate.expire(recordKey, COMPENSATION_TTL_SECONDS, TimeUnit.SECONDS);
+            } catch (Exception ignored) {
+                // 保留原始记录，等待下一次扫描
+            }
+            log.error("[AiGateway] 补偿重试失败, key={}, delta={}, attempts={}: {}",
+                    tokenKey, delta, attempts, e.getMessage());
+        }
+    }
+
+    private static String truncate(String value, int max) {
+        if (value == null) {
+            return "";
+        }
+        return value.length() <= max ? value : value.substring(0, max);
     }
 
     private String userKeyOf(Reservation reservation) {
@@ -415,9 +574,10 @@ public class AiGatewayGuard {
                 if (tokens <= 0 || userKey == null) {
                     continue;
                 }
-                adjustTokens(userKey, -tokens);
+                String userId = asString(fields.get("userId"));
+                settleKey(userKey, -tokens, userId);
                 if (unitKey != null && !unitKey.isEmpty()) {
-                    adjustTokens(unitKey, -tokens);
+                    settleKey(unitKey, -tokens, userId);
                 }
                 log.warn("[AiGateway] 已回收超时未结算的预扣: uid={}, tokens={}",
                         fields.get("userId"), tokens);
@@ -522,8 +682,14 @@ public class AiGatewayGuard {
     }
 
     /** 部门配额行的 userId 前缀 */
+    public static final String UNIT_PREFIX = "unit:";
 
-    public long usedTokens(String userId) {
+    /**
+     * 读取当天已用 Token。
+     *
+     * @return null 表示读取失败（调用方应 fail-closed）；没有计数时返回 0
+     */
+    private Long readTokenCount(String userId) {
         try {
             Object value = redisServer.get(todayTokenKey(userId));
             if (value == null) {
@@ -531,11 +697,19 @@ public class AiGatewayGuard {
             }
             return Long.parseLong(String.valueOf(value));
         } catch (Exception e) {
-            return 0L;
+            log.error("[AiGateway] 读取 Token 用量失败, uid={}", userId, e);
+            return null;
         }
     }
 
-    public static final String UNIT_PREFIX = "unit:";
+    /**
+     * 展示用的已用量。读不到时返回 0 只影响看板数字，
+     * 真实配额判断走 {@link #readTokenCount} 的 fail-closed 分支。
+     */
+    public long usedTokens(String userId) {
+        Long value = readTokenCount(userId);
+        return value == null ? 0L : value;
+    }
 
     public void addTokens(String userId, String module, long tokens) {
         if (userId == null || tokens <= 0) {

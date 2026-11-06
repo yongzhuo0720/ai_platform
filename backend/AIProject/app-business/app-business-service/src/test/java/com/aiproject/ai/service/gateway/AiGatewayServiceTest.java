@@ -308,6 +308,51 @@ class AiGatewayServiceTest {
         verify(service.guard, never()).addTokens(anyString(), anyString(), anyLong());
     }
 
+    /**
+     * 上游正常结束但没返回 usage：用户已经拿到完整回答，不能全额退款。
+     * 按预扣值结算，并把实际扣掉的额度回填审计，保证看板用量与额度和得上。
+     */
+    @Test
+    void successfulCallWithoutUsageSettlesReservationValue() {
+        AiGatewayGuard.Reservation reservation =
+                AiGatewayGuard.Reservation.active("u1", null, 1500L);
+        when(service.guard.reserve("u1", "chat")).thenReturn(reservation);
+        upstream.responseContentType = "text/event-stream";
+        upstream.responseBody = "data: {\"choices\":[{\"delta\":{\"content\":\"hi\"}}]}\n\ndata: [DONE]\n\n";
+        MockHttpServletRequest request = request("POST", "chat", "chat-messages");
+        request.setContentType("application/json");
+        request.setContent("{\"query\":\"hi\"}".getBytes(StandardCharsets.UTF_8));
+
+        assertEquals(200, proxy("chat", request, "u1").getStatus());
+
+        verify(service.guard).settle(reservation, 1500L);
+        verify(service.guard, never()).addTokens(anyString(), anyString(), anyLong());
+
+        ArgumentCaptor<AiCallLogBean> captor = ArgumentCaptor.forClass(AiCallLogBean.class);
+        verify(service.callLogHolder).record(captor.capture());
+        assertEquals("success", captor.getValue().getStatus());
+        assertEquals(Long.valueOf(1500L), captor.getValue().getTotalTokens());
+    }
+
+    /** usage 明确返回 0 的响应是「知道用量为零」，不能退化成按预扣值收费 */
+    @Test
+    void explicitZeroUsageIsBilledAsZero() {
+        AiGatewayGuard.Reservation reservation =
+                AiGatewayGuard.Reservation.active("u1", null, 1500L);
+        when(service.guard.reserve("u1", "chat")).thenReturn(reservation);
+        upstream.responseContentType = "text/event-stream";
+        upstream.responseBody = "data: {\"choices\":[{\"delta\":{\"content\":\"hi\"}}]}\n\n"
+                + "data: {\"usage\":{\"prompt_tokens\":0,\"completion_tokens\":0,\"total_tokens\":0}}\n\n"
+                + "data: [DONE]\n\n";
+        MockHttpServletRequest request = request("POST", "chat", "chat-messages");
+        request.setContentType("application/json");
+        request.setContent("{\"query\":\"hi\"}".getBytes(StandardCharsets.UTF_8));
+
+        assertEquals(200, proxy("chat", request, "u1").getStatus());
+
+        verify(service.guard).settle(reservation, 0L);
+    }
+
     /** 上游失败（含 200 里塞 error 的模型）不计费：预扣全额释放，用户没拿到结果就不占额度 */
     @Test
     void failedUpstreamReleasesReservation() {

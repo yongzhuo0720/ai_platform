@@ -7,6 +7,7 @@ import com.aiproject.ai.service.holde.AiUserQuotaHolder;
 import com.heneng.hnsp.common.redis.service.RedisServer;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 import org.springframework.data.redis.core.HashOperations;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.data.redis.core.StringRedisTemplate;
@@ -114,6 +115,79 @@ class AiGatewayGuardTest {
         guard.settle(reservation, 900L);
 
         verify(redisServer, times(1)).decrement(anyString(), eq(600L));
+    }
+
+    /**
+     * 读不到已用 Token 时不能当作「已用 0」放行：
+     * 那样 Redis 抖一下就等于给所有用户临时解除配额。
+     */
+    @Test
+    void usedTokensReadFailureRejectsInsteadOfFailingOpen() {
+        when(quotaHolder.effectiveQuota("u1")).thenReturn(10000L);
+        when(redisServer.get(anyString())).thenThrow(new RuntimeException("redis down"));
+
+        AiGatewayGuard.Decision decision = guard.check("u1", "chat");
+
+        assertFalse(decision.isAllowed());
+        assertEquals(AiGatewayGuard.CODE_GUARD_UNAVAILABLE, decision.getCode());
+    }
+
+    /**
+     * 结算时调整计数失败（预扣已认领）必须写入补偿队列：
+     * 否则这笔偏差再也没人修，用户额度会永久停在预扣值上。
+     */
+    @Test
+    @SuppressWarnings("unchecked")
+    void settleEnqueuesCompensationWhenAdjustmentFails() {
+        StringRedisTemplate stringRedis = mock(StringRedisTemplate.class);
+        HashOperations<String, Object, Object> hash = mock(HashOperations.class);
+        ZSetOperations<String, String> zset = mock(ZSetOperations.class);
+        when(stringRedis.opsForHash()).thenReturn(hash);
+        when(stringRedis.opsForZSet()).thenReturn(zset);
+        guard.stringRedisTemplate = stringRedis;
+        when(redisServer.decrement(anyString(), eq(600L)))
+                .thenThrow(new RuntimeException("redis down"));
+
+        AiGatewayGuard.Reservation reservation = AiGatewayGuard.Reservation.active(
+                "u1", null, 1500L, "uk", null, null);
+        guard.settle(reservation, 900L);
+
+        ArgumentCaptor<String> recordCaptor = ArgumentCaptor.forClass(String.class);
+        ArgumentCaptor<Map<String, String>> fieldsCaptor = ArgumentCaptor.forClass(Map.class);
+        verify(hash).putAll(recordCaptor.capture(), fieldsCaptor.capture());
+        assertTrue(recordCaptor.getValue().startsWith("ai:gateway:compensation:"));
+        assertEquals("uk", fieldsCaptor.getValue().get("tokenKey"));
+        assertEquals("-600", fieldsCaptor.getValue().get("delta"));
+        verify(zset).add(eq("ai:gateway:compensation:index"),
+                eq(recordCaptor.getValue()), anyDouble());
+    }
+
+    /** 补偿重试由 Lua 原子完成「调整计数 + 删除记录」，业务代码不再直接改计数 */
+    @Test
+    @SuppressWarnings("unchecked")
+    void retryCompensationsAppliesAdjustmentAtomically() {
+        StringRedisTemplate stringRedis = mock(StringRedisTemplate.class);
+        ZSetOperations<String, String> zset = mock(ZSetOperations.class);
+        HashOperations<String, Object, Object> hash = mock(HashOperations.class);
+        when(stringRedis.opsForZSet()).thenReturn(zset);
+        when(stringRedis.opsForHash()).thenReturn(hash);
+        guard.stringRedisTemplate = stringRedis;
+        when(zset.rangeByScore(eq("ai:gateway:compensation:index"), eq(0D),
+                anyDouble(), eq(0L), eq(100L)))
+                .thenReturn(new LinkedHashSet<String>(Arrays.asList("comp-1")));
+        Map<Object, Object> fields = new LinkedHashMap<Object, Object>();
+        fields.put("tokenKey", "uk");
+        fields.put("delta", "-600");
+        fields.put("attempts", "0");
+        when(hash.entries("comp-1")).thenReturn(fields);
+        when(stringRedis.execute(any(DefaultRedisScript.class), anyList(),
+                eq("-600"), eq(String.valueOf(2 * 24 * 60 * 60L)))).thenReturn(1L);
+
+        guard.retryCompensations();
+
+        verify(stringRedis).execute(any(DefaultRedisScript.class), anyList(),
+                eq("-600"), eq(String.valueOf(2 * 24 * 60 * 60L)));
+        verify(redisServer, never()).decrement(anyString(), anyLong());
     }
 
     @Test
@@ -348,6 +422,36 @@ class AiGatewayGuardTest {
         guard.reapExpiredReservations();
 
         verify(redisServer, never()).decrement(anyString(), anyLong());
+    }
+
+    /** 回收预扣时退款失败同样进补偿队列：认领之后不能再指望下一轮扫描会重试 */
+    @Test
+    @SuppressWarnings("unchecked")
+    void reaperEnqueuesCompensationWhenRefundFails() {
+        StringRedisTemplate stringRedis = mock(StringRedisTemplate.class);
+        ZSetOperations<String, String> zset = mock(ZSetOperations.class);
+        HashOperations<String, Object, Object> hash = mock(HashOperations.class);
+        when(stringRedis.opsForZSet()).thenReturn(zset);
+        when(stringRedis.opsForHash()).thenReturn(hash);
+        guard.stringRedisTemplate = stringRedis;
+        when(zset.rangeByScore(eq("ai:gateway:reservation:index"), eq(0D),
+                anyDouble(), eq(0L), eq(100L)))
+                .thenReturn(new LinkedHashSet<String>(Arrays.asList("ledger-1")));
+        Map<Object, Object> fields = new LinkedHashMap<Object, Object>();
+        fields.put("userId", "u1");
+        fields.put("tokens", "1500");
+        fields.put("userKey", "uk");
+        when(hash.entries("ledger-1")).thenReturn(fields);
+        when(stringRedis.execute(any(DefaultRedisScript.class), anyList())).thenReturn(1L);
+        when(redisServer.decrement(anyString(), eq(1500L)))
+                .thenThrow(new RuntimeException("redis down"));
+
+        guard.reapExpiredReservations();
+
+        ArgumentCaptor<Map<String, String>> fieldsCaptor = ArgumentCaptor.forClass(Map.class);
+        verify(hash).putAll(anyString(), fieldsCaptor.capture());
+        assertEquals("uk", fieldsCaptor.getValue().get("tokenKey"));
+        assertEquals("-1500", fieldsCaptor.getValue().get("delta"));
     }
 
     /** 没有 StringRedisTemplate 时台账功能整体降级，不影响原有预扣/结算 */

@@ -30,6 +30,14 @@ public class AiGatewayUsageParser {
     private boolean streamCompleted;
 
     /**
+     * 上游是否返回过 usage 对象。
+     * <p>
+     * 「没有 usage」与「usage 明确为 0」要分开：前者说明供应商没给用量，网关无法按真实值计费；
+     * 后者是上游明确表示本次没有消耗。若只看 totalTokens 是否为 null，两者会被混为一谈。
+     */
+    private boolean usageSeen;
+
+    /**
      * 记为「本次实际扣掉的额度」。
      * <p>
      * 客户端中途断开时上游不会给出 usage（Dify 只在 message_end 里给），但网关按预扣值结算，
@@ -261,6 +269,7 @@ public class AiGatewayUsageParser {
         if (usage == null || !usage.isObject()) {
             return;
         }
+        usageSeen = true;
         long prompt = usage.path("prompt_tokens").asLong(0);
         if (prompt <= 0) {
             prompt = usage.path("input_tokens").asLong(0);
