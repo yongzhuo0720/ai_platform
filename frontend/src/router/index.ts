@@ -42,6 +42,12 @@ const router = createRouter({
           meta: { title: "智能问答" },
         },
         {
+          path: "agents",
+          name: "agents",
+          component: () => import("@/views/AgentView/index.vue"),
+          meta: { title: "Agent 工作台", group: "Agent 工作台" },
+        },
+        {
           path: "capabilities",
           name: "capabilities",
           component: () => import("@/views/CapabilitiesView/index.vue"),

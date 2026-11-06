@@ -13,6 +13,10 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
+import org.springframework.dao.DataAccessException;
+import org.springframework.dao.DuplicateKeyException;
 
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -22,6 +26,8 @@ import java.util.List;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertSame;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.never;
@@ -122,6 +128,105 @@ class AgentRunHolderTest {
         Result<AgentRunDetail> result = holder.detail(UID, "run-1");
         assertNotNull(result.getDatas());
         assertTrue(result.getDatas().getSteps().isEmpty());
+    }
+
+    @Test
+    void start_shouldPersistOwnedRunningRecord() {
+        when(runMapper.install(any(AgentRunBean.class))).thenReturn(1);
+
+        holder.start(UID, 7L, "问题", "run-1");
+
+        ArgumentCaptor<AgentRunBean> saved = ArgumentCaptor.forClass(AgentRunBean.class);
+        verify(runMapper).install(saved.capture());
+        assertEquals(UID, saved.getValue().getLastuser());
+        assertEquals("run-1", saved.getValue().getRunKey());
+        assertEquals("running", saved.getValue().getStatus());
+        assertEquals("问题", saved.getValue().getQuestion());
+        assertEquals(Long.valueOf(0), saved.getValue().getTotalTokens());
+        assertNotNull(saved.getValue().getStartedAt());
+    }
+
+    @Test
+    void addStep_shouldReturnThePersistedBeanIncludingGeneratedId() {
+        when(stepMapper.install(any(AgentStepBean.class))).thenAnswer(invocation -> {
+            AgentStepBean saved = invocation.getArgument(0);
+            saved.setIid(19L);
+            return 1;
+        });
+
+        AgentStepBean saved = addStep();
+
+        ArgumentCaptor<AgentStepBean> inserted = ArgumentCaptor.forClass(AgentStepBean.class);
+        verify(stepMapper).install(inserted.capture());
+        assertSame(inserted.getValue(), saved);
+        assertEquals(Long.valueOf(19), saved.getIid());
+        assertEquals("run-1", saved.getRunKey());
+        assertEquals(UID, saved.getLastuser());
+        assertEquals(Integer.valueOf(1), saved.getStepNo());
+        assertEquals("llm", saved.getStepType());
+        assertEquals("回答", saved.getToolResult());
+        assertEquals("request-1", saved.getRequestId());
+    }
+
+    @Test
+    void finish_shouldPersistUsageAndScopeUpdateByOwnerAndRunKey() {
+        when(runMapper.update(any(AgentRunBean.class), any(AgentRunBean.class))).thenReturn(1);
+
+        finish();
+
+        ArgumentCaptor<AgentRunBean> patch = ArgumentCaptor.forClass(AgentRunBean.class);
+        ArgumentCaptor<AgentRunBean> where = ArgumentCaptor.forClass(AgentRunBean.class);
+        verify(runMapper).update(patch.capture(), where.capture());
+        assertEquals(UID, where.getValue().getLastuser());
+        assertEquals("run-1", where.getValue().getRunKey());
+        assertEquals("failed", patch.getValue().getStatus());
+        assertEquals(Long.valueOf(15), patch.getValue().getTotalTokens());
+        assertEquals(Long.valueOf(3), patch.getValue().getCostCents());
+        assertEquals("已断开", patch.getValue().getErrorMessage());
+        assertNotNull(patch.getValue().getFinishedAt());
+    }
+
+    @ParameterizedTest
+    @ValueSource(ints = {0, 2, -1})
+    void start_shouldRejectUnexpectedAffectedRows(int rows) {
+        when(runMapper.install(any(AgentRunBean.class))).thenReturn(rows);
+        assertThrows(DataAccessException.class, () -> holder.start(UID, 7L, "问题", "run-1"));
+    }
+
+    @ParameterizedTest
+    @ValueSource(ints = {0, 2, -1})
+    void addStep_shouldRejectUnexpectedAffectedRows(int rows) {
+        when(stepMapper.install(any(AgentStepBean.class))).thenReturn(rows);
+        assertThrows(DataAccessException.class, this::addStep);
+    }
+
+    @ParameterizedTest
+    @ValueSource(ints = {0, 2, -1})
+    void finish_shouldRejectUnexpectedAffectedRows(int rows) {
+        when(runMapper.update(any(AgentRunBean.class), any(AgentRunBean.class))).thenReturn(rows);
+        assertThrows(DataAccessException.class, this::finish);
+    }
+
+    @Test
+    void writes_shouldPropagateUniqueConflicts() {
+        DuplicateKeyException conflict = new DuplicateKeyException("conflict");
+        when(runMapper.install(any(AgentRunBean.class))).thenThrow(conflict);
+        when(stepMapper.install(any(AgentStepBean.class))).thenThrow(conflict);
+        when(runMapper.update(any(AgentRunBean.class), any(AgentRunBean.class))).thenThrow(conflict);
+
+        assertSame(conflict, assertThrows(DuplicateKeyException.class,
+                () -> holder.start(UID, 7L, "问题", "run-1")));
+        assertSame(conflict, assertThrows(DuplicateKeyException.class, this::addStep));
+        assertSame(conflict, assertThrows(DuplicateKeyException.class, this::finish));
+    }
+
+    private AgentStepBean addStep() {
+        return holder.addStep(UID, "run-1", 1, 1, "llm", null, null, "回答", "success",
+                10L, 5L, 3L, 20L, null, "request-1");
+    }
+
+    private void finish() {
+        holder.finish(UID, "run-1", "failed", 1, 10L, 5L, 3L, 20L, "", "已断开");
     }
 
     @Test

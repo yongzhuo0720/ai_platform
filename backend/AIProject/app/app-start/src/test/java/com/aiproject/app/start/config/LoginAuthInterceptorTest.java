@@ -84,6 +84,18 @@ class LoginAuthInterceptorTest {
     }
 
     @Test
+    void agentStream_shouldRequirePlatformLogin() throws Exception {
+        when(roleCheckService.getUidFromAccount(any())).thenReturn(null);
+        MockHttpServletResponse rejected = new MockHttpServletResponse();
+        assertFalse(interceptor.preHandle(post("/api/agentBean/streamRun"), rejected, new Object()));
+        assertEquals(20102, readBody(rejected).get("resp_code").asInt());
+
+        when(roleCheckService.getUidFromAccount(any())).thenReturn("20001");
+        assertTrue(interceptor.preHandle(post("/api/agentBean/streamRun"),
+                new MockHttpServletResponse(), new Object()));
+    }
+
+    @Test
     void blankUid_shouldBeTreatedAsNotLoggedIn() throws Exception {
         // 框架解析器在未登录时可能返回空串而不是 null，同样不能放行
         when(roleCheckService.getUidFromAccount(any())).thenReturn("   ");

@@ -4,18 +4,28 @@ import com.aiproject.ai.service.agent.AgentRunner;
 import com.aiproject.ai.service.agent.dto.AgentRunDetail;
 import com.aiproject.ai.service.agent.dto.AgentRunRequest;
 import com.aiproject.ai.service.bean.AgentBean;
+import com.aiproject.ai.service.bean.AgentStepBean;
 import com.aiproject.ai.service.holde.AgentConfigHolder;
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.heneng.hnsp.common.croe.model.Result;
 import com.heneng.hnsp.common.inter.LoginUserId;
+import com.heneng.hnsp.common.model.CodeEnum;
 import io.swagger.annotations.Api;
 import io.swagger.annotations.ApiOperation;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.dao.DataAccessException;
+import org.springframework.dao.DuplicateKeyException;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
+import javax.servlet.http.HttpServletResponse;
+import java.io.IOException;
+import java.nio.charset.StandardCharsets;
+import java.util.Collections;
 import java.util.List;
 
 /**
@@ -63,17 +73,98 @@ public class AgentBeanController {
         return agentConfigHolder.delete(uid, data == null ? null : data.getIid());
     }
 
-    /**
-     * 同步执行一次 Agent 运行，返回运行详情（汇总 + 步骤明细）。
-     *
-     * <p>本子阶段用同步返回而不是 SSE：先把 tool_calls 循环、终止条件与追踪落库
-     * 做对并单测覆盖；流式步骤事件是下一步的增强，不改变这里的编排语义。</p>
-     */
     @ApiOperation(value = "运行 Agent", httpMethod = "POST", notes = "同步执行工具调用循环，返回运行详情")
     @PostMapping("/run")
     public Result<AgentRunDetail> run(@LoginUserId String uid,
                                       @RequestBody(required = false) AgentRunRequest data) {
         return agentRunner.run(uid, data == null ? null : data.getAgentKey(),
                 data == null ? null : data.getQuestion());
+    }
+
+    @ApiOperation(value = "流式运行 Agent", httpMethod = "POST")
+    @PostMapping(value = "/streamRun", produces = "text/event-stream")
+    public void streamRun(@LoginUserId String uid,
+                          @RequestBody(required = false) AgentRunRequest data,
+                          HttpServletResponse response) {
+        response.setCharacterEncoding(StandardCharsets.UTF_8.name());
+        response.setContentType("text/event-stream;charset=UTF-8");
+        response.setHeader("Cache-Control", "no-cache");
+        response.setHeader("X-Accel-Buffering", "no");
+        SseListener listener = new SseListener(response);
+        try {
+            Result<AgentRunDetail> result = agentRunner.run(uid,
+                    data == null ? null : data.getAgentKey(),
+                    data == null ? null : data.getQuestion(), listener);
+            if (result == null || !CodeEnum.SUCCESS.getCode().equals(result.getResp_code())) {
+                listener.error(listener.runKey == null && result != null
+                        ? result.getResp_msg() : "读取运行详情失败，请稍后重试");
+                return;
+            }
+            AgentRunDetail detail = result.getDatas();
+            if (detail == null || detail.getRun() == null || listener.runKey == null
+                    || !listener.runKey.equals(detail.getRun().getRunKey())
+                    || !("succeeded".equals(detail.getRun().getStatus())
+                    || "failed".equals(detail.getRun().getStatus()))) {
+                listener.error("读取运行详情失败，请稍后重试");
+                return;
+            }
+            listener.send("agent_done", detail);
+        } catch (DuplicateKeyException e) {
+            listener.error("运行记录发生并发冲突，请重试");
+        } catch (DataAccessException e) {
+            listener.error("运行记录读写失败，请稍后重试");
+        } catch (Exception e) {
+            listener.error("Agent 执行失败，请稍后重试");
+        }
+    }
+
+    private static class SseListener implements AgentRunner.Listener {
+        private final HttpServletResponse response;
+        private final ObjectMapper mapper = new ObjectMapper();
+        private boolean disconnected;
+        private String runKey;
+
+        private SseListener(HttpServletResponse response) {
+            this.response = response;
+        }
+
+        @Override
+        public void onStart(String runKey) {
+            this.runKey = runKey;
+            send("agent_start", Collections.singletonMap("runKey", runKey));
+        }
+
+        @Override
+        public void onStep(AgentStepBean step) {
+            send("agent_step", step);
+        }
+
+        @Override
+        public boolean isDisconnected() {
+            return disconnected;
+        }
+
+        private void error(String message) {
+            send("agent_error", Collections.singletonMap("message", message));
+        }
+
+        private void send(String event, Object data) {
+            if (disconnected) {
+                return;
+            }
+            String json;
+            try {
+                json = mapper.writeValueAsString(data);
+            } catch (JsonProcessingException e) {
+                throw new IllegalStateException("流式事件序列化失败", e);
+            }
+            try {
+                response.getOutputStream().write(("event: " + event + "\ndata: " + json + "\n\n")
+                        .getBytes(StandardCharsets.UTF_8));
+                response.flushBuffer();
+            } catch (IOException e) {
+                disconnected = true;
+            }
+        }
     }
 }

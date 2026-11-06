@@ -9,6 +9,7 @@ import com.heneng.hnsp.common.croe.model.Result;
 import com.heneng.hnsp.common.db.utils.PageRequest;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
@@ -102,11 +103,13 @@ public class AgentRunHolder {
         run.setCostCents(0L);
         run.setStartedAt(System.currentTimeMillis());
         run.setLastuser(uid);
-        runMapper.install(run);
+        if (runMapper.install(run) != 1) {
+            throw new DataIntegrityViolationException("运行记录创建失败");
+        }
     }
 
     /** 逐步落追踪明细；工具参数与结果已在执行器侧做过截断 */
-    public void addStep(String uid, String runKey, int stepNo, int iteration,
+    public AgentStepBean addStep(String uid, String runKey, int stepNo, int iteration,
                         String stepType, String toolName, String args, String result,
                         String status, long promptTokens, long completionTokens,
                         long costCents, long latencyMs, String error, String requestId) {
@@ -126,7 +129,10 @@ public class AgentRunHolder {
         step.setErrorMessage(error);
         step.setRequestId(requestId);
         step.setLastuser(uid);
-        stepMapper.install(step);
+        if (stepMapper.install(step) != 1) {
+            throw new DataIntegrityViolationException("运行步骤保存失败");
+        }
+        return step;
     }
 
     /** 收尾：只 SET 汇总字段，where 带 runKey + 归属 */
@@ -147,6 +153,8 @@ public class AgentRunHolder {
         AgentRunBean where = new AgentRunBean();
         where.setRunKey(runKey);
         where.setLastuser(uid);
-        runMapper.update(patch, where);
+        if (runMapper.update(patch, where) != 1) {
+            throw new DataIntegrityViolationException("运行汇总保存失败");
+        }
     }
 }

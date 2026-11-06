@@ -2,6 +2,7 @@ package com.aiproject.ai.service.agent;
 
 import com.aiproject.ai.service.agent.dto.AgentRunDetail;
 import com.aiproject.ai.service.bean.AgentBean;
+import com.aiproject.ai.service.bean.AgentStepBean;
 import com.aiproject.ai.service.bean.AgentToolBean;
 import com.aiproject.ai.service.holde.AgentConfigHolder;
 import com.aiproject.ai.service.holde.AgentRunHolder;
@@ -10,6 +11,8 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.heneng.hnsp.common.croe.model.Result;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.dao.DataAccessException;
+import org.springframework.dao.DataRetrievalFailureException;
 import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
@@ -53,9 +56,31 @@ public class AgentRunner {
 
     private final ObjectMapper mapper = new ObjectMapper();
 
+    public interface Listener {
+        default void onStart(String runKey) {
+        }
+
+        default void onStep(AgentStepBean step) {
+        }
+
+        default boolean isDisconnected() {
+            return false;
+        }
+    }
+
     public Result<AgentRunDetail> run(String uid, String agentKey, String question) {
+        return run(uid, agentKey, question, new Listener() { });
+    }
+
+    public Result<AgentRunDetail> run(String uid, String agentKey, String question, Listener listener) {
+        if (listener == null) {
+            listener = new Listener() { };
+        }
         if (AgentConfigHolder.blank(uid)) {
             return Result.failed(null, "未登录或登录已过期");
+        }
+        if (AgentConfigHolder.blank(agentKey)) {
+            return Result.failed(null, "Agent 标识不能为空");
         }
         AgentBean agent = configHolder.findByKey(uid, agentKey);
         if (agent == null) {
@@ -63,6 +88,9 @@ public class AgentRunner {
         }
         if (AgentConfigHolder.blank(question)) {
             return Result.failed(null, "请输入问题");
+        }
+        if (question.length() > 20000) {
+            return Result.failed(null, "问题不能超过 20000 个字符");
         }
         if (agent.getModelIid() == null) {
             return Result.failed(null, "请先为这个 Agent 选择模型");
@@ -77,10 +105,6 @@ public class AgentRunner {
         long startedAt = System.currentTimeMillis();
         runHolder.start(uid, agent.getIid(), question.trim(), runKey);
 
-        List<AgentToolBean> tools = toolHolder.listForRun(uid, agent.getIid());
-        List<Map<String, Object>> messages = initialMessages(agent, question.trim());
-        List<Map<String, Object>> toolsJson = toTools(tools);
-
         int stepNo = 0;
         int iterations = 0;
         long promptSum = 0L;
@@ -92,7 +116,14 @@ public class AgentRunner {
         String lastSignature = null;
 
         try {
+            listener.onStart(runKey);
+            checkConnected(listener);
+            List<AgentToolBean> tools = toolHolder.listForRun(uid, agent.getIid());
+            List<Map<String, Object>> messages = initialMessages(agent, question.trim());
+            List<Map<String, Object>> toolsJson = toTools(tools);
+
             for (int iteration = 1; iteration <= maxIterations; iteration++) {
+                checkConnected(listener);
                 iterations = iteration;
                 if (System.currentTimeMillis() - startedAt > MAX_TOTAL_MS) {
                     error = "执行总超时";
@@ -114,7 +145,7 @@ public class AgentRunner {
                 } catch (AgentCallException e) {
                     error = e.getMessage();
                     stepNo++;
-                    runHolder.addStep(uid, runKey, stepNo, iteration, "error", null, null, null,
+                    recordStep(listener, uid, runKey, stepNo, iteration, "error", null, null, null,
                             "failed", 0L, 0L, 0L, System.currentTimeMillis() - roundStart,
                             truncate(error), null);
                     break;
@@ -124,7 +155,7 @@ public class AgentRunner {
                 promptSum += reply.getPromptTokens();
                 completionSum += reply.getCompletionTokens();
                 costSum += reply.getCostCents();
-                runHolder.addStep(uid, runKey, stepNo, iteration, "llm", null, null,
+                recordStep(listener, uid, runKey, stepNo, iteration, "llm", null, null,
                         truncate(reply.getContent()), "success", reply.getPromptTokens(),
                         reply.getCompletionTokens(), reply.getCostCents(),
                         System.currentTimeMillis() - roundStart, null, reply.getRequestId());
@@ -134,7 +165,7 @@ public class AgentRunner {
                 if (promptSum + completionSum >= tokenBudget) {
                     error = "Token 预算已耗尽";
                     stepNo++;
-                    runHolder.addStep(uid, runKey, stepNo, iteration, "error", null, null, null,
+                    recordStep(listener, uid, runKey, stepNo, iteration, "error", null, null, null,
                             "failed", 0L, 0L, 0L, 0L, truncate(error), null);
                     break;
                 }
@@ -144,7 +175,7 @@ public class AgentRunner {
                     status = "succeeded";
                     error = null;
                     stepNo++;
-                    runHolder.addStep(uid, runKey, stepNo, iteration, "finish", null, null,
+                    recordStep(listener, uid, runKey, stepNo, iteration, "finish", null, null,
                             truncate(answer), "success", 0L, 0L, 0L, 0L, null,
                             reply.getRequestId());
                     break;
@@ -155,7 +186,7 @@ public class AgentRunner {
                 if (signature.equals(lastSignature)) {
                     error = "检测到重复工具调用，已终止循环";
                     stepNo++;
-                    runHolder.addStep(uid, runKey, stepNo, iteration, "error", null, null, null,
+                    recordStep(listener, uid, runKey, stepNo, iteration, "error", null, null, null,
                             "failed", 0L, 0L, 0L, 0L, truncate(error), null);
                     break;
                 }
@@ -163,6 +194,7 @@ public class AgentRunner {
 
                 messages.add(assistantMessage(reply));
                 for (ModelReply.ToolCall call : reply.getToolCalls()) {
+                    checkConnected(listener);
                     AgentToolBean tool = findTool(tools, call.getName());
                     String result;
                     String stepStatus = "success";
@@ -177,15 +209,22 @@ public class AgentRunner {
                         toolError = e.getMessage();
                     }
                     stepNo++;
-                    runHolder.addStep(uid, runKey, stepNo, iteration, "tool_result",
+                    recordStep(listener, uid, runKey, stepNo, iteration, "tool_result",
                             call.getName(), truncate(call.getArguments()), truncate(result),
                             stepStatus, 0L, 0L, 0L, System.currentTimeMillis() - toolStart,
                             truncate(toolError), null);
                     messages.add(toolMessage(call.getId(), result));
                 }
             }
+        } catch (RunDisconnectedException e) {
+            status = "failed";
+            error = "客户端已断开连接，执行已停止";
+        } catch (DataAccessException e) {
+            status = "failed";
+            error = "运行记录读写失败，请稍后重试";
+            throw e;
         } catch (Exception e) {
-            log.error("[Agent] 执行异常, uid={}, runKey={}: {}", uid, runKey, e.getMessage(), e);
+            log.error("[Agent] 执行异常, uid={}, runKey={}", uid, runKey);
             status = "failed";
             error = "执行异常，请稍后重试";
         } finally {
@@ -193,6 +232,32 @@ public class AgentRunner {
                     System.currentTimeMillis() - startedAt, answer, truncate(error));
         }
         return runHolder.detail(uid, runKey);
+    }
+
+    private void recordStep(Listener listener, String uid, String runKey, int stepNo, int iteration,
+                            String stepType, String toolName, String args, String result,
+                            String status, long promptTokens, long completionTokens,
+                            long costCents, long latencyMs, String error, String requestId) {
+        AgentStepBean step;
+        try {
+            step = runHolder.addStep(uid, runKey, stepNo, iteration, stepType, toolName, args,
+                    result, status, promptTokens, completionTokens, costCents, latencyMs, error, requestId);
+        } catch (DataAccessException e) {
+            throw e;
+        } catch (RuntimeException e) {
+            throw new DataRetrievalFailureException("运行步骤保存失败", e);
+        }
+        listener.onStep(step);
+        checkConnected(listener);
+    }
+
+    private void checkConnected(Listener listener) {
+        if (listener.isDisconnected()) {
+            throw new RunDisconnectedException();
+        }
+    }
+
+    private static class RunDisconnectedException extends RuntimeException {
     }
 
     private List<Map<String, Object>> initialMessages(AgentBean agent, String question) {

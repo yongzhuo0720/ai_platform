@@ -174,6 +174,8 @@ describe("RoleView", () => {
 
     const dialog = wrapper.find(".el-dialog");
     expect(dialog.text()).toContain("新建角色");
+    expect(menuNode(wrapper, "Agent 工作台")).toBeTruthy();
+    expect(menuNode(wrapper, "Agent 工作台")?.find(".el-checkbox").classes()).not.toContain("is-checked");
     await dialog.find('input[placeholder="请输入角色名称"]').setValue("测试角色");
 
     // 只填名称、没勾菜单：不提交

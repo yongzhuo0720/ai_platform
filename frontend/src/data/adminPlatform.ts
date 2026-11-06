@@ -67,6 +67,14 @@ export const aiPlatformMenus: any[] = [
     ],
   },
   {
+    id: 'agents',
+    title: 'Agent 工作台',
+    icon: 'Tools',
+    items: [
+      { title: 'Agent 工作台', path: '/agents', routeName: 'agents' },
+    ],
+  },
+  {
     id: 'capabilities',
     title: '能力广场',
     icon: 'Grid',
