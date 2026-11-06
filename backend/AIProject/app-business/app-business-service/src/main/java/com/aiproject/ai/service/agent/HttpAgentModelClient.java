@@ -39,6 +39,9 @@ public class HttpAgentModelClient implements AgentModelClient {
 
     private static final String MODULE = "models";
     private static final int MAX_ROUND_TIMEOUT_MS = 120000;
+    /** 单次模型响应上限：异常上游可能无限吐数据，不封顶会打满堆内存 */
+    private static final int MAX_RESPONSE_BYTES = 2 * 1024 * 1024;
+    private static final int MAX_ERROR_BODY_CHARS = 512;
 
     @Autowired
     ModelGatewayResolver modelGatewayResolver;
@@ -80,8 +83,10 @@ public class HttpAgentModelClient implements AgentModelClient {
 
         String requestId = UUID.randomUUID().toString();
         long startedAt = System.currentTimeMillis();
-        long actualTokens = 0L;
-        boolean succeeded = false;
+        // 结算口径集中到一个变量：成功=真实 usage，失败=0（全额释放预扣）
+        long settledTokens = 0L;
+        int upstreamStatus = 0;
+        boolean auditWritten = false;
         HttpURLConnection conn = null;
         try {
             ObjectNode body = mapper.createObjectNode();
@@ -106,33 +111,41 @@ public class HttpAgentModelClient implements AgentModelClient {
             }
 
             int status = conn.getResponseCode();
+            upstreamStatus = status;
             if (status != 200) {
+                // 错误体只进日志，绝不拼进返回给浏览器的 message（可能含内网地址/上游堆栈）
+                log.warn("[Agent] 上游非 200, status={}, body={}",
+                        status, readErrorBody(conn.getErrorStream()));
                 throw new AgentCallException("上游模型返回 HTTP " + status);
             }
             String response = readAll(conn.getInputStream());
             ModelReply reply = parse(response, model.getUpstreamModel(), requestId);
-            actualTokens = reply.getTotalTokens();
+            settledTokens = reply.getTotalTokens();
 
             ModelPriceResolver.Price price = priceResolver.resolve(model.getUpstreamModel());
             reply.setCostCents(price == null ? 0L
                     : price.costCents(reply.getPromptTokens(), reply.getCompletionTokens()));
-            succeeded = true;
             writeAudit(inv, requestId, model.getUpstreamModel(), startedAt,
                     reply, 200, null);
+            auditWritten = true;
             return reply;
         } catch (AgentCallException e) {
-            writeAudit(inv, requestId, model.getUpstreamModel(), startedAt,
-                    null, 0, e.getMessage());
+            if (!auditWritten) {
+                writeAudit(inv, requestId, model.getUpstreamModel(), startedAt,
+                        null, upstreamStatus, e.getMessage());
+            }
             throw e;
         } catch (Exception e) {
             log.warn("[Agent] 模型调用失败, uid={}, runKey={}: {}",
                     inv.getUid(), inv.getRunKey(), e.getMessage());
-            writeAudit(inv, requestId, model.getUpstreamModel(), startedAt,
-                    null, 0, e.getMessage());
+            if (!auditWritten) {
+                writeAudit(inv, requestId, model.getUpstreamModel(), startedAt,
+                        null, upstreamStatus, e.getMessage());
+            }
             throw new AgentCallException("模型调用失败，请稍后重试", e);
         } finally {
             // 失败全额释放预扣；成功按上游真实 usage 结算（多退少补）
-            guard.settle(reservation, succeeded ? actualTokens : 0L);
+            guard.settle(reservation, settledTokens);
             if (conn != null) {
                 conn.disconnect();
             }
@@ -201,9 +214,34 @@ public class HttpAgentModelClient implements AgentModelClient {
         ByteArrayOutputStream buffer = new ByteArrayOutputStream();
         byte[] chunk = new byte[4096];
         int read;
+        int total = 0;
         while ((read = in.read(chunk)) != -1) {
+            total += read;
+            if (total > MAX_RESPONSE_BYTES) {
+                throw new IllegalStateException("上游响应超过 2MB 上限，已中断读取");
+            }
             buffer.write(chunk, 0, read);
         }
         return new String(buffer.toByteArray(), StandardCharsets.UTF_8);
+    }
+
+    /** 只取一小段错误体用于日志排查，读失败不影响主流程 */
+    private static String readErrorBody(InputStream in) {
+        if (in == null) {
+            return "";
+        }
+        try {
+            byte[] chunk = new byte[MAX_ERROR_BODY_CHARS];
+            int read = in.read(chunk);
+            return read <= 0 ? "" : new String(chunk, 0, read, StandardCharsets.UTF_8).trim();
+        } catch (Exception e) {
+            return "";
+        } finally {
+            try {
+                in.close();
+            } catch (Exception ignored) {
+                // 关闭失败无需处理
+            }
+        }
     }
 }

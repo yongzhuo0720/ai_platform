@@ -32,6 +32,7 @@ import {
   addDeletedConversationId,
   readDeletedConversationIds,
 } from "../chatStorage";
+import { isKbConversation, markKbConversation } from "@/utils/conversationSource";
 import {
   handleDeleteHistory,
   handleSelectConversation,
@@ -365,6 +366,30 @@ describe("useChatConversations", () => {
       expect(
         JSON.parse(localStorage.getItem("chat-pinned-conversations-u1") || "[]")
       ).toEqual([]);
+    });
+
+    it("删除直连会话时同步清理知识库来源标记", async () => {
+      enableDirectMode();
+      markKbConversation("d1");
+      expect(isKbConversation("d1")).toBe(true);
+      directConversations.value = [makeConversation("d1")];
+      vi.mocked(chatConversationApi.delete).mockResolvedValue({} as never);
+
+      await handleDeleteHistory("d1");
+
+      expect(isKbConversation("d1")).toBe(false);
+      clearSyncTimers();
+    });
+
+    it("删除 Dify 会话时同步清理知识库来源标记", async () => {
+      markKbConversation("c1");
+      expect(isKbConversation("c1")).toBe(true);
+      conversations.value = [{ id: "c1" }] as Conversation[];
+      vi.mocked(chatApi.deleteConversation).mockResolvedValue({} as never);
+
+      await handleDeleteHistory("c1");
+
+      expect(isKbConversation("c1")).toBe(false);
     });
   });
 

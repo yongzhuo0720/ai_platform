@@ -3,7 +3,7 @@
  * 调用 /v1/chat-messages 进行流式对话
  */
 
-import { streamingRequest, type StreamingOptions, get, del } from './request'
+import { streamingRequest, type StreamingOptions, get } from './request'
 import { getChatConfig, getKnowledgeFileConfig, gatewayRequestHeaders } from '@/stores/difyConfig'
 
 /** 会话类接口（chat-messages/parameters/conversations 等）使用问答聊天对话配置 */
@@ -143,14 +143,8 @@ export const getAppParameters = async () => {
 }
 
 /**
- * 获取会话列表（/conversations）
- */
-export const getConversations = async (params: { user: string; limit?: number; last_id?: string }) => {
-  return get(`${getBase()}/conversations`, params, getAuthHeaders())
-}
-
-/**
  * 获取会话历史（/messages）
+ * 知识库问答在 SSE 事件缺少 message_id 时用它兜底取最新一条消息，勿删。
  */
 export const getConversationHistory = async (
   conversation_id: string,
@@ -159,13 +153,6 @@ export const getConversationHistory = async (
   first_id?: string
 ) => {
   return get(`${getBase()}/messages`, { conversation_id, user, limit, first_id }, getAuthHeaders())
-}
-
-/**
- * 删除会话（/conversations/{id}）
- */
-export const deleteConversation = async (conversation_id: string, user: string) => {
-  return del(`${getBase()}/conversations/${conversation_id}`, { user }, getAuthHeaders())
 }
 
 /**
@@ -183,9 +170,7 @@ export const knowledgeChatApi = {
   knowledgeChatStreaming,
   retrieveFromDataset,
   getAppParameters,
-  getConversations,
   getConversationHistory,
-  deleteConversation,
   getSuggestedMessages,
 }
 

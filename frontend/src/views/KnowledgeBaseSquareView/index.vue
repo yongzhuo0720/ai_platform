@@ -28,7 +28,6 @@
       :count="6"
       @retry="fetchKnowledgeBases"
     >
-    <!-- 全部 -->
     <div class="kb-square-section">
       <div class="kb-square-grid">
         <article

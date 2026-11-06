@@ -16,6 +16,8 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import java.util.Collections;
+
 class ChatShareHolderTest {
 
     private ChatShareHolder holder;
@@ -87,6 +89,26 @@ class ChatShareHolderTest {
 
         assertNull(result.getDatas());
         verify(holder.mapper, never()).install(any(ChatShareBean.class));
+    }
+
+    @Test
+    void getByToken_shouldStripOwnerIdentifiersFromPublicResponse() {
+        ChatShareBean row = share("hello");
+        row.setShareToken("token-1");
+        row.setUserId("u1");
+        row.setLastuser("u1");
+        row.setAuthorName("张三");
+        when(holder.mapper.select(any(), any(ChatShareBean.class)))
+                .thenReturn(Collections.singletonList(row));
+
+        Result<ChatShareBean> result = holder.getByToken("token-1");
+
+        assertNotNull(result.getDatas());
+        assertNull(result.getDatas().getUserId(), "作者 uid 不应出现在免登录响应中");
+        assertNull(result.getDatas().getLastuser(), "继承列里的作者 uid 也要抹掉");
+        assertEquals("张三", result.getDatas().getAuthorName());
+        assertEquals("一次对话", result.getDatas().getTitle());
+        assertEquals("hello", result.getDatas().getPayload());
     }
 
     private ChatShareBean share(String payload) {

@@ -77,8 +77,19 @@ public class AgentBeanController {
     @PostMapping("/run")
     public Result<AgentRunDetail> run(@LoginUserId String uid,
                                       @RequestBody(required = false) AgentRunRequest data) {
-        return agentRunner.run(uid, data == null ? null : data.getAgentKey(),
-                data == null ? null : data.getQuestion());
+        // 与 /streamRun 保持同一套异常分级：唯一索引冲突要给人能懂的提示，
+        // 数据库异常不能把原始 SQL / 堆栈通过 resp_msg 带回浏览器。
+        try {
+            return agentRunner.run(uid, data == null ? null : data.getAgentKey(),
+                    data == null ? null : data.getQuestion());
+        } catch (DuplicateKeyException e) {
+            return Result.failed(null, "运行记录发生并发冲突，请重试");
+        } catch (DataAccessException e) {
+            return Result.failed(null, "运行记录读写失败，请稍后重试");
+        } catch (Exception e) {
+            log.error("[Agent] 同步运行失败, uid={}", uid, e);
+            return Result.failed(null, "Agent 执行失败，请稍后重试");
+        }
     }
 
     @ApiOperation(value = "流式运行 Agent", httpMethod = "POST")

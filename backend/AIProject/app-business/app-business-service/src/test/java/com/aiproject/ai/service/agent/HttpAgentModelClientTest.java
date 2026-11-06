@@ -153,6 +153,27 @@ class HttpAgentModelClientTest {
         ArgumentCaptor<AiCallLogBean> log = ArgumentCaptor.forClass(AiCallLogBean.class);
         verify(callLogHolder).record(log.capture());
         assertEquals("failed", log.getValue().getStatus());
+        assertEquals(Integer.valueOf(500), log.getValue().getHttpStatus(),
+                "审计里要留上游真实状态码，不能固定写 0");
+        assertTrue(!e.getMessage().contains("internal"),
+                "上游错误体不得拼进返回给浏览器的 message");
+    }
+
+    @Test
+    void call_shouldRejectOversizedResponseAndReleaseReservation() {
+        stubModel();
+        StringBuilder sb = new StringBuilder();
+        for (int i = 0; i < 2 * 1024 * 1024 + 16; i++) {
+            sb.append('x');
+        }
+        responseBody = "{\"choices\":[{\"message\":{\"content\":\"" + sb + "\"}}]}";
+
+        assertThrows(AgentCallException.class, () -> client.call(invocation()));
+
+        verify(guard).settle(any(AiGatewayGuard.Reservation.class), eq(0L));
+        ArgumentCaptor<AiCallLogBean> log = ArgumentCaptor.forClass(AiCallLogBean.class);
+        verify(callLogHolder).record(log.capture());
+        assertEquals("failed", log.getValue().getStatus());
     }
 
     @Test

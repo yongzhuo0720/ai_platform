@@ -323,46 +323,6 @@ export interface UpdateChunkParams {
   regenerate_child_chunks?: boolean;
 }
 
-export interface EmbeddingModelInfo {
-  provider: string;
-  label: Record<string, unknown>;
-  icon_small: Record<string, unknown>;
-  icon_large: Record<string, unknown>;
-  status: string;
-  models: Array<{
-    model: string;
-    label: Record<string, unknown>;
-    model_type: string;
-    features: unknown[];
-    fetch_from: string;
-    model_properties: {
-      context_size: number;
-    };
-    deprecated: boolean;
-    status: string;
-    load_balancing_enabled: boolean;
-  }>;
-}
-
-export interface LLMModelInfo {
-  provider: string;
-  label: Record<string, unknown>;
-  icon_small: Record<string, unknown>;
-  icon_large: Record<string, unknown>;
-  status: string;
-  models: Array<{
-    model: string;
-    label: Record<string, unknown>;
-    model_type: string;
-    features: string[] | null;
-    fetch_from: string;
-    model_properties: Record<string, unknown>;
-    deprecated: boolean;
-    status: string;
-    load_balancing_enabled: boolean;
-  }>;
-}
-
 export interface TagBindingParams {
   target_id: string;
   tag_ids: string[];

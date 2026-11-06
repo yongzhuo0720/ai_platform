@@ -72,6 +72,8 @@ public class ChatShareHolder {
         }
         ChatShareBean row = rows.get(0);
         row.setUserId(null);
+        // lastuser 是 DbEntityBase 的继承列，同样存着作者 uid；免登录接口必须一并抹掉
+        row.setLastuser(null);
         return Result.succeed(row);
     }
 

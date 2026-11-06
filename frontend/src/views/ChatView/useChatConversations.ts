@@ -43,6 +43,7 @@ import {
   syncAssistantPromptInput,
 } from "./chatAssistantState";
 import { readDifyPinned, writeDifyPinned } from "./useChatSelectors";
+import { unmarkKbConversation } from "@/utils/conversationSource";
 import {
   addDeletedConversationId,
   getCurrentUser,
@@ -273,6 +274,8 @@ export const handleDeleteHistory = async (itemId: string) => {
       cancelConversationSync(itemId);
       directConversations.value = directConversations.value.filter((c) => c.id !== itemId);
       persistDirectConversations();
+      // 删除后清掉来源标记，避免 localStorage 里的知识库会话 ID 只增不减
+      unmarkKbConversation(itemId);
       const owner = chatRuntime.ownerUserId;
       if (owner !== "guest") {
         // 先立墓碑：即使云端删除失败，下次登录合并时也不会把会话合并回来
@@ -311,6 +314,8 @@ export const handleDeleteHistory = async (itemId: string) => {
     await chatApi.deleteConversation(itemId, getCurrentUser());
     chatRuntime.conversationsRequestToken += 1;
     conversations.value = conversations.value.filter((c) => c.id !== itemId);
+    // Dify 会话同样要清来源标记，否则删除的知识库会话 id 会一直被误判归属
+    unmarkKbConversation(itemId);
     // 清掉本地置顶记录，避免已删会话的 id 长期残留
     const pinnedIds = readDifyPinned();
     if (pinnedIds.delete(itemId)) {

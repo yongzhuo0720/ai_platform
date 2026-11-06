@@ -252,7 +252,7 @@ cd frontend
 npm run typecheck      # TypeScript 类型检查
 npm run check:icons    # 图标注册检查（模板图标必须 import 或全局注册）
 npm run check:styles   # 硬编码色值棘轮检查（只减不增，基线在 scripts/check-styles.baseline.json）
-npm run test            # 单元测试（Vitest），24 个文件 / 286 项
+npm run test            # 单元测试（Vitest），25 个文件 / 294 项
 npm run test:component  # 组件测试（真实渲染），29 个文件 / 294 项
 npm run test:e2e        # 浏览器冒烟（真实 Chromium + 接口 mock），21 项
 npm run check:streaming # 流式超时/取消回归，14 项
@@ -269,11 +269,11 @@ npm run check:bundle     # 首屏 gzip 体积预算（需先 build）
 
 | 项目 | 结果 |
 |---|---|
-| 后端单元测试 | **634 项 / 58 份 Surefire 报告，0 失败 / 0 错误 / 0 跳过**（`mvn -o test`，JDK 8 Dragonwell 8；app-common 7、permission 71、service 529、app-start 27） |
+| 后端单元测试 | **636 项，0 失败 / 0 错误 / 0 跳过**（`mvn -o test`，JDK 8 Dragonwell 8；app-common 7、permission 71、service 531、app-start 27） |
 | 前端 TypeScript 检查 | 通过 |
-| 前端图标注册检查 | 通过 |
+| 前端图标注册检查 | 通过（59 个在用图标全部可解析） |
 | 硬编码色值棘轮检查 | 通过（45 个文件 / 1777 处，等于基线；新增即失败，只允许减少） |
-| 前端逻辑单元测试 | 24 个文件 / **286 项通过** |
+| 前端逻辑单元测试 | 25 个文件 / **294 项通过** |
 | 前端组件测试 | 29 个文件 / **294 项通过**（@vue/test-utils 真实渲染） |
 | 浏览器冒烟（Playwright） | **21 项通过**（真实 Chromium + `page.route` 接口 mock，含 Agent 事件链路、模型可观测后台、文档流水线、目录页三态、登录守卫、SSE、配额、RAG 评估详情、404 兜底） |
 | 前端流式回归 | 14 项通过 |
@@ -283,12 +283,20 @@ npm run check:bundle     # 首屏 gzip 体积预算（需先 build）
 | 产物密钥扫描 | 通过（构建后扫 dist，防止 `VITE_*` 被内联） |
 | RAG 评估集自检 | 通过（黄金集与语料一致性 + JS 指标与 Java `RagEvaluator` 口径一致，离线） |
 
-> **环境说明**：`scripts/verify.ps1` 在带批量删除防护的受限执行环境下，可能出现
-> Vitest 的 unhandled errors、Vite 构建的 `EPERM`，或 Playwright 清理 `test-results`
-> 时触发 `SAFE_DELETE_BULK_CONFIRM_REQUIRED`。这三类失败**不是用例回归**：
-> 单独执行 `npm run test` / `test:component` / `build` / `test:e2e`（E2E 先把旧
-> `test-results` 移到临时目录）均为 exit=0。上表数字来自 2026-11-06 的逐项复现
-> 与后端 Maven 实际输出；后端仍以 `verify.ps1` 为唯一门禁。
+> **环境说明（2026-11-06 再次校准）**：`scripts/verify.ps1` 在带批量删除/写入防护的
+> 受限执行环境下，可能出现四类失败，均**不是用例回归**：
+> ① Vitest 的 `Proxy.fetch` 写临时文件被 `node-brokered-fs-shim` 拦截（`EPERM`），
+>    `npm run test` 会 `exit=1` 且**静默少跑 1 个逻辑单测文件**
+>    （`src/views/ChatView/__tests__/useChatConversations.spec.ts`，16 项）——
+>    需补跑 `npx vitest run src/views/ChatView/__tests__/useChatConversations.spec.ts`；
+> ② Vite 清空 `dist/assets` 触发 `SAFE_DELETE_BULK_CONFIRM_REQUIRED`——
+>    先把旧 `dist` **移动**到临时目录（不要删除）再 `npm run build` 即 exit=0；
+> ③ Playwright 清理 `test-results` 触发同样的批量删除告警——先移走旧 `test-results`；
+> ④ 组件测试单独跑不受影响（exit=0）。
+>
+> 因此看到脚本报红时，请按上面四项逐条复现再下结论，**不要直接改生产代码**。
+> 上表数字来自逐项复现 + 后端 Maven 实际输出；正常 CI 环境无此限制，
+> 后端仍以 `verify.ps1`（含 Surefire 报告闸门）为唯一门禁。
 
 2026-10-30 前端改进：
 

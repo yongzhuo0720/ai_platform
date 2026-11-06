@@ -306,32 +306,9 @@ export const documentApi = {
   },
 
   /**
-   * 获取文档的签名下载链接（不直接触发下载）
-   * @param datasetId 知识库 ID
-   * @param documentId 文档 ID
-   * @returns 包含 url 字段的对象（url 为短期签名链接）
+   * 获取文档的签名下载链接已在 KnowledgeBaseView 内按需实现；
+   * 这里原先的 getDownloadInfo / downloadDocumentInfo 全仓零调用，已清理。
    */
-  getDownloadInfo: async (datasetId: string, documentId: string): Promise<{ url?: string }> => {
-    if (!isApiEnabled()) {
-      throw new Error('Dify API 未启用');
-    }
-    const response = await fetch(
-      `${getBase()}/datasets/${datasetId}/documents/${documentId}/download`,
-      {
-        method: 'GET',
-        headers: {
-          'Authorization': `Bearer ${getKey()}`,
-        },
-      }
-    );
-    if (!response.ok) {
-      throw new Error(`获取文档下载链接失败: ${response.statusText}`);
-    }
-    return response.json();
-  },
-  downloadDocumentInfo: async (datasetId: string, documentId: string): Promise<{ url?: string }> => {
-    return documentApi.getDownloadInfo(datasetId, documentId);
-  },
 
   downloadDocument: async (datasetId: string, documentId: string, fileName: string): Promise<void> => {
     if (!isApiEnabled()) {

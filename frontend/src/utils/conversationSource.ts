@@ -43,3 +43,19 @@ export function markKbConversation(conversationId: string) {
 export function isKbConversation(conversationId: string): boolean {
   return getKbConvIds().includes(conversationId)
 }
+
+/**
+ * 删除会话时同步移除来源标记。
+ *
+ * <p>只加不删会让这个集合随删除次数无限增长：一是 localStorage 会被
+ * 已删除会话的 ID 慢慢占满，二是 Dify 会话 id 若被复用，旧标记会让
+ * 新会话被错误归类为知识库会话。删除路径有两处（直连 / Dify），都要调。</p>
+ */
+export function unmarkKbConversation(conversationId: string) {
+  if (!conversationId) return
+  const ids = getKbConvIds()
+  const next = ids.filter((id) => id !== conversationId)
+  if (next.length !== ids.length) {
+    setKbConvIds(next)
+  }
+}
