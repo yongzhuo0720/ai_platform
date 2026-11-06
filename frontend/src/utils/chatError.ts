@@ -117,6 +117,32 @@ function classifyChatError(errorText: string): ParsedChatError {
   }
 
   /*
+   * 网关并发闸门：整个服务的在途请求已满，请求没有发到上游。
+   * 这不是「我的额度用完」，等几秒后重试是有效的。
+   */
+  if (errorText.includes('gateway_busy') || errorText.includes('AI 请求过多')) {
+    return {
+      message: serverMessage || plainMessage(errorText) || '当前 AI 请求较多，请稍后重试。',
+      retryable: true,
+      suggestSwitchModel: false,
+      suggestCheckConfig: false,
+    }
+  }
+
+  /*
+   * 网关总时长护栏：回答生成超时被主动断开。
+   * 已经收到的部分内容仍保留在界面上，用户可以重新发起。
+   */
+  if (errorText.includes('stream_timeout') || errorText.includes('超过总时长')) {
+    return {
+      message: serverMessage || plainMessage(errorText) || '回答生成时间过长，已中断，请重新发送。',
+      retryable: true,
+      suggestSwitchModel: false,
+      suggestCheckConfig: false,
+    }
+  }
+
+  /*
    * 每日配额用完：这是「今天不能再用了」，重试或换模型都无济于事，
    * 必须如实展示服务端原因。
    *

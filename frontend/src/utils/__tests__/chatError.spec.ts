@@ -78,3 +78,23 @@ describe("parseChatError 请求 ID 与幂等", () => {
     expect(parsed.message).toContain("（请求 ID：req-400-abc）");
   });
 });
+
+describe("parseChatError 网关并发与流式护栏", () => {
+  it("并发闸门拒绝可以稍后重试，保留服务端文案", () => {
+    const parsed = parseChatError(
+      new Error("当前 AI 请求过多，请稍后重试（请求 ID：req-busy）")
+    );
+
+    expect(parsed.message).toBe("当前 AI 请求过多，请稍后重试（请求 ID：req-busy）");
+    expect(parsed.retryable).toBe(true);
+  });
+
+  it("流式总时长超限可以重试，展示服务端原因", () => {
+    const parsed = parseChatError(
+      new Error("AI 响应超过总时长限制（600 秒），已断开（请求 ID：req-timeout）")
+    );
+
+    expect(parsed.message).toBe("AI 响应超过总时长限制（600 秒），已断开（请求 ID：req-timeout）");
+    expect(parsed.retryable).toBe(true);
+  });
+});

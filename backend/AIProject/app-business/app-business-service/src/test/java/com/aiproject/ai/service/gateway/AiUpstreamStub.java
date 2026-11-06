@@ -31,6 +31,12 @@ class AiUpstreamStub implements AutoCloseable {
     final CountDownLatch clientGone = new CountDownLatch(1);
 
     /**
+     * 模拟「接受请求、发出响应头，然后长时间不吐任何数据」的上游。
+     * 用来验证网关能否在上游静默时靠心跳写探测浏览器断开，而不是等满 readTimeout。
+     */
+    volatile boolean silentSse;
+
+    /**
      * 模拟「上游已受理并吐出一帧，然后连接异常中断」：
      * 声明一个远大于实际写入的 Content-Length 后关闭连接，
      * 客户端读到不足长度时会抛 Premature EOF，而不是把 EOF 当成正常结束。
@@ -52,6 +58,10 @@ class AiUpstreamStub implements AutoCloseable {
                 }
                 requestBody = buffer.toByteArray();
                 calls.incrementAndGet();
+                if (silentSse) {
+                    writeSilentSse(exchange);
+                    return;
+                }
                 if (slowSse) {
                     writeSlowSse(exchange);
                     return;
@@ -87,6 +97,21 @@ class AiUpstreamStub implements AutoCloseable {
                 streamedChunks.incrementAndGet();
                 Thread.sleep(10);
             }
+        } catch (IOException clientGoneError) {
+            clientGone.countDown();
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        }
+    }
+
+    /** 只发响应头，之后长时间不写正文；醒来的那次写入用来暴露「客户端已断开」 */
+    private void writeSilentSse(com.sun.net.httpserver.HttpExchange exchange) throws IOException {
+        exchange.getResponseHeaders().set("Content-Type", "text/event-stream");
+        exchange.sendResponseHeaders(200, 0);
+        try {
+            Thread.sleep(1500);
+            exchange.getResponseBody().write("data: {}\n\n".getBytes(StandardCharsets.UTF_8));
+            exchange.getResponseBody().flush();
         } catch (IOException clientGoneError) {
             clientGone.countDown();
         } catch (InterruptedException e) {

@@ -63,6 +63,7 @@ class AiGatewayOpenAiCompatTest {
         service.modelGatewayResolver = mock(ModelGatewayResolver.class);
         service.priceResolver = mock(ModelPriceResolver.class);
         service.idempotencyGuard = mock(AiIdempotencyGuard.class);
+        service.concurrencyGuard = new GatewayConcurrencyGuard(service.properties);
         when(service.idempotencyGuard.acquire(anyString(), anyString(), any()))
                 .thenReturn(AiIdempotencyGuard.Acquisition.none());
         // 白名单是纯逻辑，用真身才能顺带验到「iid / 平台名 / 上游名任一命中」

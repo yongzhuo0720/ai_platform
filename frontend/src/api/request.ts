@@ -601,8 +601,9 @@ export const streamingRequest = (
           firstByteTimer = null;
         }
 
-        // 每次收到数据都重置空闲超时（流停滞时触发中止，避免 UI 卡在"生成中"）
-        resetIdleTimer();
+        // 首个数据块（哪怕只是网关心跳）启动空闲计时；之后只有真正的 data: 行才续期。
+        // 心跳是注释帧、不产生模型输出，若让它续期，停滞的流会一直挂着不超时。
+        if (!idleTimer) resetIdleTimer();
 
         // 解码数据块并处理 SSE 格式（每行以 data: 开头，event: 行声明事件类型）
         buffer += decoder.decode(value, { stream: true });
@@ -611,6 +612,7 @@ export const streamingRequest = (
         buffer = lines.pop() || '';
 
         // 当前 data 行所属的事件类型（由紧邻的 event: 行声明，已提升到函数作用域跨 chunk 保留）
+        let sawData = false;
 
         for (const line of lines) {
           if (errorCalled) break;
@@ -619,6 +621,7 @@ export const streamingRequest = (
             continue;
           }
           if (line.startsWith('data: ')) {
+            sawData = true;
             const data = line.slice(6);
             // SSE 结束标记
             if (data === '[DONE]') {
@@ -862,6 +865,7 @@ export const streamingRequest = (
             }
           }
         }
+        if (sawData && !errorCalled && !completeCalled) resetIdleTimer();
       }
 
       // 流读取完毕，调用完成回调（仅在 SSE 事件未触发时作为兜底）

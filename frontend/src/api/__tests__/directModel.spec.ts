@@ -216,3 +216,52 @@ describe("streamDirectChat 知识库来源事件", () => {
     expect(error.message).not.toContain("Failed to fetch");
   });
 });
+
+describe("streamDirectChat 心跳与空闲超时", () => {
+  it("持续心跳不会一直续命，模型 90 秒没有数据仍会中止", async () => {
+    vi.useFakeTimers();
+    try {
+      const encoder = new TextEncoder();
+      let pingTimer: ReturnType<typeof setInterval> | undefined;
+      const stream = new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(encoder.encode(": ping\n\n"));
+          // 网关心跳每 15 秒一帧，持续不断；它们不是模型输出，不能重置空闲计时
+          pingTimer = setInterval(
+            () => controller.enqueue(encoder.encode(": ping\n\n")),
+            15000
+          );
+        },
+      });
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(
+          async () =>
+            new Response(stream, {
+              status: 200,
+              headers: { "Content-Type": "text/event-stream" },
+            })
+        )
+      );
+
+      const failure = new Promise<Error>((resolve) => {
+        streamDirectChat("7", [{ role: "user", content: "问题" }], {
+          onChunk: () => undefined,
+          onComplete: () => undefined,
+          onError: (error) => {
+            if (pingTimer) clearInterval(pingTimer);
+            resolve(error);
+          },
+        });
+      });
+
+      // 让 fetch / 首个 chunk 的微任务先跑完，确保 30s 首字节计时已被清除
+      await vi.advanceTimersByTimeAsync(0);
+      await vi.advanceTimersByTimeAsync(90000);
+
+      expect((await failure).message).toContain("空闲超时");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});

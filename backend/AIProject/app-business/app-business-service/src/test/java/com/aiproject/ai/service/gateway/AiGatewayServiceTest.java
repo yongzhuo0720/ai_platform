@@ -29,6 +29,7 @@ import java.util.concurrent.TimeUnit;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
@@ -57,6 +58,7 @@ class AiGatewayServiceTest {
         service.modelGatewayResolver = mock(ModelGatewayResolver.class);
         service.priceResolver = mock(ModelPriceResolver.class);
         service.idempotencyGuard = mock(AiIdempotencyGuard.class);
+        service.concurrencyGuard = new GatewayConcurrencyGuard(service.properties);
         when(service.idempotencyGuard.acquire(anyString(), anyString(), any()))
                 .thenReturn(AiIdempotencyGuard.Acquisition.none());
         // 默认不预扣（等同配额不限）；需要验证预扣行为的用例自行覆盖
@@ -368,6 +370,127 @@ class AiGatewayServiceTest {
 
         verify(service.guard).settle(reservation, 0L);
         verify(service.guard, never()).addTokens(anyString(), anyString(), anyLong());
+    }
+
+    /**
+     * 并发许可用完时：立刻 429 + Retry-After，不排队、不打上游，预扣全额释放。
+     * 修复前没有任何并发闸门，上游变慢时请求会堆满 Web 线程池，拖垮无关接口。
+     */
+    @Test
+    void concurrencyLimitRejectsWith429BeforeUpstreamAndReleasesReservation() throws Exception {
+        service.properties.setMaxConcurrentPerModule(1);
+        GatewayConcurrencyGuard.Lease occupied = service.concurrencyGuard.tryAcquire("chat");
+        assertNotNull(occupied, "测试前置：应能占用会话模块的唯一许可");
+        AiGatewayGuard.Reservation reservation =
+                AiGatewayGuard.Reservation.active("u1", null, 1500L);
+        when(service.guard.reserve("u1", "chat")).thenReturn(reservation);
+
+        MockHttpServletRequest request = request("POST", "chat", "chat-messages");
+        request.setContentType("application/json");
+        request.setContent("{\"query\":\"hi\"}".getBytes(StandardCharsets.UTF_8));
+
+        MockHttpServletResponse response = proxy("chat", request, "u1");
+
+        assertEquals(429, response.getStatus());
+        assertEquals("2", response.getHeader("Retry-After"),
+                "429 必须带退避提示，前端才知道等多久");
+        assertTrue(response.getContentAsString(StandardCharsets.UTF_8)
+                .contains(GatewayConcurrencyGuard.CODE_BUSY));
+        assertEquals(0, upstream.calls.get(), "并发满时不能调用上游");
+        verify(service.guard).settle(reservation, 0L);
+
+        ArgumentCaptor<AiCallLogBean> captor = ArgumentCaptor.forClass(AiCallLogBean.class);
+        verify(service.callLogHolder).record(captor.capture());
+        assertEquals("blocked", captor.getValue().getStatus());
+        assertEquals(Integer.valueOf(429), captor.getValue().getHttpStatus());
+
+        // 许可释放后同一个模块应能继续服务，证明 finally 没有漏掉归还
+        occupied.release();
+        MockHttpServletRequest next = request("POST", "chat", "chat-messages");
+        next.setContentType("application/json");
+        next.setContent("{\"query\":\"hi\"}".getBytes(StandardCharsets.UTF_8));
+        assertEquals(200, proxy("chat", next, "u1").getStatus());
+        assertNotNull(service.concurrencyGuard.tryAcquire("chat"));
+    }
+
+    /**
+     * 上游持续吐字但永远不结束：到总时长上限必须主动断流。
+     * readTimeout 约束的是「两次读取之间」，管不住这种慢速长响应；
+     * 断开时已转发过正文，按预扣值计费，审计状态记为 504。
+     */
+    @Test
+    void streamBeyondTotalDurationIsCutAndBilledAtReserve() throws Exception {
+        upstream.slowSse = true;
+        service.properties.setMaxStreamMs(200);
+        when(service.configResolver.isSupported("chat")).thenReturn(true);
+        when(service.configResolver.resolve("chat")).thenReturn(
+                new AiGatewayConfigResolver.ResolvedConfig(upstream.baseUrl(), "test-key"));
+        when(service.guard.check("u1", "chat")).thenReturn(AiGatewayGuard.Decision.allow());
+        AiGatewayGuard.Reservation reservation =
+                AiGatewayGuard.Reservation.active("u1", null, 1500L);
+        when(service.guard.reserve("u1", "chat")).thenReturn(reservation);
+
+        MockHttpServletRequest request = request("POST", "chat", "chat-messages");
+        request.setContentType("application/json");
+        request.setContent("{\"query\":\"hi\",\"user\":\"u1\"}".getBytes(StandardCharsets.UTF_8));
+        long started = System.currentTimeMillis();
+
+        MockHttpServletResponse response = new MockHttpServletResponse();
+        service.proxy("chat", "u1", request, response);
+
+        long elapsed = System.currentTimeMillis() - started;
+        assertTrue(elapsed < 5000, "总时长护栏应在约 200ms 内生效，实际 " + elapsed + "ms");
+        verify(service.guard).settle(reservation, 1500L);
+
+        String body = response.getContentAsString(StandardCharsets.UTF_8);
+        assertTrue(body.contains("\"event\":\"error\""), "已提交的 SSE 应补一帧错误事件");
+        assertTrue(body.contains("超过总时长"), body);
+
+        ArgumentCaptor<AiCallLogBean> captor = ArgumentCaptor.forClass(AiCallLogBean.class);
+        verify(service.callLogHolder).record(captor.capture());
+        AiCallLogBean entry = captor.getValue();
+        assertEquals("failed", entry.getStatus());
+        assertEquals(Integer.valueOf(504), entry.getHttpStatus());
+        assertTrue(entry.getErrorMessage().contains("超过总时长"));
+        assertEquals(Long.valueOf(1500L), entry.getTotalTokens(),
+                "按预扣值计费时审计用量必须等于真正扣掉的额度");
+        assertTrue(upstream.clientGone.await(5, TimeUnit.SECONDS),
+                "网关断流后必须关闭上游连接，否则上游仍会继续生成并计费");
+    }
+
+    /**
+     * 上游静默、浏览器已经关页面时，不能等满 readTimeout 才发现。
+     * 网关按心跳间隔醒来写一帧注释，写失败即判定客户端断开并立即收尾。
+     */
+    @Test
+    void silentUpstreamCancelIsDetectedByHeartbeatProbe() throws Exception {
+        upstream.silentSse = true;
+        service.properties.setSseHeartbeatMs(100);
+        service.properties.setReadTimeoutMs(5000);
+        when(service.configResolver.isSupported("chat")).thenReturn(true);
+        when(service.configResolver.resolve("chat")).thenReturn(
+                new AiGatewayConfigResolver.ResolvedConfig(upstream.baseUrl(), "test-key"));
+        when(service.guard.check("u1", "chat")).thenReturn(AiGatewayGuard.Decision.allow());
+        AiGatewayGuard.Reservation reservation =
+                AiGatewayGuard.Reservation.active("u1", null, 1500L);
+        when(service.guard.reserve("u1", "chat")).thenReturn(reservation);
+
+        MockHttpServletRequest request = request("POST", "chat", "chat-messages");
+        request.setContentType("application/json");
+        request.setContent("{\"query\":\"hi\",\"user\":\"u1\"}".getBytes(StandardCharsets.UTF_8));
+        long started = System.currentTimeMillis();
+
+        service.proxy("chat", "u1", request, new AbortingResponse());
+
+        long elapsed = System.currentTimeMillis() - started;
+        assertTrue(elapsed < 2000,
+                "静默上游下的客户端断连应在一个心跳周期左右被发现，实际 " + elapsed + "ms");
+        verify(service.guard).settle(reservation, 0L);
+
+        ArgumentCaptor<AiCallLogBean> captor = ArgumentCaptor.forClass(AiCallLogBean.class);
+        verify(service.callLogHolder).record(captor.capture());
+        assertEquals("aborted", captor.getValue().getStatus());
+        assertEquals("客户端已断开连接", captor.getValue().getErrorMessage());
     }
 
     /** 直连模型：请求体不合法时不预扣，避免用户为一次根本没发出去的请求占额度 */

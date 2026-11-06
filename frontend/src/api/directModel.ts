@@ -149,12 +149,15 @@ export const streamDirectChat = (
         clearTimeout(firstByteTimer)
         firstByteTimer = null
       }
-      resetIdleTimer()
+      // 首个数据块（哪怕只是网关心跳）启动空闲计时；之后只有真正的 data: 行才续期，
+      // 避免心跳注释把停滞的流一直续命
+      if (!idleTimer) resetIdleTimer()
 
       buffer += decoder.decode(value, { stream: true })
       const lines = buffer.split(/\r\n|\r|\n/)
       buffer = lines.pop() || ''
 
+      let sawData = false
       for (const line of lines) {
         if (line.startsWith('event: ')) {
           eventType = line.slice(7).trim()
@@ -163,6 +166,7 @@ export const streamDirectChat = (
         if (!line.startsWith('data:')) {
           continue
         }
+        sawData = true
         const payload = line.slice(5).trim()
         if (!payload || payload === '[DONE]') {
           if (payload === '[DONE]') {
@@ -210,6 +214,9 @@ export const streamDirectChat = (
         if (delta.content) {
           onChunk(delta.content)
         }
+      }
+      if (sawData && !completeCalled && !errorCalled) {
+        resetIdleTimer()
       }
     }
     complete()
