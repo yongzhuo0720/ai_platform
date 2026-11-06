@@ -68,6 +68,14 @@ spring:
       max-file-size: 50MB
       max-request-size: 120MB
 
+  # 定时任务线程池：默认单线程会让周一 02:00 的周报聚合卡住网关补偿、
+  # 预扣回收与文档/评估扫描等所有 @Scheduled 任务，因此显式扩到 4 个线程。
+  task:
+    scheduling:
+      pool:
+        size: 4
+      thread-name-prefix: ai-sched-
+
   # 项目名
   application:
     name: aiproject

@@ -39,7 +39,15 @@ public class ChatShareHolder {
         row.setUserId(uid);
         row.setAuthorName(truncate(authorName == null ? "" : authorName, 100));
         row.setLastuser(uid);
-        mapper.install(row);
+        try {
+            if (mapper.install(row) <= 0) {
+                log.warn("[ChatShare] 分享写入未生效: uid={}", uid);
+                return Result.failed(null, "分享创建失败，请稍后重试");
+            }
+        } catch (Exception e) {
+            log.error("[ChatShare] 分享写入异常: uid={}, {}", uid, e.getMessage());
+            return Result.failed(null, "分享创建失败，请稍后重试");
+        }
         return Result.succeed(row.getShareToken(), "分享已创建");
     }
 
