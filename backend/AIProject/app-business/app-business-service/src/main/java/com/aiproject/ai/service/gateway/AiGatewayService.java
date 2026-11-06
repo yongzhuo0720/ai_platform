@@ -125,6 +125,9 @@ public class AiGatewayService {
     @Autowired
     GatewayConcurrencyGuard concurrencyGuard;
 
+    @Autowired
+    GatewayCircuitBreaker circuitBreaker;
+
     /**
      * 全链路请求 ID。
      *
@@ -883,6 +886,10 @@ public class AiGatewayService {
         AiIdempotencyGuard.Lease idempotencyLease = null;
         // 并发许可：同样在 try 内获取、finally 释放，保证任何异常路径都能归还
         GatewayConcurrencyGuard.Lease concurrencyLease = null;
+        // 熔断许可：半开探针必须释放，否则不会再有第二个探针
+        GatewayCircuitBreaker.Admission circuitAdmission = null;
+        // 熔断按「模块 + 上游地址」隔离：同一个 Dify 地址上的模块共享一条熔断记录
+        String circuitKey = circuitKey(module, config);
         // 响应是否为 SSE，提到 try 外供 catch 里的计费判断使用
         boolean sseResponse = false;
         try {
@@ -908,6 +915,22 @@ public class AiGatewayService {
                 writeError(response, 429, GatewayConcurrencyGuard.CODE_BUSY, busy, retryAfter);
                 record(userId, module, auditEndpoint, method, "blocked", 429,
                         null, start, busy, clientIp);
+                return;
+            }
+
+            // 熔断放在并发许可之后：熔断期间请求不该占着并发名额等；
+            // 也放在幂等之后：重复请求不是上游健康样本，不能参与失败计数。
+            circuitAdmission = circuitBreaker.tryAcquire(circuitKey);
+            if (circuitAdmission == null) {
+                int retryAfterSeconds = circuitBreaker.retryAfterSeconds(circuitKey);
+                String message = "AI 服务连续失败，已暂停调用，请 "
+                        + retryAfterSeconds + " 秒后重试";
+                Map<String, String> retryAfter = new LinkedHashMap<String, String>();
+                retryAfter.put("Retry-After", String.valueOf(retryAfterSeconds));
+                writeError(response, HttpServletResponse.SC_SERVICE_UNAVAILABLE,
+                        GatewayCircuitBreaker.CODE_OPEN, message, retryAfter);
+                record(userId, module, auditEndpoint, method, "blocked",
+                        HttpServletResponse.SC_SERVICE_UNAVAILABLE, null, start, message, clientIp);
                 return;
             }
             String target = config.getApiUrl() + "/" + upstreamEndpoint;
@@ -1052,6 +1075,9 @@ public class AiGatewayService {
                         userId, module, parser.getTotalTokens(), upstreamStatus);
             }
 
+            // 上游 5xx 说明服务端确实不可用；其余状态说明连接与协议都正常，
+            // 包括上游在 200 里塞业务错误帧的情况——那不是「连不上」。
+            recordCircuitHealth(circuitKey, upstreamStatus);
             // 放在计费判断之后：按预扣值计费时，审计里的 tokens 必须等于真正扣掉的额度
             record(userId, module, auditEndpoint, method, status, upstreamStatus, parser,
                     start, error, clientIp);
@@ -1077,6 +1103,13 @@ public class AiGatewayService {
             String status = aborted ? "aborted" : "failed";
             String error = aborted ? "客户端已断开连接" : message;
             boolean billedByReserve = false;
+
+            // 只有「连接失败 / 读超时 / 上游断流」才算上游不健康：
+            // - 客户端主动断开：请求本身是通的，不能算上游故障；
+            // - 网关总时长截止：可能是正常的长回答，不能算上游故障。
+            if (!aborted && !timedOut && e instanceof IOException) {
+                circuitBreaker.recordFailure(circuitKey);
+            }
 
             if (!response.isCommitted()) {
                 writeError(response,
@@ -1128,6 +1161,9 @@ public class AiGatewayService {
             if (concurrencyLease != null) {
                 concurrencyLease.release();
             }
+            if (circuitAdmission != null) {
+                circuitAdmission.release();
+            }
             // 成功按真实 usage 结算；上游失败或「一个字节都没送出去就断开」全额释放；
             // 已经送出内容的客户端中断按预扣值结算（见上面 catch 里的说明）
             if (reservation != null && reservation.isActive()) {
@@ -1164,6 +1200,24 @@ public class AiGatewayService {
      * 转发给了浏览器、不是「一个字节都没送出去」的空中断，以及（非客户端主动断开时）
      * SSE 至少已经出现带正文的事件——只有心跳/role 帧不算模型产出。</p>
      */
+    /**
+     * 熔断键：模块 + 上游地址。不同 Dify 应用可能指向同一个地址，
+     * 那里确实会一起挂；同一个地址上的模型也共享一条熔断记录，
+     * 因为我们要防的是「上游整体不可达」，不是单个模型返回业务错误。
+     */
+    private static String circuitKey(String module, AiGatewayConfigResolver.ResolvedConfig config) {
+        String apiUrl = config == null || config.getApiUrl() == null ? "" : config.getApiUrl();
+        return module + "|" + apiUrl;
+    }
+
+    private void recordCircuitHealth(String key, Integer upstreamStatus) {
+        if (upstreamStatus != null && upstreamStatus >= 500) {
+            circuitBreaker.recordFailure(key);
+        } else {
+            circuitBreaker.recordSuccess(key);
+        }
+    }
+
     private boolean shouldBillPartialOutput(Relayed relayed, Integer upstreamStatus,
                                             boolean sse, boolean aborted) {
         if (relayed.bytes <= 0) {

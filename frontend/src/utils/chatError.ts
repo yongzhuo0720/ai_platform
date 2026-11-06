@@ -143,6 +143,19 @@ function classifyChatError(errorText: string): ParsedChatError {
   }
 
   /*
+   * 上游熔断：网关已经确认同一上游连续失败，冷却期内不再发请求。
+   * 请求没有到达上游，等冷却结束重试是安全的。
+   */
+  if (errorText.includes('circuit_open') || errorText.includes('AI 服务连续失败')) {
+    return {
+      message: serverMessage || plainMessage(errorText) || 'AI 服务暂时不可用，请稍后重试。',
+      retryable: true,
+      suggestSwitchModel: false,
+      suggestCheckConfig: false,
+    }
+  }
+
+  /*
    * 每日配额用完：这是「今天不能再用了」，重试或换模型都无济于事，
    * 必须如实展示服务端原因。
    *

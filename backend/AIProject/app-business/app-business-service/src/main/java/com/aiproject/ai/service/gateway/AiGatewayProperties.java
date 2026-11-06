@@ -69,6 +69,21 @@ public class AiGatewayProperties {
      */
     private int sseHeartbeatMs = 15000;
 
+    /**
+     * 同一上游连续失败多少次后熔断，<=0 表示关闭熔断。
+     * <p>
+     * 只统计「上游不可用」类失败：连接失败、读超时、5xx。
+     * 客户端主动断开、参数错误、上游 4xx 都不计入——它们说明请求本身有问题，
+     * 不是上游挂了；把它们算进去会让熔断器误伤正常流量。
+     */
+    private int circuitFailureThreshold = 5;
+
+    /**
+     * 熔断后多久进入半开状态（毫秒），期间新请求直接 503。
+     * 半开时只放一个探针请求，成功则恢复，失败则重新计时。
+     */
+    private int circuitOpenMs = 30000;
+
     /** 日志中错误信息最大长度 */
     private int maxErrorLength = 1000;
 

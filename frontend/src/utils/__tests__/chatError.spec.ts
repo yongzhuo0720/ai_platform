@@ -97,4 +97,14 @@ describe("parseChatError 网关并发与流式护栏", () => {
     expect(parsed.message).toBe("AI 响应超过总时长限制（600 秒），已断开（请求 ID：req-timeout）");
     expect(parsed.retryable).toBe(true);
   });
+
+  it("上游熔断期间可以等冷却结束再试，不提示换模型", () => {
+    const parsed = parseChatError(
+      new Error("AI 服务连续失败，已暂停调用，请 30 秒后重试（请求 ID：req-open）")
+    );
+
+    expect(parsed.message).toBe("AI 服务连续失败，已暂停调用，请 30 秒后重试（请求 ID：req-open）");
+    expect(parsed.retryable).toBe(true);
+    expect(parsed.suggestSwitchModel).toBe(false);
+  });
 });

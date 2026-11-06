@@ -36,6 +36,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.atLeastOnce;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -45,6 +46,7 @@ class AiGatewayServiceTest {
     private final ObjectMapper mapper = new ObjectMapper();
     private AiGatewayService service;
     private AiUpstreamStub upstream;
+    private GatewayCircuitBreaker circuitBreaker;
 
     @BeforeEach
     void setUp() throws Exception {
@@ -59,6 +61,9 @@ class AiGatewayServiceTest {
         service.priceResolver = mock(ModelPriceResolver.class);
         service.idempotencyGuard = mock(AiIdempotencyGuard.class);
         service.concurrencyGuard = new GatewayConcurrencyGuard(service.properties);
+        circuitBreaker = new GatewayCircuitBreaker();
+        circuitBreaker.properties = service.properties;
+        service.circuitBreaker = circuitBreaker;
         when(service.idempotencyGuard.acquire(anyString(), anyString(), any()))
                 .thenReturn(AiIdempotencyGuard.Acquisition.none());
         // 默认不预扣（等同配额不限）；需要验证预扣行为的用例自行覆盖
@@ -411,6 +416,63 @@ class AiGatewayServiceTest {
         next.setContent("{\"query\":\"hi\"}".getBytes(StandardCharsets.UTF_8));
         assertEquals(200, proxy("chat", next, "u1").getStatus());
         assertNotNull(service.concurrencyGuard.tryAcquire("chat"));
+    }
+
+    /**
+     * 上游连续 5xx 触发熔断：后续请求直接 503 + Retry-After，不再打到上游。
+     * 这是「上游已经挂了」时的快速失败，避免每个请求都等满连接/读取超时。
+     */
+    @Test
+    void repeatedUpstreamFailuresOpenCircuitAndBlockWithoutCallingUpstream() throws Exception {
+        service.properties.setCircuitFailureThreshold(2);
+        service.properties.setCircuitOpenMs(60_000);
+        upstream.responseStatus = 500;
+        upstream.responseBody = "{\"error\":\"boom\"}";
+
+        assertEquals(500, proxy("chat", chatRequest(), "u1").getStatus());
+        assertEquals(500, proxy("chat", chatRequest(), "u1").getStatus());
+        String circuitKey = "chat|" + upstream.baseUrl();
+        assertEquals("OPEN", circuitBreaker.stateOf(circuitKey));
+
+        AiGatewayGuard.Reservation reservation =
+                AiGatewayGuard.Reservation.active("u1", null, 1500L);
+        when(service.guard.reserve("u1", "chat")).thenReturn(reservation);
+
+        MockHttpServletResponse blocked = proxy("chat", chatRequest(), "u1");
+
+        assertEquals(503, blocked.getStatus());
+        assertEquals("60", blocked.getHeader("Retry-After"),
+                "熔断必须告诉客户端还要等多久");
+        assertTrue(blocked.getContentAsString(StandardCharsets.UTF_8)
+                .contains(GatewayCircuitBreaker.CODE_OPEN));
+        assertEquals(2, upstream.calls.get(), "熔断期间不能再调用上游");
+        verify(service.guard, atLeastOnce()).settle(reservation, 0L);
+
+        ArgumentCaptor<AiCallLogBean> captor = ArgumentCaptor.forClass(AiCallLogBean.class);
+        verify(service.callLogHolder, atLeastOnce()).record(captor.capture());
+        boolean blockedLogged = captor.getAllValues().stream().anyMatch(entry ->
+                "blocked".equals(entry.getStatus())
+                        && Integer.valueOf(503).equals(entry.getHttpStatus()));
+        assertTrue(blockedLogged, "熔断拒绝必须留下 blocked/503 审计");
+    }
+
+    /** 成功一次就清零连续失败计数：偶发抖动不能把正常流量误判成持续故障 */
+    @Test
+    void successfulUpstreamResponseResetsFailureCount() {
+        service.properties.setCircuitFailureThreshold(3);
+        upstream.responseStatus = 500;
+        assertEquals(500, proxy("chat", chatRequest(), "u1").getStatus());
+        assertEquals(500, proxy("chat", chatRequest(), "u1").getStatus());
+
+        upstream.responseStatus = 200;
+        upstream.responseBody = "{\"answer\":\"ok\"}";
+        assertEquals(200, proxy("chat", chatRequest(), "u1").getStatus());
+
+        upstream.responseStatus = 500;
+        assertEquals(500, proxy("chat", chatRequest(), "u1").getStatus());
+        assertEquals(500, proxy("chat", chatRequest(), "u1").getStatus());
+        assertEquals("CLOSED", circuitBreaker.stateOf("chat|" + upstream.baseUrl()),
+                "成功之前的两次失败不应继续累计");
     }
 
     /**
@@ -778,6 +840,13 @@ class AiGatewayServiceTest {
         item.setScore(score);
         item.setDocName("source");
         return item;
+    }
+
+    private MockHttpServletRequest chatRequest() {
+        MockHttpServletRequest request = request("POST", "chat", "chat-messages");
+        request.setContentType("application/json");
+        request.setContent("{\"query\":\"hi\"}".getBytes(StandardCharsets.UTF_8));
+        return request;
     }
 
     private MockHttpServletRequest request(String method, String module, String endpoint) {

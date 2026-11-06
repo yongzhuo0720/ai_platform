@@ -20,6 +20,7 @@ class AiUpstreamStub implements AutoCloseable {
     volatile byte[] requestBody;
     volatile String responseBody = "{}";
     volatile String responseContentType = "application/json";
+    volatile int responseStatus = 200;
 
     /**
      * 模拟真实 SSE 上游：按固定间隔慢速吐块，直到连接被关闭。
@@ -72,7 +73,7 @@ class AiUpstreamStub implements AutoCloseable {
                 }
                 byte[] response = responseBody.getBytes(StandardCharsets.UTF_8);
                 exchange.getResponseHeaders().set("Content-Type", responseContentType);
-                exchange.sendResponseHeaders(200, response.length);
+                exchange.sendResponseHeaders(responseStatus, response.length);
                 exchange.getResponseBody().write(response);
             } finally {
                 exchange.close();
