@@ -13,6 +13,27 @@ export interface AiGatewayConfigStatus {
   modules: AiGatewayModuleStatus[]
 }
 
+export interface AiGatewayHealthModel {
+  iid: number
+  name: string | null
+  upstreamModel: string | null
+  enabled: boolean
+  ready: boolean
+  priced: boolean
+  hasEmbedModel: boolean
+}
+
+export interface AiGatewayHealth {
+  gatewayEnabled: boolean
+  rateLimitPerMinute: number
+  defaultDailyTokenQuota: number
+  quotaReserveTokens: number
+  checkedAt: number
+  modules: AiGatewayModuleStatus[]
+  models: AiGatewayHealthModel[]
+  today: AiGatewaySummary | null
+}
+
 export interface AiGatewayTrendPoint {
   date: string
   calls: number
@@ -40,10 +61,14 @@ export interface AiGatewayModelStat {
   tokens: number
   failed: number
   avgLatencyMs: number
-  /** 累计成本（单位：分）；未定价模型为 0 且不代表真实成本 */
+  /** 累计成本（单位：毫分，1 分 = 1000 毫分）；未定价模型为 0 且不代表真实成本 */
   costCents?: number
   /** 该模型是否配置了单价 */
   priced?: boolean
+  /** 成功率（百分比，0-100；失败含 failed/aborted/blocked） */
+  successRate?: number
+  /** 该模型耗时的 95 分位（毫秒） */
+  p95LatencyMs?: number
 }
 
 export interface AiGatewaySummary {
@@ -58,7 +83,7 @@ export interface AiGatewaySummary {
   avgFirstTokenMs?: number
   successRate: number
   truncated: boolean
-  /** 汇总成本（单位：分），仅统计已定价模型 */
+  /** 汇总成本（单位：毫分，1 分 = 1000 毫分），仅统计已定价模型 */
   totalCostCents?: number
   /** 是否存在未配置单价的模型（成本汇总不完整） */
   hasUnpricedModels?: boolean
@@ -133,6 +158,7 @@ export interface AiGatewayLogQuery {
 // 因此请求体需要包一层：query 对应 AiGatewayLogQuery，data 对应 AiUserQuotaBean。
 export const aiGatewayAdminApi = {
   getConfig: () => axios.post('/ai/api/aiGatewayAdmin/config'),
+  getHealth: () => axios.post('/ai/api/aiGatewayAdmin/health'),
   getSummary: (params: AiGatewayLogQuery = {}) =>
     axios.post('/ai/api/aiGatewayAdmin/summary', { query: params }),
   getLogs: (params: AiGatewayLogQuery) =>

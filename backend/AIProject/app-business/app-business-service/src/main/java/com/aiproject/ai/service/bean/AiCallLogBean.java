@@ -90,7 +90,7 @@ public class AiCallLogBean extends DbEntityBase {
      * 前端展示时再折算成元。</p>
      */
     @SqlColumn()
-    @ApiModelProperty("调用成本（分）")
+    @ApiModelProperty("调用成本（毫分，1 分 = 1000 毫分）")
     Long costCents;
 
     /**

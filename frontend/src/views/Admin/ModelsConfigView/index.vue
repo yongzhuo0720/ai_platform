@@ -55,8 +55,44 @@
             <span v-else>-</span>
           </template>
         </el-table-column>
-        <el-table-column label="操作" align="center" width="160" fixed="right">
+        <el-table-column label="启用" align="center" width="80">
           <template #default="scope">
+            <el-switch
+              :model-value="scope.row.enable !== false"
+              :loading="state.togglingIid === scope.row.iid"
+              :disabled="scope.row.iid == null"
+              @change="(val: string | number | boolean) => onToggleEnable(scope.row, Boolean(val))"
+            />
+          </template>
+        </el-table-column>
+        <el-table-column label="单价（分/百万）" align="center" width="150">
+          <template #default="scope">
+            <span :class="{ 'model-price-missing': priceText(scope.row) === '未定价' }">
+              {{ priceText(scope.row) }}
+            </span>
+          </template>
+        </el-table-column>
+        <el-table-column label="连接" align="center" width="110">
+          <template #default="scope">
+            <el-tooltip :content="connectionResult(scope.row)?.message || '尚未测试'" placement="top">
+              <el-tag :type="connectionTagType(scope.row)" size="small">
+                {{ connectionLabel(scope.row) }}
+              </el-tag>
+            </el-tooltip>
+          </template>
+        </el-table-column>
+        <el-table-column label="操作" align="center" width="250" fixed="right">
+          <template #default="scope">
+            <button
+              v-if="scope.row.protocol === 'openai'"
+              type="button"
+              class="action-btn"
+              :disabled="state.testingIid === scope.row.iid"
+              @click="onTestConnection(scope.row)"
+            >
+              <Connection />
+              <span>{{ state.testingIid === scope.row.iid ? '测试中…' : '测试连接' }}</span>
+            </button>
             <button type="button" class="action-btn" @click="showEdit(scope.row)">
               <Edit />
               <span>编辑</span>
@@ -117,6 +153,10 @@
             clearable
           />
         </el-form-item>
+        <el-form-item label="启用">
+          <el-switch v-model="state.params.form.enable" />
+          <span class="model-form-tip">停用后网关不再路由到该模型，配置保留</span>
+        </el-form-item>
         <el-form-item label="直连协议" prop="protocol">
           <el-select v-model="state.params.form.protocol" placeholder="不启用直连" clearable style="width: 100%">
             <el-option label="OpenAI 兼容直连（可在对话页直接调用）" value="openai" />
@@ -137,6 +177,29 @@
               clearable
             />
           </el-form-item>
+          <el-form-item label="输入单价">
+            <el-input-number
+              v-model="state.params.form.priceInputPerMillion"
+              :min="0"
+              :step="1"
+              :precision="0"
+              controls-position="right"
+              style="width: 100%"
+            />
+          </el-form-item>
+          <el-form-item label="输出单价">
+            <el-input-number
+              v-model="state.params.form.priceOutputPerMillion"
+              :min="0"
+              :step="1"
+              :precision="0"
+              controls-position="right"
+              style="width: 100%"
+            />
+          </el-form-item>
+          <div class="model-form-tip model-form-tip-block">
+            单价单位：分 / 百万 tokens；留空表示未定价，成本看板会标记该模型，不会把 0 当成免费。
+          </div>
           <el-form-item label="向量模型" prop="embedModel">
             <el-input
               v-model="state.params.form.embedModel"
@@ -165,7 +228,7 @@
 
 <script lang="ts" setup>
 import { useIndex } from './index'
-import { Search, CirclePlusFilled, Edit, Delete } from '@element-plus/icons-vue'
+import { Search, CirclePlusFilled, Edit, Delete, Connection } from '@element-plus/icons-vue'
 
 const {
   ruleFormRef,
@@ -175,8 +238,14 @@ const {
   showEdit,
   showDelete,
   onSave,
+  onToggleEnable,
+  onTestConnection,
   handleSizeChange,
   handleCurrentChange,
+  priceText,
+  connectionResult,
+  connectionLabel,
+  connectionTagType,
 } = useIndex()
 </script>
 

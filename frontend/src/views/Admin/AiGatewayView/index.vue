@@ -183,7 +183,9 @@
                 <span class="table-cell-mono">{{ item.model }}</span>
                 <span>
                   {{ item.calls }} 次 · {{ formatTokens(item.tokens) }} tokens
+                  · 成功率 {{ (item.successRate ?? 0).toFixed(1) }}%
                   · 平均 {{ formatDuration(item.avgLatencyMs) }}
+                  · P95 {{ formatDuration(item.p95LatencyMs) }}
                   <template v-if="item.priced"> · 成本 {{ formatCost(item.costCents) }}</template>
                   <em v-else> · 未定价</em>
                   <em v-if="item.failed"> · 失败/拦截 {{ item.failed }}</em>
@@ -194,6 +196,184 @@
               </div>
             </div>
             <div v-if="!state.summary?.models?.length" class="gw-empty">暂无数据</div>
+          </div>
+        </section>
+      </el-tab-pane>
+
+      <el-tab-pane label="模型健康" name="health">
+        <div class="gw-toolbar gw-toolbar-wrap">
+          <button type="button" class="btn" :disabled="state.healthLoading" @click="loadHealth">
+            <Refresh />
+            {{ state.healthLoading ? '加载中…' : '刷新' }}
+          </button>
+          <button
+            type="button"
+            class="btn btn-primary"
+            :disabled="state.probingAll || !state.health?.models?.length"
+            @click="testAllModels"
+          >
+            <Connection />
+            {{ state.probingAll
+              ? `测试中 ${state.probeProgress.done}/${state.probeProgress.total}`
+              : '测试全部' }}
+          </button>
+          <span class="gw-hint">
+            连接测试由服务端发起，使用已保存的地址与密钥；不写入调用日志、不计入配额。
+          </span>
+          <span v-if="state.health" class="gw-hint gw-hint-right">
+            检测时间 {{ formatTime(state.health.checkedAt) }}
+          </span>
+        </div>
+
+        <div class="gw-cards" v-loading="state.healthLoading">
+          <div class="gw-card">
+            <span class="gw-card-label">网关状态</span>
+            <strong class="gw-card-value">
+              {{ state.health ? (state.health.gatewayEnabled ? '运行中' : '已关闭') : '未知' }}
+            </strong>
+            <span class="gw-card-sub">由服务端配置决定</span>
+          </div>
+          <div class="gw-card">
+            <span class="gw-card-label">限流</span>
+            <strong class="gw-card-value">{{ state.health?.rateLimitPerMinute ?? 0 }} 次/分钟</strong>
+            <span class="gw-card-sub">单用户默认额度</span>
+          </div>
+          <div class="gw-card">
+            <span class="gw-card-label">默认每日配额</span>
+            <strong class="gw-card-value">{{ formatTokens(state.health?.defaultDailyTokenQuota) }}</strong>
+            <span class="gw-card-sub">tokens；0 表示不限制</span>
+          </div>
+          <div class="gw-card">
+            <span class="gw-card-label">预扣 tokens</span>
+            <strong class="gw-card-value">{{ formatTokens(state.health?.quotaReserveTokens) }}</strong>
+            <span class="gw-card-sub">流式请求开始前的预留量</span>
+          </div>
+          <div class="gw-card">
+            <span class="gw-card-label">今日调用</span>
+            <strong class="gw-card-value">{{ state.health?.today?.totalCalls ?? 0 }}</strong>
+            <span class="gw-card-sub">成功 {{ state.health?.today?.successCalls ?? 0 }} 次</span>
+          </div>
+          <div class="gw-card">
+            <span class="gw-card-label">今日成功率</span>
+            <strong class="gw-card-value">{{ (state.health?.today?.successRate ?? 0).toFixed(1) }}%</strong>
+            <span class="gw-card-sub">失败、拦截、中断均计入</span>
+          </div>
+          <div class="gw-card">
+            <span class="gw-card-label">今日 P95 耗时</span>
+            <strong class="gw-card-value">{{ formatDuration(state.health?.today?.p95LatencyMs) }}</strong>
+            <span class="gw-card-sub">端到端网关转发耗时</span>
+          </div>
+          <div class="gw-card">
+            <span class="gw-card-label">今日成本</span>
+            <strong class="gw-card-value">{{ formatCost(state.health?.today?.totalCostCents) }}</strong>
+            <span class="gw-card-sub">
+              {{ state.health?.today?.hasUnpricedModels ? '仅含已定价模型' : '按模型单价折算' }}
+            </span>
+          </div>
+        </div>
+
+        <section class="gw-panel gw-health-panel">
+          <header>
+            <h3>直连模型</h3>
+            <span>配置完整性来自服务端；真实连通性需点击「测试」</span>
+          </header>
+          <div class="user-table-card">
+            <el-table
+              :data="state.health?.models ?? []"
+              v-loading="state.healthLoading"
+              style="width: 100%"
+              size="small"
+              stripe
+            >
+              <el-table-column label="模型" min-width="180">
+                <template #default="scope">
+                  <div class="gw-user-cell">
+                    <span class="table-cell-strong">{{ scope.row.name || '未命名' }}</span>
+                    <span class="gw-user-id">#{{ scope.row.iid }}</span>
+                  </div>
+                </template>
+              </el-table-column>
+              <el-table-column label="上游模型" min-width="180" show-overflow-tooltip>
+                <template #default="scope">{{ scope.row.upstreamModel || '-' }}</template>
+              </el-table-column>
+              <el-table-column label="启用" width="90" align="center">
+                <template #default="scope">
+                  <el-tag :type="scope.row.enabled ? 'success' : 'info'" size="small">
+                    {{ scope.row.enabled ? '已启用' : '已停用' }}
+                  </el-tag>
+                </template>
+              </el-table-column>
+              <el-table-column label="配置完整" width="100" align="center">
+                <template #default="scope">
+                  <el-tag :type="scope.row.ready ? 'success' : 'danger'" size="small">
+                    {{ scope.row.ready ? '齐全' : '缺字段' }}
+                  </el-tag>
+                </template>
+              </el-table-column>
+              <el-table-column label="定价" width="95" align="center">
+                <template #default="scope">
+                  <el-tag :type="scope.row.priced ? 'success' : 'warning'" size="small">
+                    {{ scope.row.priced ? '已配置' : '未定价' }}
+                  </el-tag>
+                </template>
+              </el-table-column>
+              <el-table-column label="向量模型" width="95" align="center">
+                <template #default="scope">{{ scope.row.hasEmbedModel ? '是' : '-' }}</template>
+              </el-table-column>
+              <el-table-column label="最近测试" min-width="200">
+                <template #default="scope">
+                  <el-tooltip
+                    v-if="probeResult(scope.row.iid)"
+                    :content="probeResult(scope.row.iid)?.message || ''"
+                    placement="top"
+                  >
+                    <el-tag :type="probeTagType(scope.row.iid)" size="small">
+                      {{ probeLabel(scope.row.iid) }}
+                    </el-tag>
+                  </el-tooltip>
+                  <el-tag v-else type="info" size="small">{{ probeLabel(scope.row.iid) }}</el-tag>
+                  <span v-if="probeResult(scope.row.iid)" class="gw-probe-meta">
+                    {{ probeResult(scope.row.iid)?.latencyMs }}ms ·
+                    {{ formatTime(probeResult(scope.row.iid)?.checkedAt) }}
+                  </span>
+                </template>
+              </el-table-column>
+              <el-table-column label="操作" width="100" align="center" fixed="right">
+                <template #default="scope">
+                  <el-button
+                    link
+                    type="primary"
+                    size="small"
+                    :loading="state.probingIid === scope.row.iid"
+                    :disabled="state.probingAll || !scope.row.ready"
+                    @click="testModel(scope.row.iid)"
+                  >
+                    测试
+                  </el-button>
+                </template>
+              </el-table-column>
+            </el-table>
+            <div v-if="!state.health?.models?.length" class="gw-empty">
+              暂无直连模型配置，请先到「模型配置」添加 OpenAI 兼容服务
+            </div>
+          </div>
+        </section>
+
+        <section class="gw-panel gw-health-panel">
+          <header>
+            <h3>模块配置</h3>
+            <span>只显示是否就绪，地址与密钥不会下发浏览器</span>
+          </header>
+          <div class="gw-module-health">
+            <div
+              v-for="item in state.health?.modules ?? []"
+              :key="item.module"
+              :class="['gw-module-card', item.configured ? 'ok' : 'missing']"
+            >
+              <span class="gw-module-name">{{ item.moduleName }}</span>
+              <span class="gw-module-state">{{ item.configured ? '已配置' : '未配置' }}</span>
+            </div>
+            <div v-if="!state.health?.modules?.length" class="gw-empty">暂无模块配置</div>
           </div>
         </section>
       </el-tab-pane>
@@ -471,12 +651,16 @@
 </template>
 
 <script lang="ts" setup>
+import { Connection } from '@element-plus/icons-vue'
 import { useIndex } from './index'
 
 const {
   state,
   loadSummary,
   retryOverview,
+  loadHealth,
+  testModel,
+  testAllModels,
   loadLogs,
   loadQuotas,
   exportLoading,
@@ -490,6 +674,9 @@ const {
   moduleLabel,
   statusLabel,
   statusTagType,
+  probeResult,
+  probeLabel,
+  probeTagType,
   formatTokens,
   formatDuration,
   formatCost,

@@ -6,6 +6,7 @@ import { ElMessage, ElMessageBox } from "element-plus";
 vi.mock("@/api/aiGatewayAdmin", () => ({
   aiGatewayAdminApi: {
     getConfig: vi.fn(),
+    getHealth: vi.fn(),
     getSummary: vi.fn(),
     getLogs: vi.fn(),
     exportLogs: vi.fn(),
@@ -15,12 +16,16 @@ vi.mock("@/api/aiGatewayAdmin", () => ({
     getUsers: vi.fn(),
   },
 }));
+vi.mock("@/api/modelsConfig", () => ({
+  modelsConfigApi: { testConnection: vi.fn() },
+}));
 vi.mock("@/api/weeklyReport", () => ({
   weeklyReportApi: { list: vi.fn(), generate: vi.fn() },
 }));
 
 import AiGatewayView from "../index.vue";
 import { aiGatewayAdminApi } from "@/api/aiGatewayAdmin";
+import { modelsConfigApi } from "@/api/modelsConfig";
 import { weeklyReportApi } from "@/api/weeklyReport";
 
 /**
@@ -73,6 +78,8 @@ const summary = {
       tokens: 5000,
       failed: 5,
       avgLatencyMs: 700,
+      p95LatencyMs: 1600,
+      successRate: 99.17,
       priced: true,
       costCents: 100000,
     },
@@ -82,6 +89,8 @@ const summary = {
       tokens: 500,
       failed: 0,
       avgLatencyMs: 400,
+      p95LatencyMs: 0,
+      successRate: 100,
       priced: false,
       costCents: 0,
     },
@@ -144,14 +153,71 @@ const quotas = {
   ],
 };
 
-// Search / Download / Plus / Refresh 由主入口全局注册，测试里用空桩占位
+const health = {
+  gatewayEnabled: true,
+  rateLimitPerMinute: 30,
+  defaultDailyTokenQuota: 1000000,
+  quotaReserveTokens: 2000,
+  checkedAt: 1762000000000,
+  modules: [
+    { module: "chat", moduleName: "问答聊天", configured: true },
+    { module: "models", moduleName: "模型直连", configured: true },
+  ],
+  models: [
+    {
+      iid: 1,
+      name: "qwen-max",
+      upstreamModel: "qwen-max-2025",
+      enabled: true,
+      ready: true,
+      priced: true,
+      hasEmbedModel: false,
+    },
+    {
+      iid: 2,
+      name: "embed",
+      upstreamModel: "text-embedding-v3",
+      enabled: false,
+      ready: false,
+      priced: false,
+      hasEmbedModel: true,
+    },
+  ],
+  today: {
+    ...summary,
+    totalCalls: 7,
+    successCalls: 6,
+    successRate: 85.71,
+    avgLatencyMs: 600,
+    p95LatencyMs: 900,
+    totalCostCents: 20000,
+    hasUnpricedModels: false,
+  },
+};
+
+const probeOk = {
+  iid: 1,
+  modelName: "qwen-max",
+  upstreamModel: "qwen-max-2025",
+  status: "ok",
+  modelAvailable: true,
+  httpStatus: 200,
+  latencyMs: 42,
+  message: "服务连接成功，模型已就绪",
+  checkedAt: 1762000001000,
+};
+
+// Search / Download / Plus / Refresh / Connection 由主入口全局注册，测试里用空桩占位
 const mountView = () =>
   mount(AiGatewayView, {
-    global: { stubs: { Search: true, Download: true, Plus: true, Refresh: true } },
+    global: {
+      stubs: { Search: true, Download: true, Plus: true, Refresh: true, Connection: true },
+    },
   });
 
 const setupSuccess = () => {
   vi.mocked(aiGatewayAdminApi.getConfig).mockResolvedValue(ok(config));
+  vi.mocked(aiGatewayAdminApi.getHealth).mockResolvedValue(ok(health));
   vi.mocked(aiGatewayAdminApi.getSummary).mockResolvedValue(ok(summary));
   vi.mocked(aiGatewayAdminApi.getLogs).mockResolvedValue(
     ok({ content: logs, totalSize: 1 })
@@ -164,6 +230,7 @@ const setupSuccess = () => {
   vi.mocked(aiGatewayAdminApi.deleteQuota).mockResolvedValue(ok(true));
   vi.mocked(weeklyReportApi.list).mockResolvedValue(ok([]));
   vi.mocked(weeklyReportApi.generate).mockResolvedValue(ok(true, "周报已生成"));
+  vi.mocked(modelsConfigApi.testConnection).mockResolvedValue(ok(probeOk));
 };
 
 /**
@@ -272,8 +339,11 @@ describe("AiGatewayView", () => {
 
     const modelList = wrapper.find(".model-list");
     expect(modelList.text()).toContain("qwen-max");
+    expect(modelList.text()).toContain("成功率 99.2%");
+    expect(modelList.text()).toContain("P95 1.60s");
     expect(modelList.text()).toContain("成本 ¥1.00");
     expect(modelList.text()).toContain("gpt-4o-mini");
+    expect(modelList.text()).toContain("成功率 100.0%");
     expect(modelList.text()).toContain("未定价");
 
     expect(wrapper.find(".top-users").text()).toContain("张三");
@@ -474,6 +544,117 @@ describe("AiGatewayView", () => {
     await anotherDelete!.trigger("click");
     await flushPromises();
     expect(aiGatewayAdminApi.deleteQuota).toHaveBeenCalledTimes(1);
+  });
+
+  it("模型健康：切换时加载一次，展示配置完整性、模块状态与今日统计", async () => {
+    const wrapper = mountView();
+    await flushPromises();
+    expect(aiGatewayAdminApi.getHealth).not.toHaveBeenCalled();
+
+    await clickTab(wrapper, "模型健康");
+    expect(aiGatewayAdminApi.getHealth).toHaveBeenCalledTimes(1);
+
+    expect(cardText(wrapper, "网关状态")).toContain("运行中");
+    expect(cardText(wrapper, "限流")).toContain("30 次/分钟");
+    expect(cardText(wrapper, "预扣 tokens")).toContain("2.0K");
+    expect(cardText(wrapper, "今日调用")).toContain("7");
+    expect(cardText(wrapper, "今日成功率")).toContain("85.7%");
+    expect(cardText(wrapper, "今日 P95 耗时")).toContain("900ms");
+    expect(cardText(wrapper, "今日成本")).toContain("¥0.20");
+
+    const table = wrapper.find("#pane-health .el-table");
+    expect(table.text()).toContain("qwen-max");
+    expect(table.text()).toContain("#1");
+    expect(table.text()).toContain("qwen-max-2025");
+    expect(table.text()).toContain("已启用");
+    expect(table.text()).toContain("齐全");
+    expect(table.text()).toContain("未定价");
+    expect(table.text()).toContain("未测试");
+
+    // 缺地址/密钥的模型不能直接点测试
+    const disabledTest = table.findAll(".el-table__row")[1].findAll("button")[0];
+    expect(disabledTest.classes()).toContain("is-disabled");
+
+    const moduleCards = wrapper.findAll(".gw-module-card");
+    expect(moduleCards).toHaveLength(2);
+    expect(moduleCards[0].classes()).toContain("ok");
+    expect(moduleCards[0].text()).toContain("问答聊天");
+    expect(moduleCards[0].text()).toContain("已配置");
+
+    // 已有数据后再次切回不重复请求
+    await clickTab(wrapper, "用量概览");
+    await clickTab(wrapper, "模型健康");
+    expect(aiGatewayAdminApi.getHealth).toHaveBeenCalledTimes(1);
+  });
+
+  it("连接测试：单模型只传 iid，测试全部只覆盖配置齐全的模型并汇总", async () => {
+    const { success } = createMessageSpies();
+    const wrapper = mountView();
+    await flushPromises();
+    await clickTab(wrapper, "模型健康");
+
+    const rows = wrapper.findAll("#pane-health .el-table__row");
+    const testButton = rows[0].findAll("button").find((b) => b.text().includes("测试"));
+    await testButton!.trigger("click");
+    await flushPromises();
+
+    expect(modelsConfigApi.testConnection).toHaveBeenCalledTimes(1);
+    expect(modelsConfigApi.testConnection).toHaveBeenCalledWith({ data: { iid: 1 } });
+    expect(success).toHaveBeenCalledWith("服务连接成功，模型已就绪（42ms）");
+    expect(rows[0].text()).toContain("可用");
+    expect(rows[0].text()).toContain("42ms");
+
+    const testAllButton = wrapper
+      .findAll(".gw-toolbar .btn")
+      .find((b) => b.text().includes("测试全部"));
+    await testAllButton!.trigger("click");
+    await flushPromises();
+
+    // 只测试 ready=true 的模型，缺配置的直接跳过
+    expect(modelsConfigApi.testConnection).toHaveBeenCalledTimes(2);
+    expect(success).toHaveBeenCalledWith("测试完成：可用 1，模型缺失 0，失败 0");
+  });
+
+  it("连接测试：模型缺失用警告提示，没有可测模型时拦截", async () => {
+    const { success, warning } = createMessageSpies();
+    vi.mocked(modelsConfigApi.testConnection).mockResolvedValue(
+      ok({
+        ...probeOk,
+        status: "model_missing",
+        modelAvailable: false,
+        latencyMs: 35,
+        message: "服务连接成功，但模型列表中没有「qwen-max-2025」",
+      })
+    );
+    const wrapper = mountView();
+    await flushPromises();
+    await clickTab(wrapper, "模型健康");
+
+    const testButton = wrapper
+      .findAll("#pane-health .el-table__row")[0]
+      .findAll("button")
+      .find((b) => b.text().includes("测试"));
+    await testButton!.trigger("click");
+    await flushPromises();
+    expect(warning).toHaveBeenCalledWith("服务连接成功，但模型列表中没有「qwen-max-2025」");
+    expect(wrapper.findAll("#pane-health .el-table__row")[0].text()).toContain("模型缺失");
+
+    vi.mocked(aiGatewayAdminApi.getHealth).mockResolvedValue(
+      ok({ ...health, models: [health.models[1]] })
+    );
+    const freshWrapper = mountView();
+    await flushPromises();
+    await clickTab(freshWrapper, "模型健康");
+    const testAllButton = freshWrapper
+      .findAll(".gw-toolbar .btn")
+      .find((b) => b.text().includes("测试全部"));
+    await testAllButton!.trigger("click");
+    await flushPromises();
+    expect(warning).toHaveBeenCalledWith(
+      "没有可测试的直连模型，请先补全服务地址、密钥和上游模型名"
+    );
+    expect(success).not.toHaveBeenCalled();
+    expect(modelsConfigApi.testConnection).toHaveBeenCalledTimes(1);
   });
 
   it("调用周报：手动生成本周快照并刷新列表", async () => {

@@ -268,7 +268,7 @@ public class TableSchemaInitializer implements ApplicationListener<ApplicationRe
     /**
      * AI 治理看板的成本核算与全链路追踪列。
      *
-     * <p>{@code aicalllogbean.costCents}——调用折算成本（分）。
+     * <p>{@code aicalllogbean.costCents}——调用折算成本（毫分，1 分 = 1000 毫分）。
      * {@code aicalllogbean.requestId}——全链路请求 ID。
      * {@code modelsconfigbean} 的两个价格列——token 单价（分/百万）。</p>
      *
@@ -297,6 +297,8 @@ public class TableSchemaInitializer implements ApplicationListener<ApplicationRe
         execute("CREATE TABLE IF NOT EXISTS aiweeklyreportbean (\"weekStart\" varchar(16), \"weekEnd\" varchar(16), \"totalCalls\" int8, \"successCalls\" int8, \"failedCalls\" int8, \"totalTokens\" int8, \"costCents\" int8, \"avgLatencyMs\" int8, \"avgFirstTokenMs\" int8, \"topUser\" varchar(255), \"topModel\" varchar(255), \"iid\" bigserial NOT NULL PRIMARY KEY, \"lastuser\" varchar(255), \"createtime\" timestamp DEFAULT now(), \"updatetime\" timestamp, \"enable\" boolean DEFAULT true, \"app\" varchar(255))");
 
         execute("CREATE INDEX IF NOT EXISTS idx_aicalllog_requestid ON aicalllogbean (\"requestId\")");
+        // 按模型维度排查（某模型失败率/耗时异常）时避免全表扫描
+        execute("CREATE INDEX IF NOT EXISTS idx_aicalllog_model_time ON aicalllogbean (\"modelName\", \"createtime\")");
         execute("ALTER TABLE modelsconfigbean ADD COLUMN IF NOT EXISTS \"priceInputPerMillion\" int8");
         execute("ALTER TABLE modelsconfigbean ADD COLUMN IF NOT EXISTS \"priceOutputPerMillion\" int8");
     }

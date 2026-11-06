@@ -9,6 +9,7 @@ vi.mock("@/api/modelsConfig", () => ({
     create: vi.fn(),
     update: vi.fn(),
     delete: vi.fn(),
+    testConnection: vi.fn(),
   },
 }));
 
@@ -37,6 +38,9 @@ const rows = {
       upstreamModel: "deepseek-chat",
       embedModel: "text-embedding-v3",
       apiKey: "****abcd",
+      enable: true,
+      priceInputPerMillion: 200,
+      priceOutputPerMillion: 800,
     },
     {
       iid: 2,
@@ -56,15 +60,29 @@ const rows = {
 const mountView = () =>
   mount(ModelsConfigView, {
     global: {
-      stubs: { Search: true, CirclePlusFilled: true, Edit: true, Delete: true },
+      stubs: { Search: true, CirclePlusFilled: true, Edit: true, Delete: true, Connection: true },
     },
   });
+
+/** 与后端 ModelConnectionTestResult 对齐：服务端探测结果只含状态与耗时 */
+const probeOk = {
+  iid: 1,
+  modelName: "DeepSeek Chat",
+  upstreamModel: "deepseek-chat",
+  status: "ok",
+  modelAvailable: true,
+  httpStatus: 200,
+  latencyMs: 38,
+  message: "服务连接成功，模型已就绪",
+  checkedAt: 1762000001000,
+};
 
 const setupSuccess = () => {
   vi.mocked(modelsConfigApi.getPageList).mockResolvedValue(ok(rows));
   vi.mocked(modelsConfigApi.create).mockResolvedValue(ok(true));
   vi.mocked(modelsConfigApi.update).mockResolvedValue(ok(true));
   vi.mocked(modelsConfigApi.delete).mockResolvedValue(ok(true));
+  vi.mocked(modelsConfigApi.testConnection).mockResolvedValue(ok(probeOk));
 };
 
 /** 每个用例只调用一次：对同一方法二次 spyOn 会丢弃第一次的引用 */
@@ -130,6 +148,10 @@ describe("ModelsConfigView", () => {
     expect(table.text()).toContain("deepseek-chat");
     expect(table.text()).toContain("OpenAI 兼容");
     expect(table.text()).toContain("通义千问");
+    expect(table.text()).toContain("200 / 800");
+    expect(table.text()).toContain("未定价");
+    expect(table.text()).toContain("未测试");
+    expect(table.findAll(".el-switch")[0].classes()).toContain("is-checked");
     const secondRow = wrapper.findAll(".el-table__row")[1];
     expect(secondRow.text()).toContain("-");
     expect(wrapper.find(".el-pagination").exists()).toBe(true);
@@ -196,6 +218,9 @@ describe("ModelsConfigView", () => {
         upstreamModel: "",
         embedModel: "",
         apiKey: "",
+        enable: true,
+        priceInputPerMillion: null,
+        priceOutputPerMillion: null,
       },
     });
     expect(spies.success).toHaveBeenCalledWith("新建成功");
@@ -327,6 +352,58 @@ describe("ModelsConfigView", () => {
     expect(spies.error).toHaveBeenCalledWith("删除失败，请稍后重试");
     // 失败不刷新列表
     expect(modelsConfigApi.getPageList).toHaveBeenCalledTimes(2);
+  });
+
+  it("启用开关只提交 iid 与 enable，失败时开关保持原状态", async () => {
+    const { success, error } = createMessageSpies();
+    const wrapper = mountView();
+    await flushPromises();
+
+    await wrapper.findAll(".el-switch")[0].trigger("click");
+    await flushPromises();
+    expect(modelsConfigApi.update).toHaveBeenCalledWith({
+      data: { iid: 1, enable: false },
+      where: { iid: 1 },
+    });
+    expect(success).toHaveBeenCalledWith("已停用该模型");
+    expect(wrapper.findAll(".el-switch")[0].classes()).not.toContain("is-checked");
+
+    vi.mocked(modelsConfigApi.update).mockResolvedValueOnce(fail("locked"));
+    await wrapper.findAll(".el-switch")[0].trigger("click");
+    await flushPromises();
+    expect(error).toHaveBeenCalledWith("locked");
+    expect(wrapper.findAll(".el-switch")[0].classes()).not.toContain("is-checked");
+  });
+
+  it("连接测试只传 iid，按后端状态标记连接结果；非直连模型不显示入口", async () => {
+    const { success, warning } = createMessageSpies();
+    const wrapper = mountView();
+    await flushPromises();
+
+    const testButton = wrapper
+      .findAll(".el-table__row")[0]
+      .findAll("button")
+      .find((button) => button.text().includes("测试连接"));
+    await testButton!.trigger("click");
+    await flushPromises();
+
+    expect(modelsConfigApi.testConnection).toHaveBeenCalledWith({ data: { iid: 1 } });
+    expect(success).toHaveBeenCalledWith("服务连接成功，模型已就绪（38ms）");
+    expect(wrapper.findAll(".el-table__row")[0].text()).toContain("可用");
+
+    vi.mocked(modelsConfigApi.testConnection).mockResolvedValue(
+      ok({ ...probeOk, status: "model_missing", modelAvailable: false, message: "模型列表中不存在该模型" })
+    );
+    await testButton!.trigger("click");
+    await flushPromises();
+    expect(warning).toHaveBeenCalledWith("模型列表中不存在该模型");
+    expect(wrapper.findAll(".el-table__row")[0].text()).toContain("模型缺失");
+
+    const secondRowButtons = wrapper
+      .findAll(".el-table__row")[1]
+      .findAll("button")
+      .map((button) => button.text());
+    expect(secondRowButtons.some((text) => text.includes("测试连接"))).toBe(false);
   });
 
   it("保存失败：错误码与请求异常分别提示并关闭 loading", async () => {

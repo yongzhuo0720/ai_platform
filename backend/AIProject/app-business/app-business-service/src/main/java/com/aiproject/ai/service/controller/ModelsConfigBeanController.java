@@ -21,6 +21,8 @@ import java.util.List;
 import com.heneng.hnsp.common.croe.model.Result;
 import io.swagger.annotations.ApiParam;
 import com.aiproject.ai.service.bean.ModelsConfigBean;
+import com.aiproject.ai.service.gateway.ModelConnectionProbe;
+import com.aiproject.ai.service.gateway.dto.ModelConnectionTestResult;
 import com.aiproject.ai.service.holde.ModelsConfigBeanHolder;
 
 /**
@@ -40,6 +42,9 @@ public class ModelsConfigBeanController {
      */
     @Autowired
     ModelsConfigBeanHolder modelsConfigBeanHolder = null;
+
+    @Autowired
+    ModelConnectionProbe modelConnectionProbe;
 
     /**
      * 功能描述: 创建.
@@ -147,5 +152,20 @@ public class ModelsConfigBeanController {
     // 2026-10-29：原 maskApiKeys 私有方法已删除。
     // 脱敏逻辑下沉到 ModelsConfigBeanHolder.queryListForCaller / queryPageForCaller，
     // 这样任何新增的调用方都不会漏掉脱敏。
+
+    /**
+     * 连接测试：只收 iid，凭据由服务端读取；不写用量审计、不占配额。
+     * <p>返回体不包含服务地址与密钥，只有状态、耗时和中文原因。</p>
+     */
+    @ControllerLog(value = "模型连接测试", user = "uid", target = "")
+    @PostMapping("/testConnection")
+    @ApiOperation(value = "连接测试", httpMethod = "POST", notes = "管理员：探测已保存模型服务的真实可达性")
+    public Result<ModelConnectionTestResult> testConnection(
+            @LoginUserId String uid,
+            @ApiParam(required = true, value = "仅需 iid") @RequestBody ModelsConfigBean data) {
+        CheckUtils.objectCheckNull(uid, "请先登录", CodeEnum.FAILED_USER_LOGIN.getCode(), "");
+        CheckUtils.objectCheckNull(data, "数据不能空", CodeEnum.NULL.getCode(), null);
+        return modelConnectionProbe.test(uid, data);
+    }
 
 }

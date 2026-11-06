@@ -4,11 +4,13 @@ import {
   aiGatewayAdminApi,
   type AiCallLog,
   type AiGatewayConfigStatus,
+  type AiGatewayHealth,
   type AiGatewaySummary,
   type AiGatewayUserOption,
   type AiQuotaOverview,
   type AiQuotaView,
 } from '@/api/aiGatewayAdmin'
+import { modelsConfigApi, type ModelConnectionTestResult } from '@/api/modelsConfig'
 import { weeklyReportApi, type WeeklyReport } from '@/api/weeklyReport'
 import { debug } from '@/utils/debug'
 import { isConfirmCancelled } from '@/utils/confirm'
@@ -25,6 +27,15 @@ const STATUS_LABELS: Record<string, string> = {
   failed: '失败',
   blocked: '已拦截',
   aborted: '已中断',
+}
+
+const PROBE_LABELS: Record<string, string> = {
+  ok: '可用',
+  model_missing: '模型缺失',
+  auth_failed: '鉴权失败',
+  rate_limited: '已限流',
+  unreachable: '不可达',
+  http_error: 'HTTP 异常',
 }
 
 function formatDate(date: Date): string {
@@ -76,6 +87,12 @@ export function useIndex() {
 },
     reports: [] as WeeklyReport[],
     reportGenerating: false,
+    health: null as AiGatewayHealth | null,
+    healthLoading: false,
+    probeResults: {} as Record<number, ModelConnectionTestResult>,
+    probingIid: null as number | null,
+    probingAll: false,
+    probeProgress: { done: 0, total: 0 },
   })
 
   const trendMax = computed(() =>
@@ -96,7 +113,6 @@ export function useIndex() {
     loadSummary()
     loadReports()
 })
-
   async function loadConfig() {
     try {
       const { data: res } = await aiGatewayAdminApi.getConfig()
@@ -114,6 +130,115 @@ export function useIndex() {
   function retryOverview() {
     loadConfig()
     loadSummary()
+    loadHealth()
+  }
+
+  async function loadHealth() {
+    state.healthLoading = true
+    try {
+      const { data: res } = await aiGatewayAdminApi.getHealth()
+      if (res.resp_code === 0) {
+        state.health = res.datas
+      } else {
+        ElMessage.error(res.resp_msg || '获取健康面板失败')
+      }
+    } catch (err) {
+      debug.error('获取 AI 网关健康面板失败', err)
+      ElMessage.error('获取健康面板失败，请稍后重试')
+    } finally {
+      state.healthLoading = false
+    }
+  }
+
+  /**
+   * 连接测试只传 iid，密钥由服务端读取。
+   * silent=true 用于「测试全部」，避免每个模型弹一条消息。
+   */
+  async function testModel(iid: number, silent = false): Promise<ModelConnectionTestResult | undefined> {
+    state.probingIid = iid
+    try {
+      const { data: res } = await modelsConfigApi.testConnection({ data: { iid } })
+      if (res.resp_code === 0 && res.datas) {
+        const result = res.datas as ModelConnectionTestResult
+        state.probeResults[iid] = result
+        if (!silent) {
+          if (result.status === 'ok') {
+            ElMessage.success(`${result.message}（${result.latencyMs}ms）`)
+          } else if (result.status === 'model_missing') {
+            ElMessage.warning(result.message)
+          } else {
+            ElMessage.error(result.message)
+          }
+        }
+        return result
+      }
+      if (!silent) {
+        ElMessage.error(res.resp_msg || '连接测试失败')
+      }
+      return undefined
+    } catch (err) {
+      debug.error('模型连接测试失败', err)
+      if (!silent) {
+        ElMessage.error('连接测试失败，请稍后重试')
+      }
+      return undefined
+    } finally {
+      state.probingIid = null
+    }
+  }
+
+  /** 顺序测试，避免并发打满上游；每一步都写回真实探测结果 */
+  async function testAllModels() {
+    const targets = (state.health?.models ?? []).filter(
+      (model) => model.iid != null && model.ready
+    )
+    if (!targets.length) {
+      ElMessage.warning('没有可测试的直连模型，请先补全服务地址、密钥和上游模型名')
+      return
+    }
+    state.probingAll = true
+    state.probeProgress = { done: 0, total: targets.length }
+    let ok = 0
+    let missing = 0
+    let failed = 0
+    try {
+      for (const model of targets) {
+        const result = await testModel(model.iid, true)
+        if (result?.status === 'ok') {
+          ok++
+        } else if (result?.status === 'model_missing') {
+          missing++
+        } else {
+          failed++
+        }
+        state.probeProgress = { ...state.probeProgress, done: state.probeProgress.done + 1 }
+      }
+      ElMessage.success(`测试完成：可用 ${ok}，模型缺失 ${missing}，失败 ${failed}`)
+    } finally {
+      state.probingAll = false
+    }
+  }
+
+  function probeResult(iid: number | null | undefined): ModelConnectionTestResult | undefined {
+    return iid == null ? undefined : state.probeResults[iid]
+  }
+
+  function probeLabel(iid: number | null | undefined): string {
+    const result = probeResult(iid)
+    return result ? (PROBE_LABELS[result.status] ?? result.status) : '未测试'
+  }
+
+  function probeTagType(iid: number | null | undefined): 'success' | 'warning' | 'danger' | 'info' {
+    const result = probeResult(iid)
+    if (!result) return 'info'
+    if (result.status === 'ok') return 'success'
+    if (result.status === 'model_missing') return 'warning'
+    return 'danger'
+  }
+
+  function formatProbeTime(ts: number | null | undefined): string {
+    if (!ts) return '-'
+    return formatDateValue(new Date(ts))
   }
 
   function dateParams() {
@@ -238,6 +363,9 @@ export function useIndex() {
     }
     if (name === 'quotas' && !state.quotas) {
       loadQuotas()
+    }
+    if (name === 'health' && !state.health) {
+      loadHealth()
     }
   }
 
@@ -479,6 +607,13 @@ export function useIndex() {
     formatCost,
     loadReports,
     generateWeeklyReport,
+    loadHealth,
+    testModel,
+    testAllModels,
+    probeResult,
+    probeLabel,
+    probeTagType,
+    formatProbeTime,
     formatTime,
     trendHeight,
     failedHeight,

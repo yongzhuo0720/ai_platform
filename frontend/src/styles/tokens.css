@@ -49,6 +49,9 @@
 
   --success: #34c759;
   --success-soft: rgba(52, 199, 89, 0.18);
+  --success-border: rgba(52, 199, 89, 0.4);
+  --warning-soft: rgba(255, 159, 10, 0.12);
+  --warning-border: rgba(255, 159, 10, 0.4);
 
   --primary: #7c93ff;
   --warning: #ff9f0a;
@@ -176,6 +179,9 @@
 
   --success: #16a34a;
   --success-soft: rgba(22, 163, 74, 0.12);
+  --success-border: rgba(22, 163, 74, 0.4);
+  --warning-soft: rgba(234, 139, 0, 0.12);
+  --warning-border: rgba(234, 139, 0, 0.4);
   --warning: #ea8b00;
   --error: #dc2626;
 

@@ -123,7 +123,7 @@ public  class ModelsConfigBeanHolder  {
          */
         if ((data.getApiKey() == null || data.getApiKey().trim().isEmpty())
                 && where != null && where.getIid() != null) {
-            ModelsConfigBean existing = queryByIid(where.getIid());
+            ModelsConfigBean existing = findByIid(where.getIid());
             if (existing != null && existing.getApiKey() != null) {
                 data.setApiKey(existing.getApiKey());
             }
@@ -136,7 +136,16 @@ public  class ModelsConfigBeanHolder  {
         return Result.succeed(true,"修改成功");
     }
 
-    private ModelsConfigBean queryByIid(Long iid) {
+    /**
+     * 按 iid 查单行（内部使用，返回<b>真实密钥</b>）。
+     *
+     * <p>只允许服务端组件调用（连接测试、网关解析）；对浏览器的查询仍走
+     * {@link #queryListForCaller} / {@link #queryPageForCaller} 的脱敏出口。</p>
+     */
+    public ModelsConfigBean findByIid(Long iid) {
+        if (iid == null) {
+            return null;
+        }
         ModelsConfigBean where = new ModelsConfigBean();
         where.setIid(iid);
         List<ModelsConfigBean> list = modelsConfigBeanMapper.select(null, where);

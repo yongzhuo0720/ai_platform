@@ -3,6 +3,7 @@ package com.aiproject.ai.service.controller;
 import com.aiproject.ai.service.bean.AiCallLogBean;
 import com.aiproject.ai.service.bean.AiUserQuotaBean;
 import com.aiproject.ai.service.gateway.dto.AiGatewayConfigStatus;
+import com.aiproject.ai.service.gateway.dto.AiGatewayHealth;
 import com.aiproject.ai.service.gateway.dto.AiGatewayLogQuery;
 import com.aiproject.ai.service.gateway.dto.AiGatewaySummary;
 import com.aiproject.ai.service.gateway.dto.AiGatewayUserOption;
@@ -41,6 +42,12 @@ public class AiGatewayAdminController {
     @PostMapping("/config")
     public Result<AiGatewayConfigStatus> config(@LoginUserId String uid) {
         return adminHolder.configStatus(uid);
+    }
+
+    @ApiOperation(value = "健康面板", httpMethod = "POST", notes = "配置完整性 + 今日调用统计，不含地址与密钥")
+    @PostMapping("/health")
+    public Result<AiGatewayHealth> health(@LoginUserId String uid) {
+        return adminHolder.health(uid);
     }
 
     @ApiOperation(value = "用量汇总", httpMethod = "POST", notes = "卡片 + 趋势 + 模块 + 用户排行")

@@ -4,11 +4,13 @@ import com.aiproject.ai.permission.bean.MyUserBaseDb;
 import com.aiproject.ai.permission.holde.MyUserBaseDbHolder;
 import com.aiproject.ai.service.bean.AiCallLogBean;
 import com.aiproject.ai.service.bean.AiUserQuotaBean;
+import com.aiproject.ai.service.bean.ModelsConfigBean;
 import com.aiproject.ai.service.gateway.AiGatewayConfigResolver;
 import com.aiproject.ai.service.gateway.AiGatewayGuard;
 import com.aiproject.ai.service.gateway.AiGatewayProperties;
 import com.aiproject.ai.service.gateway.ModelGatewayResolver;
 import com.aiproject.ai.service.gateway.dto.AiGatewayConfigStatus;
+import com.aiproject.ai.service.gateway.dto.AiGatewayHealth;
 import com.aiproject.ai.service.gateway.dto.AiGatewayLogQuery;
 import com.aiproject.ai.service.gateway.dto.AiGatewayModelStat;
 import com.aiproject.ai.service.gateway.dto.AiGatewayModuleStat;
@@ -79,6 +81,9 @@ public class AiGatewayAdminHolder {
     @Autowired
     MyUserBaseDbHolder myUserBaseDbHolder;
 
+    @Autowired
+    ModelsConfigBeanHolder modelsConfigBeanHolder;
+
     public boolean isAdmin(String uid) {
         return myUserBaseDbHolder.isAdmin(uid);
     }
@@ -135,6 +140,62 @@ public class AiGatewayAdminHolder {
     }
 
     /**
+     * 健康面板：网关运行参数 + Dify 模块配置 + 直连模型配置完整性 + 今日调用统计。
+     *
+     * <p>这里只回答「配置是否完整」，不做实时上游探测——探测是显式动作
+     * （连接测试），否则每刷新一次面板就会打出 N 个外部请求。
+     * 返回值不包含 baseUrl / apiKey。</p>
+     */
+    public Result<AiGatewayHealth> health(String adminUid) {
+        if (!isAdmin(adminUid)) {
+            return Result.failed(null, "仅管理员可访问 AI 用量看板");
+        }
+        AiGatewayConfigStatus status = buildConfigStatus();
+        AiGatewayHealth health = new AiGatewayHealth();
+        health.setGatewayEnabled(status.isEnabled());
+        health.setRateLimitPerMinute(status.getRateLimitPerMinute());
+        health.setDefaultDailyTokenQuota(status.getDefaultDailyTokenQuota());
+        health.setQuotaReserveTokens(properties.getQuotaReserveTokens());
+        health.getModules().addAll(status.getModules());
+
+        ModelsConfigBean where = new ModelsConfigBean();
+        where.setProtocol(ModelGatewayResolver.PROTOCOL_OPENAI);
+        List<ModelsConfigBean> configs = modelsConfigBeanHolder.queryList(where, null);
+        if (configs != null) {
+            for (ModelsConfigBean item : configs) {
+                if (item == null) {
+                    continue;
+                }
+                AiGatewayHealth.ModelHealth model = new AiGatewayHealth.ModelHealth();
+                model.setIid(item.getIid());
+                model.setName(item.getName());
+                model.setUpstreamModel(item.getUpstreamModel());
+                model.setEnabled(!Boolean.FALSE.equals(item.getEnable()));
+                model.setReady(notBlank(item.getBaseUrl()) && notBlank(item.getApiKey())
+                        && notBlank(item.getUpstreamModel()));
+                model.setPriced(item.getPriceInputPerMillion() != null
+                        || item.getPriceOutputPerMillion() != null);
+                model.setHasEmbedModel(notBlank(item.getEmbedModel()));
+                health.getModels().add(model);
+            }
+        }
+        Collections.sort(health.getModels(), new Comparator<AiGatewayHealth.ModelHealth>() {
+            @Override
+            public int compare(AiGatewayHealth.ModelHealth a, AiGatewayHealth.ModelHealth b) {
+                return Long.compare(a.getIid() == null ? 0L : a.getIid(),
+                        b.getIid() == null ? 0L : b.getIid());
+            }
+        });
+
+        LocalDate today = LocalDate.now();
+        AiGatewaySummary todaySummary = new AiGatewaySummary();
+        scanLogs(null, new DateRange(today, today), todaySummary);
+        health.setToday(todaySummary);
+        health.setCheckedAt(System.currentTimeMillis());
+        return Result.succeed(health, "查询成功");
+    }
+
+    /**
      * 分页扫描调用日志并聚合到 summary（趋势/模块/模型细分/延迟）。
      *
      * @param userIdOrNull 为 null 时统计全部用户，否则只统计该用户
@@ -144,7 +205,7 @@ public class AiGatewayAdminHolder {
         Map<String, AiGatewayTrendPoint> trend = initTrend(range.start, range.end);
         Map<String, AiGatewayModuleStat> modules = initModules();
         Map<String, AiGatewayModelStat> models = new LinkedHashMap<String, AiGatewayModelStat>();
-        Map<String, long[]> modelLatency = new HashMap<String, long[]>();
+        Map<String, List<Long>> modelLatencies = new HashMap<String, List<Long>>();
         Map<String, long[]> userStats = new HashMap<String, long[]>();
         List<Long> latencies = new ArrayList<Long>();
         List<Long> firstTokens = new ArrayList<Long>();
@@ -225,7 +286,7 @@ public class AiGatewayAdminHolder {
                     modelStat = new AiGatewayModelStat();
                     modelStat.setModel(modelName);
                     models.put(modelName, modelStat);
-                    modelLatency.put(modelName, new long[2]);
+                    modelLatencies.put(modelName, new ArrayList<Long>());
                 }
                 modelStat.setCalls(modelStat.getCalls() + 1);
                 modelStat.setTokens(modelStat.getTokens() + tokens);
@@ -239,9 +300,7 @@ public class AiGatewayAdminHolder {
                     modelStat.setPriced(true);
                 }
                 if (row.getLatencyMs() != null) {
-                    long[] latency = modelLatency.get(modelName);
-                    latency[0] += row.getLatencyMs();
-                    latency[1]++;
+                    modelLatencies.get(modelName).add(row.getLatencyMs());
                 }
 
                 if (userIdOrNull == null && row.getUserId() != null) {
@@ -297,9 +356,18 @@ public class AiGatewayAdminHolder {
             }
         });
         for (AiGatewayModelStat modelStat : summary.getModels()) {
-            long[] latency = modelLatency.get(modelStat.getModel());
-            if (latency != null && latency[1] > 0) {
-                modelStat.setAvgLatencyMs(latency[0] / latency[1]);
+            List<Long> latency = modelLatencies.get(modelStat.getModel());
+            if (latency != null && !latency.isEmpty()) {
+                long latencySum = 0;
+                for (Long value : latency) {
+                    latencySum += value;
+                }
+                modelStat.setAvgLatencyMs(latencySum / latency.size());
+                modelStat.setP95LatencyMs(percentile(latency, 0.95));
+            }
+            if (modelStat.getCalls() > 0) {
+                modelStat.setSuccessRate(round2(
+                        (modelStat.getCalls() - modelStat.getFailed()) * 100.0 / modelStat.getCalls()));
             }
             // 有调用、消耗了 token、却算不出成本 → 该模型没配价格。
             // 汇总里标记出来，避免看板把「未配置」显示成「免费」。

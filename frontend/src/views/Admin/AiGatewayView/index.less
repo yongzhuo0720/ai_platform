@@ -130,6 +130,65 @@
   color: #ffb36b;
 }
 
+.gw-hint {
+  font-size: 12px;
+  color: var(--text-secondary);
+  line-height: 1.5;
+}
+
+.gw-hint-right {
+  margin-left: auto;
+}
+
+.gw-probe-meta {
+  margin-left: 8px;
+  font-size: 11px;
+  color: var(--text-secondary);
+  font-family: Consolas, monospace;
+}
+
+.gw-health-panel + .gw-health-panel {
+  margin-top: 16px;
+}
+
+.gw-module-health {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 12px;
+}
+
+.gw-module-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 12px 16px;
+  border-radius: 8px;
+  border: 1px solid var(--glass-border);
+  font-size: 13px;
+
+  &.ok {
+    color: var(--success);
+    border-color: var(--success-border);
+    background: var(--success-soft);
+  }
+
+  &.missing {
+    color: var(--warning);
+    border-color: var(--warning-border);
+    background: var(--warning-soft);
+  }
+
+  .gw-module-name {
+    font-weight: 600;
+  }
+
+  .gw-module-state {
+    font-size: 12px;
+    opacity: 0.85;
+  }
+}
+
 .gw-quota-default {
   font-size: 13px;
   color: var(--text-secondary);

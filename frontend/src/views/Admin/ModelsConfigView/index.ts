@@ -1,7 +1,7 @@
 import { reactive, onMounted, ref } from 'vue'
 import type { FormInstance, FormRules } from 'element-plus'
 import { ElMessage, ElMessageBox, ElLoading } from 'element-plus'
-import { modelsConfigApi } from '@/api/modelsConfig'
+import { modelsConfigApi, type ModelConnectionTestResult } from '@/api/modelsConfig'
 import { debug } from '@/utils/debug'
 
 export function useIndex() {
@@ -10,6 +10,9 @@ export function useIndex() {
   const state = reactive({
     tableData: [] as any[],
     loading: false,
+    testingIid: null as number | null,
+    togglingIid: null as number | null,
+    connectionResults: {} as Record<number, ModelConnectionTestResult>,
     formInline: {
       name: '',
     },
@@ -87,6 +90,9 @@ export function useIndex() {
         upstreamModel: '',
         embedModel: '',
         apiKey: '',
+        enable: true,
+        priceInputPerMillion: null,
+        priceOutputPerMillion: null,
       },
     }
   }
@@ -97,7 +103,63 @@ export function useIndex() {
       title: '编辑模型配置',
       dialogVisible: true,
       type: 'edit',
-      form: { ...row },
+      form: {
+        ...row,
+        // 基类字段可能为 null（历史行），显式归一化，避免开关/输入框出现 undefined
+        enable: row.enable !== false,
+        priceInputPerMillion: row.priceInputPerMillion ?? null,
+        priceOutputPerMillion: row.priceOutputPerMillion ?? null,
+      },
+    }
+  }
+
+  /** 启用/停用：只提交 iid + enable，避免把列表中脱敏后的 apiKey 空值写回 */
+  const onToggleEnable = async (row: any, enabled: boolean) => {
+    if (row?.iid == null) return
+    state.togglingIid = row.iid
+    try {
+      const { data: res } = await modelsConfigApi.update({
+        data: { iid: row.iid, enable: enabled },
+        where: { iid: row.iid },
+      })
+      if (res.resp_code === 0) {
+        row.enable = enabled
+        ElMessage.success(enabled ? '已启用该模型' : '已停用该模型')
+      } else {
+        ElMessage.error(res.resp_msg || '状态更新失败')
+      }
+    } catch (err) {
+      debug.error('更新模型启用状态失败', err)
+      ElMessage.error('状态更新失败，请稍后重试')
+    } finally {
+      state.togglingIid = null
+    }
+  }
+
+  /** 连接测试只传 iid：密钥由服务端读取，前端永远拿不到明文 */
+  const onTestConnection = async (row: any) => {
+    if (row?.iid == null) return
+    state.testingIid = row.iid
+    try {
+      const { data: res } = await modelsConfigApi.testConnection({ data: { iid: row.iid } })
+      if (res.resp_code === 0 && res.datas) {
+        const result = res.datas as ModelConnectionTestResult
+        state.connectionResults[row.iid] = result
+        if (result.status === 'ok') {
+          ElMessage.success(`${result.message}（${result.latencyMs}ms）`)
+        } else if (result.status === 'model_missing') {
+          ElMessage.warning(result.message)
+        } else {
+          ElMessage.error(result.message)
+        }
+      } else {
+        ElMessage.error(res.resp_msg || '连接测试失败')
+      }
+    } catch (err) {
+      debug.error('模型连接测试失败', err)
+      ElMessage.error('连接测试失败，请稍后重试')
+    } finally {
+      state.testingIid = null
     }
   }
 
@@ -133,6 +195,14 @@ export function useIndex() {
         // 直连配置的完整性校验：查询接口不下发密钥（掩码为空），
         // 编辑时密钥留空 = 沿用已配置的密钥，由后端合并
         const form = state.params.form
+        for (const key of ['priceInputPerMillion', 'priceOutputPerMillion']) {
+          const value = form[key]
+          if (value !== null && value !== undefined && value !== ''
+            && (!Number.isInteger(Number(value)) || Number(value) < 0)) {
+            ElMessage.warning('单价必须是不小于 0 的整数（单位：分/百万 tokens）')
+            return
+          }
+        }
         if (form.protocol === 'openai') {
           // 允许「纯向量」配置行：对话用 A 家、向量用 B 家时（DeepSeek 没有
           // embeddings 接口，这是必需组合），B 家那行没有上游对话模型，
@@ -205,6 +275,38 @@ export function useIndex() {
     return val.replace('T', ' ')
   }
 
+  const priceText = (row: any): string => {
+    if (row?.priceInputPerMillion == null && row?.priceOutputPerMillion == null) {
+      return '未定价'
+    }
+    return `${row.priceInputPerMillion ?? '-'} / ${row.priceOutputPerMillion ?? '-'}`
+  }
+
+  const connectionResult = (row: any): ModelConnectionTestResult | undefined =>
+    row?.iid != null ? state.connectionResults[row.iid] : undefined
+
+  const connectionLabel = (row: any): string => {
+    const result = connectionResult(row)
+    if (!result) return '未测试'
+    const labels: Record<string, string> = {
+      ok: '可用',
+      model_missing: '模型缺失',
+      auth_failed: '鉴权失败',
+      rate_limited: '已限流',
+      unreachable: '不可达',
+      http_error: 'HTTP 异常',
+    }
+    return labels[result.status] ?? result.status
+  }
+
+  const connectionTagType = (row: any): 'success' | 'warning' | 'danger' | 'info' => {
+    const result = connectionResult(row)
+    if (!result) return 'info'
+    if (result.status === 'ok') return 'success'
+    if (result.status === 'model_missing') return 'warning'
+    return 'danger'
+  }
+
   return {
     ruleFormRef,
     state,
@@ -213,8 +315,14 @@ export function useIndex() {
     showEdit,
     showDelete,
     onSave,
+    onToggleEnable,
+    onTestConnection,
     handleSizeChange,
     handleCurrentChange,
     formatTime,
+    priceText,
+    connectionResult,
+    connectionLabel,
+    connectionTagType,
   }
 }
