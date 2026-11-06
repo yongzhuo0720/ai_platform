@@ -233,7 +233,7 @@ onBeforeUnmount(() => {
   height: 38px;
   padding: 0 12px;
   border: none;
-  border-radius: 8px;
+  border-radius: var(--radius-sm);
   background: transparent;
   color: var(--layout-menu-text);
   font-size: 14px;
@@ -546,16 +546,6 @@ onBeforeUnmount(() => {
 }
 
 @media (max-width: 768px) {
-  .notification-trigger {
-    justify-content: center;
-    padding: 0;
-  }
-
-  .notification-trigger-text,
-  .notification-trigger-count {
-    display: none !important;
-  }
-
   .notification-panel {
     max-width: calc(100vw - 96px);
   }

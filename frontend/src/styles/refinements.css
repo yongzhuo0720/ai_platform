@@ -1,6 +1,4 @@
 :root {
-  --layout-sidebar-bg: #17263c;
-  --layout-menu-active-bg: rgba(77, 166, 255, 0.14);
   --glass-shadow: 0 2px 8px rgba(0, 20, 50, 0.12);
   --glass-shadow-hover: 0 4px 12px rgba(0, 20, 50, 0.18);
 }
@@ -13,23 +11,8 @@ html[data-theme="light"] #app {
   background: #f3f6fa;
 }
 
-html[data-theme="light"] {
-  --layout-sidebar-bg: #ffffff;
-  --layout-menu-active-bg: #eaf2fc;
-}
-
 .shell-main {
   min-width: 0;
-}
-
-.main-menu .el-menu-item,
-.main-menu .el-sub-menu {
-  margin-bottom: 4px;
-}
-
-.brand-mark,
-.account-box {
-  box-shadow: none;
 }
 
 .page-section .page-hero {
@@ -116,6 +99,11 @@ textarea:focus-visible {
     inset: 0 auto 0 0;
     width: var(--layout-sidebar-width);
     z-index: 30;
+  }
+
+  /* 抽屉宽度固定，折叠按钮在移动端没有意义 */
+  .shell.is-mobile-open .sidebar-footer {
+    display: none;
   }
 
   .shell.is-mobile-open .mobile-menu-backdrop {

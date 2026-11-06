@@ -151,6 +151,30 @@
   --radius-xl: 28px;
   --radius-2xl: 40px;
 
+  /* 侧边栏导航（深色默认）：统一由这些 token 驱动，组件不再各写各的 */
+  --nav-bg: #182335;
+  --nav-border: rgba(255, 255, 255, 0.06);
+  --nav-text: rgba(233, 239, 250, 0.72);
+  --nav-text-hover: #f8fafc;
+  --nav-active-text: #ffffff;
+  --nav-icon: rgba(233, 239, 250, 0.52);
+  --nav-active-icon: #a9b8ff;
+  --nav-hover-bg: rgba(255, 255, 255, 0.055);
+  --nav-active-bg: rgba(124, 147, 255, 0.16);
+  --nav-muted: rgba(233, 239, 250, 0.42);
+  --nav-kbd-bg: rgba(255, 255, 255, 0.05);
+  --nav-kbd-border: rgba(255, 255, 255, 0.12);
+  --nav-kbd-text: rgba(233, 239, 250, 0.45);
+
+  /* 旧组件（全局搜索、通知铃铛、折叠浮层）沿用 layout-* 名称，值指向 nav token */
+  --layout-sidebar-bg: var(--nav-bg);
+  --layout-menu-text: var(--nav-text);
+  --layout-menu-text-hover: var(--nav-text-hover);
+  --layout-menu-active-text: var(--nav-active-text);
+  --layout-menu-hover-bg: var(--nav-hover-bg);
+  --layout-popper-bg: #1c2740;
+  --layout-popper-border: rgba(255, 255, 255, 0.10);
+
   --transition-fast: 150ms cubic-bezier(0.4, 0, 0.2, 1);
   --transition-base: 250ms cubic-bezier(0.4, 0, 0.2, 1);
   --transition-slow: 400ms cubic-bezier(0.4, 0, 0.2, 1);
@@ -269,6 +293,30 @@
   --table-header-bg: #5485D4;
   --scrollbar-thumb: rgba(61, 91, 245, 0.3);
   --glass-light-blur: blur(18px) saturate(160%);
+
+  /* 侧边栏导航（浅色）：中性灰底 + 品牌蓝激活，避免整块浅蓝与左侧竖条的老式后台感 */
+  --nav-bg: #f7f8fb;
+  --nav-border: rgba(15, 23, 42, 0.075);
+  --nav-text: #414b5e;
+  --nav-text-hover: #111827;
+  --nav-active-text: #3d5bf5;
+  --nav-icon: #7b8497;
+  --nav-active-icon: #3d5bf5;
+  --nav-hover-bg: rgba(15, 23, 42, 0.045);
+  --nav-active-bg: rgba(61, 91, 245, 0.10);
+  --nav-muted: #8a93a5;
+  --nav-kbd-bg: #ffffff;
+  --nav-kbd-border: rgba(15, 23, 42, 0.10);
+  --nav-kbd-text: #8a93a5;
+
+  /* 旧组件别名（与深色块同名，覆盖为浅色值） */
+  --layout-sidebar-bg: var(--nav-bg);
+  --layout-menu-text: var(--nav-text);
+  --layout-menu-text-hover: var(--nav-text-hover);
+  --layout-menu-active-text: var(--nav-active-text);
+  --layout-menu-hover-bg: var(--nav-hover-bg);
+  --layout-popper-bg: #ffffff;
+  --layout-popper-border: rgba(15, 23, 42, 0.10);
 
   /* 危险色（浅色模式：使用项目既有的 #dc2626 红色） */
   --danger: #dc2626;

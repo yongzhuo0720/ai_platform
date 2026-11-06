@@ -353,7 +353,7 @@ onBeforeUnmount(() => {
   height: 38px;
   padding: 0 12px;
   border: none;
-  border-radius: 8px;
+  border-radius: var(--radius-sm);
   background: transparent;
   color: var(--layout-menu-text);
   font-size: 14px;
@@ -404,6 +404,13 @@ onBeforeUnmount(() => {
   font-size: 11px;
   line-height: 1;
   white-space: nowrap;
+}
+
+/* 侧栏触发器里的快捷键徽标跟随导航配色，弹层里的保持面板配色 */
+.global-search-trigger .global-search-kbd {
+  border-color: var(--nav-kbd-border);
+  background: var(--nav-kbd-bg);
+  color: var(--nav-kbd-text);
 }
 
 .global-search-overlay {
