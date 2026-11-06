@@ -13,6 +13,7 @@ import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
@@ -121,6 +122,26 @@ class ModelPriceResolverTest {
 
         // 不该抛异常；查不到就返回 null，让调用方记 0 成本
         assertNull(resolver.resolve("any-model"));
+    }
+
+    /**
+     * 首次加载失败不能把空表缓存 5 分钟：否则故障窗口内所有调用都会被记成 0 成本。
+     * 第二次调用必须重新查库并拿到真实价格。
+     */
+    @Test
+    void resolve_shouldRetryAfterInitialLoadFailureInsteadOfCachingEmptyResult() {
+        when(modelsConfigBeanMapper.select(isNull(), any(ModelsConfigBean.class)))
+                .thenThrow(new RuntimeException("数据库连接失败"))
+                .thenReturn(Arrays.<ModelsConfigBean>asList(
+                        config("M", "m", 100L, 300L)));
+
+        assertNull(resolver.resolve("m"));
+
+        ModelPriceResolver.Price price = resolver.resolve("m");
+        assertNotNull(price, "第二次调用应立即重试并拿到价格");
+        assertTrue(price.isConfigured());
+        org.mockito.Mockito.verify(modelsConfigBeanMapper,
+                org.mockito.Mockito.times(2)).select(isNull(), any(ModelsConfigBean.class));
     }
 
     /** 同一模型多次查询只查一次库（TTL 缓存生效） */

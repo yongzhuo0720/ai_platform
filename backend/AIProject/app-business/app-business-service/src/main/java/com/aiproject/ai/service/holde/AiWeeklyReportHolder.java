@@ -33,6 +33,13 @@ public class AiWeeklyReportHolder {
     private static final DateTimeFormatter DATE = DateTimeFormatter.ofPattern("yyyy-MM-dd");
     private static final int PAGE_SIZE = 500;
 
+    /**
+     * 安全上限：一周 50 万条调用已远超真实业务量。
+     * 超过时宁可报错，也不能把「只统计了前一部分」的快照落库——
+     * 周报会被当成完整数据用于成本与容量判断。
+     */
+    static final int MAX_PAGES = 1000;
+
     @Autowired
     AiCallLogBeanMapper<AiCallLogBean> callLogBeanMapper;
 
@@ -64,14 +71,22 @@ public class AiWeeklyReportHolder {
         Map<String, Long> byModel = new HashMap<String, Long>();
 
         int pageNum = 1;
-        while (pageNum <= 100) {
+        while (true) {
+            if (pageNum > MAX_PAGES) {
+                log.error("[周报] {} ~ {} 的调用记录超过 {} 条，放弃生成本周快照",
+                        monday.format(DATE), sunday.format(DATE), (long) MAX_PAGES * PAGE_SIZE);
+                return Result.failed(null,
+                        "本周调用记录超过统计上限（" + ((long) MAX_PAGES * PAGE_SIZE) + " 条），暂无法生成完整周报");
+            }
             PageRequest pageRequest = new PageRequest(pageNum, PAGE_SIZE);
             pageRequest.setOrder("iid");
             pageRequest.setDesc("asc");
             AiCallLogBean empty = new AiCallLogBean();
             Result<PageResult<AiCallLogBean>> result = callLogBeanMapper.selectPage(pageRequest, empty, where);
             if (result == null || result.getDatas() == null) {
-                break;
+                // 分页中途读失败不能 break：那会把前几页的部分统计当成整周结果落库
+                log.warn("[周报] 第 {} 页读取失败，放弃生成本周快照", pageNum);
+                return Result.failed(null, "读取调用日志失败，请稍后重试");
             }
             List<AiCallLogBean> rows = result.getDatas().getContent();
             if (rows == null || rows.isEmpty()) {

@@ -147,6 +147,10 @@ public class ModelPriceResolver {
             if (cache != null) {
                 return cache;
             }
+            // 首次加载就失败时不能把空表缓存 5 分钟：否则故障窗口内所有调用
+            // 都会被记成 0 成本，账单直接失真。返回空表但不更新 cacheAt，
+            // 下一次调用会立即重试数据库。
+            return fresh;
         }
         cache = fresh;
         cacheAt = System.currentTimeMillis();

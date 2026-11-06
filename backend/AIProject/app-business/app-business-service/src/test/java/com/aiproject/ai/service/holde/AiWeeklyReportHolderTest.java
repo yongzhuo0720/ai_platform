@@ -14,7 +14,10 @@ import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
+import java.util.ArrayList;
 import java.util.Collections;
+import java.util.List;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
@@ -23,6 +26,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
@@ -148,6 +152,69 @@ class AiWeeklyReportHolderTest {
         verifyNoInteractions(callLogBeanMapper, reportMapper);
     }
 
+    /**
+     * 旧实现停在 while (pageNum <= 100)：第 100 页之后的调用记录被静默丢弃，
+     * 周报看起来正常、数字却少了一截。现在必须一直翻到不满一页为止。
+     */
+    @Test
+    void aggregatesBeyondLegacyFiftyThousandRowCap() {
+        List<AiCallLogBean> fullPage = rows(500);
+        List<AiCallLogBean> tailPage = rows(3);
+        AtomicInteger pageCalls = new AtomicInteger();
+        when(callLogBeanMapper.selectPage(any(PageRequest.class),
+                any(AiCallLogBean.class), anyString()))
+                .thenAnswer(invocation -> Result.succeed(
+                        page(pageCalls.incrementAndGet() <= 100 ? fullPage : tailPage, 0),
+                        "查询成功"));
+        when(reportMapper.select(isNull(), any(AiWeeklyReportBean.class)))
+                .thenReturn(Collections.<AiWeeklyReportBean>emptyList());
+        when(reportMapper.install(any(AiWeeklyReportBean.class))).thenReturn(1);
+
+        Result<AiWeeklyReportBean> result = holder.generate("2026-10-26");
+
+        assertTrue(ok(result), result.getResp_msg());
+        ArgumentCaptor<AiWeeklyReportBean> captor =
+                ArgumentCaptor.forClass(AiWeeklyReportBean.class);
+        verify(reportMapper).install(captor.capture());
+        assertEquals(Long.valueOf(100L * 500 + 3), captor.getValue().getTotalCalls(),
+                "第 101 页的 3 条记录也必须计入");
+        assertEquals(101, pageCalls.get());
+    }
+
+    /** 超过安全上限时返回失败，且绝不落一份「只统计了一部分」的快照 */
+    @Test
+    void refusesToPersistWhenWeekExceedsSafetyScanLimit() {
+        when(callLogBeanMapper.selectPage(any(PageRequest.class),
+                any(AiCallLogBean.class), anyString()))
+                .thenReturn(Result.succeed(page(rows(500), 0), "查询成功"));
+
+        Result<AiWeeklyReportBean> result = holder.generate("2026-10-26");
+
+        assertNull(result.getDatas());
+        assertTrue(result.getResp_msg() != null && result.getResp_msg().contains("统计上限"));
+        verify(callLogBeanMapper, times(AiWeeklyReportHolder.MAX_PAGES))
+                .selectPage(any(PageRequest.class), any(AiCallLogBean.class), anyString());
+        verify(reportMapper, never()).select(isNull(), any(AiWeeklyReportBean.class));
+        verify(reportMapper, never()).install(any(AiWeeklyReportBean.class));
+        verify(reportMapper, never()).update(any(AiWeeklyReportBean.class), any(AiWeeklyReportBean.class));
+    }
+
+    /** 翻页中途读失败同样不能落库：部分页的合计不是整周数据 */
+    @Test
+    void failsInsteadOfPersistingPartialSnapshotWhenPagingFailsMidway() {
+        when(callLogBeanMapper.selectPage(any(PageRequest.class),
+                any(AiCallLogBean.class), anyString()))
+                .thenReturn(Result.succeed(page(rows(500), 0), "查询成功"))
+                .thenReturn(Result.failed(null, "数据库连接中断"));
+
+        Result<AiWeeklyReportBean> result = holder.generate("2026-10-26");
+
+        assertNull(result.getDatas());
+        assertTrue(result.getResp_msg() != null && result.getResp_msg().contains("读取调用日志失败"));
+        verify(reportMapper, never()).install(any(AiWeeklyReportBean.class));
+        verify(reportMapper, never()).update(any(AiWeeklyReportBean.class), any(AiWeeklyReportBean.class));
+    }
+
     private static AiWeeklyReportBean existing(Long iid) {
         AiWeeklyReportBean bean = new AiWeeklyReportBean();
         bean.setIid(iid);
@@ -183,6 +250,21 @@ class AiWeeklyReportHolderTest {
         bean.setLatencyMs(latencyMs);
         bean.setCostCents(costCents);
         return bean;
+    }
+
+    private static List<AiCallLogBean> rows(int count) {
+        List<AiCallLogBean> list = new ArrayList<AiCallLogBean>(count);
+        for (int i = 0; i < count; i++) {
+            list.add(row("success", "u1", "m1", null, null, null, null));
+        }
+        return list;
+    }
+
+    private static PageResult<AiCallLogBean> page(List<AiCallLogBean> content, int total) {
+        PageResult<AiCallLogBean> page = new PageResult<AiCallLogBean>();
+        page.setContent(content);
+        page.setTotalSize(total);
+        return page;
     }
 
     private static boolean ok(Result<?> result) {
