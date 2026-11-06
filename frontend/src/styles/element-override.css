@@ -431,3 +431,56 @@ html[data-theme="light"] .el-dialog__body {
 html[data-theme="light"] .el-dialog__footer {
   border-top: 1px solid rgba(13, 48, 100, 0.1) !important;
 }
+
+/* 深色模式下的表格基线：未单独覆写的页面（如用量中心）也保持深色 */
+html[data-theme="dark"] .el-table {
+  background: transparent;
+  --el-table-bg-color: transparent;
+  --el-table-tr-bg-color: transparent;
+  --el-table-header-bg-color: var(--surface-soft);
+  --el-table-header-text-color: var(--text-secondary);
+  --el-table-text-color: var(--text-primary);
+  --el-table-border-color: var(--border-soft);
+  --el-table-row-hover-bg-color: var(--surface-hover);
+  --el-table-current-row-bg-color: var(--surface-hover);
+}
+
+html[data-theme="dark"] .el-table__header-wrapper th {
+  background: var(--surface-soft) !important;
+  color: var(--text-secondary) !important;
+  border-right: none !important;
+  font-weight: 600;
+  font-size: var(--font-base);
+}
+
+html[data-theme="dark"] .el-table__body-wrapper td {
+  background: transparent !important;
+  border-bottom-color: var(--border-soft) !important;
+  color: var(--text-primary);
+}
+
+html[data-theme="dark"] .el-table--striped .el-table__body tr.el-table__row--striped td {
+  background: transparent !important;
+}
+
+html[data-theme="dark"] .el-table__body tr:hover > td {
+  background: var(--surface-hover) !important;
+}
+
+html[data-theme="dark"] .el-table__empty-text {
+  color: var(--text-tertiary);
+}
+
+/* 深色模式下 Element Plus 的浅色提示条默认是白底，与页面割裂 */
+html[data-theme="dark"] .el-alert.is-light {
+  background: var(--surface-soft);
+  border: 1px solid var(--border-color);
+}
+
+html[data-theme="dark"] .el-alert.is-light .el-alert__title {
+  color: var(--text-secondary);
+}
+
+html[data-theme="dark"] .el-alert.is-light .el-alert__icon {
+  color: var(--accent);
+}

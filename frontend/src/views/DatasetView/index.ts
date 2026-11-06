@@ -238,7 +238,7 @@ export function useIndex() {
   })
 
   // 空态要分清「库里就没有」和「被筛选筛没了」：前者的下一步是新建，后者是放宽条件
-  const emptyText = computed(() => (state.dataList.length === 0 ? '暂无数据集' : '没有符合当前搜索与筛选条件的数据集'))
+  const emptyText = computed(() => (state.dataList.length === 0 ? '还没有数据集' : '没有找到匹配的数据集'))
 
   const onSave = () => {
     ruleFormRef.value?.validate(async (valid: boolean) => {

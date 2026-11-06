@@ -25,12 +25,6 @@ const router = createRouter({
       meta: { title: "对话分享" },
     },
     {
-      path: "/preview",
-      name: "preview",
-      component: () => import("@/views/PreviewView/index.vue"),
-      meta: { title: "预览" },
-    },
-    {
       path: "/",
       component: MainLayout,
       children: [
@@ -45,19 +39,19 @@ const router = createRouter({
           path: "agents",
           name: "agents",
           component: () => import("@/views/AgentView/index.vue"),
-          meta: { title: "Agent 工作台", group: "Agent 工作台" },
+          meta: { title: "Agent 工作台", group: "智能体中心" },
         },
         {
           path: "capabilities",
           name: "capabilities",
           component: () => import("@/views/CapabilitiesView/index.vue"),
-          meta: { title: "能力广场", group: "能力广场" },
+          meta: { title: "能力广场", group: "能力中心" },
         },
         {
           path: "applications",
           name: "applications",
           component: () => import("@/views/ApplicationsView/index.vue"),
-          meta: { title: "场景应用", group: "场景应用" },
+          meta: { title: "场景应用", group: "应用中心" },
         },
         {
           path: "models",

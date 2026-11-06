@@ -84,9 +84,8 @@ const mountView = (props: Record<string, unknown> = {}) =>
     props: { isAdmin: false, myKbIds: new Set<string>(), ...props },
   });
 
-// 「全部」区块自带 tabs，推荐区块没有，按此定位避免推荐区隐藏时索引错位
 const allSection = (wrapper: ReturnType<typeof mountView>) =>
-  wrapper.findAll(".kb-square-section").find((section) => section.find(".kb-square-tabs").exists())!;
+  wrapper.findAll(".kb-square-section")[0]!;
 
 const allCards = (wrapper: ReturnType<typeof mountView>) =>
   allSection(wrapper).findAll(".kb-square-card");
@@ -122,16 +121,6 @@ describe("KnowledgeBaseSquareView", () => {
     expect(cards[1].find(".ima-card-tag").exists()).toBe(false);
   });
 
-  it("推荐知识库单独成区并展示创建者，未推荐的不进入", async () => {
-    const wrapper = mountView();
-    await flushPromises();
-
-    const sections = wrapper.findAll(".kb-square-section");
-    expect(sections).toHaveLength(2);
-    expect(titles(sections[0].findAll(".kb-square-card"))).toEqual(["产品手册"]);
-    expect(sections[0].find(".kb-square-card-meta").text()).toContain("5人已加入 | 12个内容 | admin");
-  });
-
   it("搜索按名称/描述过滤，标签下拉按 iid 单选过滤", async () => {
     const wrapper = mountView();
     await flushPromises();
@@ -139,8 +128,6 @@ describe("KnowledgeBaseSquareView", () => {
     const input = wrapper.find('input[placeholder="搜索知识库..."]');
     await input.setValue("客服");
     expect(titles(allCards(wrapper))).toEqual(["客服问答"]);
-    // 推荐区无命中时整块隐藏
-    expect(wrapper.findAll(".kb-square-section")).toHaveLength(1);
 
     await input.setValue("产品使用");
     expect(titles(allCards(wrapper))).toEqual(["产品手册"]);

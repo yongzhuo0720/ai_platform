@@ -149,44 +149,6 @@
   }
 }
 
-// ============== 标签页 ==============
-.kb-square-tabs {
-  display: flex;
-  align-items: center;
-  gap: 20px;
-  margin-bottom: 16px;
-  border-bottom: 1px solid var(--square-divider);
-}
-
-.kb-square-tab {
-  position: relative;
-  padding: 8px 0;
-  font-size: 14px;
-  color: var(--square-text-secondary);
-  cursor: pointer;
-  transition: color 0.2s;
-
-  &:hover {
-    color: var(--square-accent);
-  }
-
-  &.active {
-    color: var(--square-accent);
-    font-weight: 600;
-
-    &::after {
-      content: '';
-      position: absolute;
-      bottom: -1px;
-      left: 0;
-      right: 0;
-      height: 2px;
-      background: var(--square-accent);
-      border-radius: 2px 2px 0 0;
-    }
-  }
-}
-
 // ============== 卡片网格 ==============
 // 注意：网格列必须使用 minmax(0, 1fr) 而非 1fr。
 // 1fr 等价于 minmax(auto, 1fr)，列最小宽度会随卡片内容自适应，

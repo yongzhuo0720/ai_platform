@@ -53,10 +53,22 @@
       :error="state.listError"
       :empty="filteredDataList.length === 0"
       :empty-text="emptyText"
+      :empty-hint="state.dataList.length === 0 ? '上传数据集后，团队成员即可在这里检索、查看与下载。' : '试试更换关键词，或清空标签筛选。'"
       variant="cards"
       :count="6"
       @retry="getDataList"
     >
+      <template #empty-action>
+        <button
+          v-if="state.dataList.length === 0 && state.rid === SUPER_ADMIN_RID"
+          type="button"
+          class="btn btn-primary"
+          @click="showAdd"
+        >
+          <Upload />
+          新建数据集
+        </button>
+      </template>
     <div class="dataset-list">
       <article v-for="item in filteredDataList" :key="item.name" class="list-card">
         <div class="list-card-content">

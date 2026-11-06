@@ -36,10 +36,6 @@ export function useIndex() {
     return result
   })
 
-  const recommendedKnowledgeBases = computed(() => {
-    return filteredKnowledgeBases.value.filter(kb => kb.isRecommended)
-  })
-
   // 空态要分清「库里就没有」和「被筛选筛没了」：前者的下一步是新建，后者是放宽条件
   const emptyText = computed(() =>
     knowledgeBases.value.length === 0 ? '暂无可展示的知识库' : '没有符合当前搜索与筛选条件的知识库'
@@ -116,7 +112,6 @@ export function useIndex() {
     searchQuery,
     selectedCategories,
     filteredKnowledgeBases,
-    recommendedKnowledgeBases,
     allTags,
     refreshTagBind,
     getAllTags,

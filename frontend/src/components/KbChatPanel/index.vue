@@ -1,5 +1,19 @@
 <template>
   <div class="kb-chat-panel">
+    <!-- 会话工具栏：切换知识库时重置上下文，避免多轮对话串库 -->
+    <div v-if="messages.length > 0" class="kb-chat-panel-header">
+      <span class="kb-chat-panel-title">{{ kbName || '知识库问答' }}</span>
+      <button
+        class="kb-chat-new-btn"
+        :disabled="loading"
+        title="开启新对话"
+        @click="$emit('new-conversation')"
+      >
+        <el-icon><Plus /></el-icon>
+        <span>新对话</span>
+      </button>
+    </div>
+
     <!-- Messages area -->
     <div ref="messagesRef" class="kb-chat-messages">
       <!-- Empty state -->
@@ -115,7 +129,7 @@
 
 <script setup lang="ts">
 import { ref, watch, nextTick } from 'vue'
-import { CopyDocument, RefreshRight } from '@element-plus/icons-vue'
+import { CopyDocument, RefreshRight, Plus } from '@element-plus/icons-vue'
 import { renderMarkdown, renderUserContent } from '@/utils/markdown'
 import ChatComposer from '@/views/ChatView/ChatComposer.vue'
 
@@ -171,6 +185,7 @@ const emit = defineEmits<{
   'file-selected': [file: File]
   'remove-file': [fileId: string]
   'suggest-click': [question: string]
+  'new-conversation': []
 }>()
 
 const inputValue = ref(props.modelValue)
@@ -221,6 +236,58 @@ defineExpose({ messagesRef, scrollToBottom })
   height: 100%;
   min-height: 0;
   background: #fff;
+}
+
+// ============== Header ==============
+.kb-chat-panel-header {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--border-color-soft);
+}
+
+.kb-chat-panel-title {
+  min-width: 0;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--qwen-text-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.kb-chat-new-btn {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 30px;
+  padding: 0 12px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-color-soft);
+  background: transparent;
+  color: var(--qwen-text-secondary);
+  font-size: 12px;
+  cursor: pointer;
+  transition: background var(--transition-fast), color var(--transition-fast), border-color var(--transition-fast);
+
+  .el-icon {
+    font-size: 14px;
+  }
+
+  &:hover:not(:disabled) {
+    background: var(--surface-hover);
+    border-color: var(--border-strong);
+    color: var(--text-primary);
+  }
+
+  &:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+  }
 }
 
 // ============== Messages ==============

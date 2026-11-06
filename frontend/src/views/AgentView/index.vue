@@ -38,7 +38,7 @@ const blockedReason = computed(() => {
         <header class="agent-panel-header"><h2>我的 Agent</h2><button type="button" class="btn" :disabled="selectionLocked || state.listLoading" @click="loadAgents">刷新列表</button></header>
         <p class="agent-muted">私有配置，仅管理当前账户的 Agent。</p>
         <StateBlock :loading="state.listLoading" :error="state.listError" :empty="!state.agents.length" :count="3"
-          empty-text="还没有 Agent。新建一个配置，选择模型后即可开始。" @retry="loadAgents">
+          empty-text="还没有 Agent" empty-hint="新建一个配置并选择模型，即可在右侧发起运行。" @retry="loadAgents">
           <ul class="agent-list">
             <li v-for="agent in state.agents" :key="agent.agentKey">
               <button type="button" class="agent-config-item" :class="{ 'is-selected': agent.agentKey === state.selectedKey }"

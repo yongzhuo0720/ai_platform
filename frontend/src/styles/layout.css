@@ -160,12 +160,18 @@
 }
 
 .main-menu .el-menu-item.is-active,
-.main-menu .el-sub-menu.is-active > .el-sub-menu__title,
 .main-menu .el-menu-item.is-sub-active {
   background: var(--nav-active-bg);
   color: var(--nav-active-text);
   font-weight: 600;
   box-shadow: none;
+}
+
+/* 子菜单只做文字高亮，选中胶囊留给真正激活的子项，避免父子双重底色 */
+.main-menu .el-sub-menu.is-active > .el-sub-menu__title {
+  color: var(--nav-active-text);
+  font-weight: 600;
+  background: transparent;
 }
 
 .main-menu .el-menu-item.is-active .el-icon,
@@ -678,5 +684,5 @@ html[data-theme="light"] .header-user:hover {
 
 html[data-theme="light"] .shell-main,
 html[data-theme="light"] .shell-content {
-  background: #ffffff;
+  background: transparent;
 }

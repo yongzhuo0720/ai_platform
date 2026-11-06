@@ -16,13 +16,11 @@ import {
   Histogram,
   Document,
   Close,
-  Clock,
   Fold,
   MoreFilled,
   Menu,
   Grid,
   PriceTag,
-  Check,
 } from '@element-plus/icons-vue'
 import { ref, computed, nextTick, watch, onMounted, onUnmounted } from 'vue'
 import { useRoute } from 'vue-router'
@@ -30,18 +28,15 @@ import {
   knowledgeChatStreaming,
   retrieveFromDataset,
   getAppParameters,
-  getConversations,
   getConversationHistory,
-  deleteConversation,
   getSuggestedMessages,
 } from '@/api/knowledgeChat'
 import type { RetrievalResult, KnowledgeChatFile } from '@/api/knowledgeChat'
 import { modelsConfigApi } from '@/api/modelsConfig'
 import { uploadFileToDify } from '@/api/request'
 import { getCurrentUserId } from '@/utils/user'
-import { markKbConversation, unmarkKbConversation, isKbConversation } from '@/utils/conversationSource'
+import { markKbConversation } from '@/utils/conversationSource'
 import { parseChatError } from '@/utils/chatError'
-import { safeJsonParse } from '@/utils/json'
 import type {
   AppParametersResponse,
   NormalizedUserInputField,
@@ -170,7 +165,6 @@ onMounted(() => {
   window.addEventListener('kb-joined', onKbJoined)
   loadChatModels()
   loadAppParameters()
-  loadConversations()
 })
 
 onUnmounted(() => {
@@ -695,7 +689,6 @@ watch(filteredKnowledgeBases, (list) => {
 watch(selectedKbId, (newId, oldId) => {
   if (newId && newId !== oldId) {
     loadDocuments(newId)
-    fetchKbRetrieveRecords(newId)
   }
 })
 
@@ -792,7 +785,6 @@ const displayedSquareDocuments = computed(() => {
 watch(() => selectedSharedKb.value?.id, (newId, oldId) => {
   if (newId && newId !== oldId) {
     loadSharedDocuments(newId)
-    fetchKbRetrieveRecords(newId)
   }
 })
 
@@ -812,8 +804,7 @@ function handleSelectKb(kb: any) {
   // 选中时刷新该知识库的最新标签
   refreshTagBind(kb.id)
   // Reset chat when switching KB
-  chatMessages.value = []
-  chatInput.value = ''
+  startNewConversation()
 }
 
 // 从知识库广场点击进入详情，保留侧边栏，使用与共享知识库相同的布局
@@ -825,15 +816,13 @@ function handleSelectKbFromSquare(kb: any) {
   squareDetailKbId.value = kb.id
   squareDetailKbData.value = kb
   hideSquareView()
-  // 加载文档列表和检索结果
+  // 加载文档列表
   loadSquareDocuments(kb.id)
-  fetchKbRetrieveRecords(kb.id)
   // 获取成员列表和标签
   fetchMembers(kb.id)
   refreshTagBind(kb.id)
   // Reset chat when switching KB
-  chatMessages.value = []
-  chatInput.value = ''
+  startNewConversation()
 }
 
 async function handleCreateConfirm() {
@@ -852,14 +841,11 @@ interface ChatMessage {
   query?: string
 }
 
-const chatDialogVisible = ref(false)
 const chatInput = ref('')
 const chatMessages = ref<ChatMessage[]>([])
 const chatLoading = ref(false)
 let chatStopFn: (() => void) | null = null
 
-// 知识库检索结果（选中知识库时预加载）
-const kbRetrieveRecords = ref('')
 /** 消息回答完成后推荐的后续问题 */
 const postAnswerSuggestions = ref<string[]>([])
 /**
@@ -870,13 +856,17 @@ const suggestedAfterAnswerEnabled = ref(false)
 /** 当前消息的 message_id，用于调用推荐消息接口 */
 const lastMessageId = ref('')
 
-async function fetchKbRetrieveRecords(kbId: string) {
+/**
+ * 用本次真实提问检索知识库，作为工作流 user_prompt 输入。
+ * 之前是在选中知识库时用空 query 预检索，结果与问题无关；改为发送时按问题检索。
+ */
+async function retrieveContext(kbId: string, query: string): Promise<RetrievalResult[]> {
+  if (!kbId || !query.trim()) return []
   try {
-    const records = await retrieveFromDataset(kbId)
-    kbRetrieveRecords.value = JSON.stringify(records)
+    return await retrieveFromDataset(kbId, query)
   } catch (e) {
-    console.warn('知识库检索失败:', e)
-    kbRetrieveRecords.value = ''
+    console.warn('知识库检索失败，按无上下文继续:', e)
+    return []
   }
 }
 
@@ -1021,173 +1011,20 @@ async function fetchPostAnswerSuggestions() {
   }
 }
 
-// ============== 历史会话 ==============
-interface Conversation {
-  id: string
-  name: string
-  inputs: Record<string, unknown>
-  status: string
-  created_at: number
-  updated_at: number
-}
-
-const conversations = ref<Conversation[]>([])
+// ============== 会话上下文 ==============
 const activeConversationId = ref('')
-const historyVisible = ref(false)
-const historyLoading = ref(false)
-const historySelectMode = ref(false)
-const selectedConversationIds = ref<Set<string>>(new Set())
 
-async function loadConversations() {
-  historyLoading.value = true
-  try {
-    const response = (await getConversations({
-      user: getCurrentUserId(),
-      limit: 100,
-    })) as { data: Conversation[] }
-    // 按 localStorage 追踪记录过滤，只显示知识库中心创建的会话
-    conversations.value = (response.data || []).filter(
-      (c: any) => isKbConversation(c.id)
-    )
-  } catch (e) {
-    console.warn('获取会话列表失败:', e)
-    conversations.value = []
-  } finally {
-    historyLoading.value = false
-  }
-}
-
-async function loadConversationMessages(conversationId: string) {
-  historyLoading.value = true
-  try {
-    const response = (await getConversationHistory(
-      conversationId,
-      getCurrentUserId(),
-      100
-    )) as { data: any[] }
-    const messageList: ChatMessage[] = []
-    ;(response.data || []).forEach((msg: any) => {
-      if (msg.query) {
-        messageList.push({ id: `${msg.id}-user`, role: 'user', content: msg.query })
-      }
-      if (msg.answer) {
-        messageList.push({ id: `${msg.id}-assistant`, role: 'assistant', content: msg.answer })
-      }
-    })
-    chatMessages.value = messageList
-    activeConversationId.value = conversationId
-  } catch (e) {
-    console.warn('获取会话历史失败:', e)
-    ElMessage.error('获取会话历史失败')
-  } finally {
-    historyLoading.value = false
-  }
-}
-
-function handleSelectConversation(conversationId: string) {
-  loadConversationMessages(conversationId)
-  historyVisible.value = false
-}
-
-async function handleDeleteHistory(conversationId: string) {
-  try {
-    await ElMessageBox.confirm('确定要删除此对话吗？', '删除对话', {
-      confirmButtonText: '确定',
-      cancelButtonText: '取消',
-      type: 'warning',
-    })
-    await deleteConversation(conversationId, getCurrentUserId())
-    conversations.value = conversations.value.filter(c => c.id !== conversationId)
-    unmarkKbConversation(conversationId)
-    if (activeConversationId.value === conversationId) {
-      activeConversationId.value = ''
-      chatMessages.value = []
-    }
-    ElMessage.success('对话已删除')
-  } catch (e: any) {
-    if (!isConfirmCancelled(e)) {
-      console.error('删除对话失败:', e)
-    }
-  }
-}
-
-// ============== 历史会话多选 ==============
-function toggleHistorySelectMode() {
-  historySelectMode.value = !historySelectMode.value
-  if (!historySelectMode.value) {
-    selectedConversationIds.value = new Set()
-  }
-}
-
-function toggleConversationSelection(id: string) {
-  const next = new Set(selectedConversationIds.value)
-  if (next.has(id)) {
-    next.delete(id)
-  } else {
-    next.add(id)
-  }
-  selectedConversationIds.value = next
-}
-
-function toggleSelectAll() {
-  if (selectedConversationIds.value.size === conversations.value.length) {
-    selectedConversationIds.value = new Set()
-  } else {
-    selectedConversationIds.value = new Set(conversations.value.map(c => c.id))
-  }
-}
-
-async function handleBatchDelete() {
-  const ids = [...selectedConversationIds.value]
-  if (ids.length === 0) return
-  try {
-    await ElMessageBox.confirm(`确定要删除选中的 ${ids.length} 个会话吗？`, '批量删除', {
-      confirmButtonText: '确定',
-      cancelButtonText: '取消',
-      type: 'warning',
-    })
-    let deleted = 0
-    for (const id of ids) {
-      try {
-        await deleteConversation(id, getCurrentUserId())
-        unmarkKbConversation(id)
-        if (activeConversationId.value === id) {
-          activeConversationId.value = ''
-          chatMessages.value = []
-        }
-        deleted++
-      } catch (e) {
-        console.error(`删除会话 ${id} 失败:`, e)
-      }
-    }
-    conversations.value = conversations.value.filter(c => !selectedConversationIds.value.has(c.id))
-    selectedConversationIds.value = new Set()
-    historySelectMode.value = false
-    if (deleted > 0) {
-      ElMessage.success(`已删除 ${deleted} 个会话`)
-    }
-  } catch (e: any) {
-    if (!isConfirmCancelled(e)) {
-      console.error('批量删除失败:', e)
-    }
-  }
-}
-
+/** 开启新会话：清空消息并重置 Dify 会话上下文 */
 function startNewConversation() {
-  activeConversationId.value = ''
+  if (chatStopFn) {
+    chatStopFn()
+    chatStopFn = null
+  }
   chatMessages.value = []
-  historyVisible.value = false
-}
-
-function toggleHistoryPanel() {
-  if (!historyVisible.value) {
-    loadConversations()
-  }
-  historyVisible.value = !historyVisible.value
-  if (!historyVisible.value) {
-    historySelectMode.value = false
-    selectedConversationIds.value = new Set()
-  }
+  chatInput.value = ''
+  activeConversationId.value = ''
+  postAnswerSuggestions.value = []
+  lastMessageId.value = ''
 }
 
 // ============== 模型选择 ==============
@@ -1270,14 +1107,6 @@ function removeChatAttachedFile(fileId: string) {
   chatAttachedFiles.value = chatAttachedFiles.value.filter(f => f.id !== fileId)
 }
 
-function closeChatDialog() {
-  chatDialogVisible.value = false
-  if (chatStopFn) {
-    chatStopFn()
-    chatStopFn = null
-  }
-}
-
 /** 获取当前活跃的知识库（广场详情 > 共享 > 个人） */
 function getCurrentChatKb() {
   if (squareDetailKbId.value && squareDetailKbData.value) return squareDetailKbData.value
@@ -1311,9 +1140,6 @@ async function sendChatMessage() {
   if (modelNameVariable.value) {
     currentInputs[modelNameVariable.value] = activeChatModelId.value
   }
-  if (promptInputVariable.value) {
-    currentInputs[promptInputVariable.value] = kbRetrieveRecords.value || ''
-  }
 
   // 构建 Dify 文件列表
   const fileList: KnowledgeChatFile[] = files.map((file) => ({
@@ -1344,10 +1170,13 @@ async function sendChatMessage() {
 
   let assistantContent = ''
 
-  // 使用选中知识库时预加载的检索结果展示
-  // （safeJsonParse：解析失败按无结果处理，但会打印错误，不再静默吞掉）
-  const receivedResources = safeJsonParse<RetrievalResult[]>(kbRetrieveRecords.value, [])
-  chatMessages.value[assistantIdx].retrieverResources = receivedResources
+  const retrieved = await retrieveContext(currentKb.id, queryContent)
+  if (retrieved.length) {
+    chatMessages.value[assistantIdx].retrieverResources = retrieved
+  }
+  if (promptInputVariable.value) {
+    currentInputs[promptInputVariable.value] = retrieved.length ? JSON.stringify(retrieved) : ''
+  }
 
   // 与问答交互引擎保持一致：conversation_id 在有值时传递，files 有文件时传递
   const payload: any = {
@@ -1370,6 +1199,9 @@ async function sendChatMessage() {
       onMessageId: (messageId) => {
         lastMessageId.value = messageId
       },
+      onRetrieverResources: (resources) => {
+        chatMessages.value[assistantIdx].retrieverResources = resources
+      },
       onComplete: async (conversationId) => {
         chatLoading.value = false
         chatStopFn = null
@@ -1381,7 +1213,6 @@ async function sendChatMessage() {
         if (conversationId) {
           markKbConversation(conversationId)
           activeConversationId.value = conversationId
-          await loadConversations()
         }
         // 消息完成后获取推荐问题
         await fetchPostAnswerSuggestions()
@@ -1454,16 +1285,18 @@ async function regenerateMessage(assistantMsgId: string) {
 
   let assistantContent = ''
 
-  const receivedResources = safeJsonParse<RetrievalResult[]>(kbRetrieveRecords.value, [])
-  chatMessages.value[newAssistantIdx].retrieverResources = receivedResources
-
   const currentInputs: Record<string, unknown> = { ...userInput.value }
   currentInputs.source = 'knowledge_base'
   if (modelNameVariable.value) {
     currentInputs[modelNameVariable.value] = activeChatModelId.value
   }
+
+  const retrieved = await retrieveContext(currentKb.id, queryContent)
+  if (retrieved.length) {
+    chatMessages.value[newAssistantIdx].retrieverResources = retrieved
+  }
   if (promptInputVariable.value) {
-    currentInputs[promptInputVariable.value] = kbRetrieveRecords.value || ''
+    currentInputs[promptInputVariable.value] = retrieved.length ? JSON.stringify(retrieved) : ''
   }
 
   const payload: any = {
@@ -1483,6 +1316,9 @@ async function regenerateMessage(assistantMsgId: string) {
       onMessageId: (messageId) => {
         lastMessageId.value = messageId
       },
+      onRetrieverResources: (resources) => {
+        chatMessages.value[newAssistantIdx].retrieverResources = resources
+      },
       onComplete: async (conversationId) => {
         chatLoading.value = false
         chatStopFn = null
@@ -1494,7 +1330,6 @@ async function regenerateMessage(assistantMsgId: string) {
         if (conversationId) {
           markKbConversation(conversationId)
           activeConversationId.value = conversationId
-          await loadConversations()
         }
         // 消息完成后获取推荐问题
         await fetchPostAnswerSuggestions()
@@ -1509,25 +1344,6 @@ async function regenerateMessage(assistantMsgId: string) {
     }
   )
 }
-
-function clearChatMessages() {
-  if (chatMessages.value.length === 0) return
-  ElMessageBox.confirm(
-    '确定要清空当前知识库的所有对话内容吗？此操作不可恢复。',
-    '清除会话',
-    {
-      confirmButtonText: '清除',
-      cancelButtonText: '取消',
-      type: 'warning',
-    }
-  ).then(() => {
-    chatMessages.value = []
-    ElMessage.success('会话已清空')
-  }).catch(() => {
-    // 用户取消，不做任何操作
-  })
-}
-
 </script>
 
 <template>
@@ -1959,6 +1775,7 @@ function clearChatMessages() {
             @file-selected="handleChatFileSelected"
             @remove-file="removeChatAttachedFile"
             @suggest-click="handleSuggestedClick"
+            @new-conversation="startNewConversation"
           />
         </div>
       </div>
@@ -2227,6 +2044,7 @@ function clearChatMessages() {
             @file-selected="handleChatFileSelected"
             @remove-file="removeChatAttachedFile"
             @suggest-click="handleSuggestedClick"
+            @new-conversation="startNewConversation"
           />
         </div>
       </div>
@@ -2239,20 +2057,12 @@ function clearChatMessages() {
         @select-kb="handleSelectKbFromSquare"
       />
 
-      <div v-else-if="activeMenu === 'personal'" class="kb-empty">
+      <div v-else-if="activeMenu === 'personal' && !knowledgeFileUnavailable" class="kb-empty">
         <img src="@/assets/images/brand-logo.svg" alt="" class="kb-empty-logo" />
-        <template v-if="knowledgeFileUnavailable">
-          <p class="kb-empty-title">知识库文件模块未配置</p>
-          <p class="kb-empty-hint">
-            管理员配置完成后刷新页面，即可创建知识库并上传文档。
-          </p>
-        </template>
-        <template v-else>
-          <p class="kb-empty-title">从左侧选择一个知识库，开始检索与问答</p>
-          <p class="kb-empty-hint">
-            还没有知识库？点击左侧「新建知识库」，上传文档后即可在聊天中引用。
-          </p>
-        </template>
+        <p class="kb-empty-title">从左侧选择一个知识库，开始检索与问答</p>
+        <p class="kb-empty-hint">
+          还没有知识库？点击左侧「新建知识库」，上传文档后即可在聊天中引用。
+        </p>
       </div>
 
       <!-- ========== 共享知识库视图：左侧详情 + 右侧对话 ========== -->
@@ -2509,6 +2319,7 @@ function clearChatMessages() {
             @file-selected="handleChatFileSelected"
             @remove-file="removeChatAttachedFile"
             @suggest-click="handleSuggestedClick"
+            @new-conversation="startNewConversation"
           />
         </div>
       </div>
@@ -2846,1165 +2657,10 @@ function clearChatMessages() {
         </div>
       </template>
     </el-dialog>
-
-    <!-- Chat Dialog -->
-    <Transition name="chat-fade">
-      <div v-if="chatDialogVisible" class="chat-overlay">
-        <div class="chat-dialog">
-          <div class="chat-header">
-            <div class="chat-header-left">
-              <h3 class="chat-title">问询知识库</h3>
-            </div>
-            <div class="chat-header-right">
-              <button class="chat-header-btn chat-clear-btn" @click="clearChatMessages" title="清除会话">
-                <el-icon><Delete /></el-icon>
-              </button>
-              <button class="chat-header-btn chat-close-btn" @click="closeChatDialog" title="关闭">
-                <el-icon><Close /></el-icon>
-              </button>
-            </div>
-          </div>
-          <KbChatPanel
-            v-model="chatInput"
-            :messages="chatMessages"
-            :loading="chatLoading"
-            placeholder="请输入您的问题..."
-            :model-options="chatModelOptions"
-            :active-model-id="activeChatModelId"
-            :attached-files="chatAttachedFiles"
-            :kb-name="getCurrentChatKb()?.name || ''"
-            :suggested-questions="postAnswerSuggestions"
-            @submit="sendChatMessage"
-            @copy="copyMessageContent"
-            @regenerate="regenerateMessage"
-            @select-model="selectChatModel"
-            @file-selected="handleChatFileSelected"
-            @remove-file="removeChatAttachedFile"
-            @suggest-click="handleSuggestedClick"
-          />
-        </div>
-      </div>
-    </Transition>
-
-    <!-- ========== 历史会话悬浮按钮和面板 ========== -->
-    <button
-      v-if="!showSquareView && !squareDetailKbId"
-      class="kb-history-fab"
-      :class="{ 'is-active': historyVisible }"
-      title="历史会话"
-      @click="toggleHistoryPanel"
-    >
-      <el-icon :size="20"><Clock /></el-icon>
-    </button>
-
-    <Transition name="kb-history-slide">
-      <div v-if="historyVisible" class="kb-history-panel">
-        <div class="kb-history-panel-header">
-          <span>历史会话</span>
-          <div class="kb-history-panel-header-actions">
-            <button
-              v-if="conversations.length > 0 && !historySelectMode"
-              class="kb-history-manage-btn"
-              @click="toggleHistorySelectMode"
-            >
-              管理
-            </button>
-            <button
-              v-if="historySelectMode"
-              class="kb-history-manage-btn"
-              @click="toggleHistorySelectMode"
-            >
-              完成
-            </button>
-            <button class="kb-history-panel-close" @click="historyVisible = false">
-              <el-icon><Close /></el-icon>
-            </button>
-          </div>
-        </div>
-
-        <button v-if="!historySelectMode" class="kb-history-new-btn" @click="startNewConversation">
-          <el-icon><Plus /></el-icon>
-          <span>新建会话</span>
-        </button>
-
-        <div v-if="historyLoading" class="kb-history-loading">加载中...</div>
-
-        <div v-else-if="conversations.length === 0" class="kb-history-empty">
-          暂无历史会话
-        </div>
-
-        <ul v-else class="kb-history-list">
-          <li
-            v-for="item in conversations"
-            :key="item.id"
-            class="kb-history-item"
-            :class="{ active: !historySelectMode && activeConversationId === item.id }"
-            @click="historySelectMode ? toggleConversationSelection(item.id) : handleSelectConversation(item.id)"
-          >
-            <span v-if="historySelectMode" class="kb-history-checkbox" @click.stop>
-              <span
-                class="kb-history-checkbox-box"
-                :class="{ checked: selectedConversationIds.has(item.id) }"
-                @click.stop="toggleConversationSelection(item.id)"
-              >
-                <el-icon v-if="selectedConversationIds.has(item.id)" :size="12"><Check /></el-icon>
-              </span>
-            </span>
-            <span class="kb-history-item-name">{{ item.name }}</span>
-            <button
-              v-if="!historySelectMode"
-              class="kb-history-item-delete"
-              @click.stop="handleDeleteHistory(item.id)"
-            >
-              <el-icon :size="14"><Delete /></el-icon>
-            </button>
-          </li>
-        </ul>
-
-        <!-- 批量操作栏 -->
-        <div v-if="historySelectMode && conversations.length > 0" class="kb-history-batch-bar">
-          <button class="kb-history-batch-btn" @click="toggleSelectAll">
-            {{ selectedConversationIds.size === conversations.length ? '取消全选' : '全选' }}
-          </button>
-          <button
-            class="kb-history-batch-btn danger"
-            :disabled="selectedConversationIds.size === 0"
-            @click="handleBatchDelete"
-          >
-            删除{{ selectedConversationIds.size > 0 ? ` (${selectedConversationIds.size})` : '' }}
-          </button>
-        </div>
-      </div>
-    </Transition>
   </div>
 </template>
 
 <style scoped lang="less">
 @import './index.less';
-
-// ============== Chat Bar (Bottom Input) ==============
-.kb-chat-bar {
-  position: absolute;
-  bottom: 0;
-  left: 0;
-  right: 0;
-  background: rgba(16, 30, 80, 0.55);
-  backdrop-filter: blur(16px) saturate(160%);
-  border-top: 1px solid rgba(100, 150, 255, 0.18);
-  padding: 16px 24px;
-  cursor: pointer;
-  transition: all 0.2s;
-
-  &:hover {
-    background: rgba(20, 40, 95, 0.65);
-  }
-}
-
-.kb-chat-bar-input {
-  max-width: 600px;
-  margin: 0 auto;
-}
-
-.kb-chat-bar-input-field {
-  width: 100%;
-  padding: 10px 16px;
-  background: rgba(0, 10, 40, 0.35);
-  border: 1px solid rgba(100, 150, 255, 0.22);
-  border-radius: 6px;
-  font-size: 13px;
-  color: rgba(255, 255, 255, 0.5);
-  cursor: pointer;
-  transition: all 0.2s;
-
-  &:hover {
-    background: rgba(0, 10, 40, 0.45);
-    border-color: #7c93ff;
-    color: rgba(255, 255, 255, 0.75);
-  }
-}
-
-.kb-chat-bar-footer {
-  text-align: center;
-  margin-top: 8px;
-  font-size: 11px;
-  color: rgba(255, 255, 255, 0.45);
-}
-
-// ============== Chat Overlay ==============
-.chat-overlay {
-  position: fixed;
-  top: 0;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  background: rgba(0, 5, 25, 0.65);
-  backdrop-filter: blur(4px);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  z-index: 2000;
-  padding: 20px;
-}
-
-.chat-fade-enter-active,
-.chat-fade-leave-active {
-  transition: opacity 0.3s ease;
-}
-
-.chat-fade-enter-from,
-.chat-fade-leave-to {
-  opacity: 0;
-}
-
-// ============== Chat Dialog ==============
-.chat-dialog {
-  width: 100%;
-  max-width: 800px;
-  height: 80vh;
-  max-height: 700px;
-  background: var(--qwen-bg);
-  border: 1px solid var(--qwen-border);
-  border-radius: var(--qwen-radius-lg);
-  box-shadow: var(--qwen-shadow);
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-  animation: chat-slide-up 0.3s ease;
-}
-
-@keyframes chat-slide-up {
-  from {
-    opacity: 0;
-    transform: translateY(20px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
-}
-
-// ============== Chat Header ==============
-.chat-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 16px 20px;
-  border-bottom: 1px solid var(--qwen-border);
-  background: var(--qwen-surface);
-  flex-shrink: 0;
-}
-
-.chat-header-left {
-  flex: 1;
-}
-
-.chat-title {
-  font-size: 15px;
-  font-weight: 600;
-  color: var(--qwen-text-primary);
-  margin: 0;
-}
-
-.chat-header-right {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.chat-header-btn {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 32px;
-  height: 32px;
-  background: transparent;
-  border: 1px solid var(--qwen-border);
-  border-radius: var(--radius-sm);
-  color: var(--qwen-text-secondary);
-  cursor: pointer;
-  transition: all 0.2s;
-
-  .el-icon {
-    font-size: 16px;
-  }
-
-  &:hover {
-    background: var(--qwen-surface);
-    color: var(--qwen-brand-blue);
-    border-color: var(--qwen-border-strong);
-  }
-}
-
-.chat-clear-btn {
-  &:hover {
-    background: rgba(245, 158, 11, 0.15);
-    color: #f59e0b;
-    border-color: rgba(245, 158, 11, 0.4);
-  }
-}
-
-.chat-close-btn {
-  &:hover {
-    background: var(--qwen-danger-soft);
-    color: var(--error);
-    border-color: var(--error);
-  }
-}
-
-// ============== Chat Messages ==============
-.chat-messages {
-  flex: 1;
-  overflow-y: auto;
-  padding: 20px;
-  background: var(--qwen-bg);
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
-}
-
-.chat-empty {
-  flex: 1;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: var(--qwen-text-tertiary);
-  font-size: 13px;
-}
-
-.kb-chat-message-item {
-  display: flex;
-  gap: 12px;
-  width: 100%;
-  animation: message-slide-up 0.30s cubic-bezier(0.16, 1, 0.3, 1);
-
-  &.user {
-    flex-direction: row-reverse;
-
-    .kb-chat-message-content {
-      align-items: flex-end;
-    }
-  }
-
-  &.assistant {
-    .kb-chat-message-content {
-      align-items: flex-start;
-    }
-  }
-}
-
-@keyframes message-slide-up {
-  from {
-    opacity: 0;
-    transform: translateY(10px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
-}
-
-.kb-chat-message-avatar {
-  flex-shrink: 0;
-  width: 36px;
-  height: 36px;
-  border-radius: 50%;
-  background: var(--qwen-surface);
-  border: 1px solid var(--qwen-border);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  overflow: hidden;
-
-  img {
-    width: 22px;
-    height: 22px;
-    object-fit: contain;
-  }
-}
-
-.kb-chat-message-content {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  max-width: min(82%, 680px);
-  min-width: 0;
-}
-
-.kb-chat-message-bubble {
-  padding: 12px 18px;
-  border-radius: var(--qwen-radius-lg);
-  font-size: 15px;
-  line-height: 1.65;
-  word-break: break-word;
-  width: fit-content;
-  max-width: 100%;
-  transition: box-shadow 150ms ease;
-
-  .markdown-content,
-  .user-content {
-    font-size: 15px;
-    line-height: 1.65;
-  }
-}
-
-.kb-chat-message-item.user .kb-chat-message-bubble {
-  background: var(--qwen-brand-blue);
-  color: #ffffff;
-  border-bottom-right-radius: 6px;
-  box-shadow: 0 4px 12px rgba(26, 74, 140, 0.18);
-
-  &:hover {
-    box-shadow: 0 6px 16px rgba(26, 74, 140, 0.24);
-  }
-
-  .markdown-content a {
-    color: #ffffff;
-    border-bottom-color: rgba(255, 255, 255, 0.6);
-
-    &:hover {
-      border-bottom-color: #ffffff;
-    }
-  }
-
-  .markdown-content code {
-    background: rgba(255, 255, 255, 0.2);
-    color: #ffffff;
-  }
-}
-
-html[data-theme="light"] .kb-chat-message-item.user .kb-chat-message-bubble {
-  background: #2563eb;
-  box-shadow: 0 4px 12px rgba(37, 99, 235, 0.18);
-
-  &:hover {
-    box-shadow: 0 6px 16px rgba(37, 99, 235, 0.24);
-  }
-}
-
-.kb-chat-message-item.assistant .kb-chat-message-bubble {
-  background: var(--qwen-surface);
-  color: var(--qwen-text-primary);
-  border: 1px solid var(--qwen-border);
-  border-bottom-left-radius: 6px;
-}
-
-.kb-chat-message-bubble.has-thinking {
-  background: var(--qwen-surface);
-  border: 1px dashed var(--qwen-border);
-  color: var(--qwen-text-secondary);
-}
-
-.kb-chat-thinking-text {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  color: var(--qwen-text-secondary);
-
-  &::before {
-    content: "";
-    width: 14px;
-    height: 14px;
-    border: 2px solid var(--qwen-border);
-    border-top-color: var(--qwen-brand-blue);
-    border-radius: 50%;
-    animation: spin 0.8s linear infinite;
-  }
-}
-
-@keyframes spin {
-  to {
-    transform: rotate(360deg);
-  }
-}
-
-// ============== Source Reference ==============
-.kb-chat-source {
-  background: var(--qwen-surface);
-  border: 1px solid var(--qwen-border);
-  border-radius: var(--radius-sm);
-  padding: 10px 12px;
-  max-width: 100%;
-}
-
-.kb-chat-source-header {
-  margin-bottom: 8px;
-}
-
-.kb-chat-source-label {
-  font-size: 12px;
-  color: var(--qwen-text-secondary);
-}
-
-.kb-chat-source-item {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 6px 8px;
-  background: var(--qwen-bg);
-  border-radius: var(--radius-sm);
-  cursor: pointer;
-  transition: all 0.2s;
-
-  &:hover {
-    background: var(--qwen-border);
-  }
-}
-
-.kb-chat-source-icon {
-  font-size: 14px;
-  color: var(--qwen-brand-blue);
-}
-
-.kb-chat-source-name {
-  font-size: 12px;
-  color: var(--qwen-brand-blue);
-  font-weight: 500;
-}
-
-// ============== Message Actions ==============
-.kb-chat-message-actions {
-  display: flex;
-  align-items: center;
-  gap: 2px;
-  padding: 0 2px;
-  opacity: 0.7;
-  transition: opacity 150ms ease;
-
-  .kb-chat-message-item:hover & {
-    opacity: 1;
-  }
-}
-
-.kb-chat-message-action {
-  width: 28px;
-  height: 28px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  border: none;
-  border-radius: 6px;
-  background: transparent;
-  color: var(--qwen-text-tertiary);
-  cursor: pointer;
-  transition: background 150ms, color 150ms, transform 120ms;
-
-  .el-icon {
-    font-size: 14px;
-  }
-
-  &:hover {
-    background: var(--qwen-surface);
-    color: var(--qwen-brand-blue);
-  }
-
-  &:active {
-    transform: scale(0.92);
-  }
-}
-
-// ============== Chat Input ==============
-.chat-input-area {
-  padding: 16px 20px;
-  background: var(--qwen-surface);
-  border-top: 1px solid var(--qwen-border);
-  flex-shrink: 0;
-}
-
-.chat-input-wrapper {
-  display: flex;
-  align-items: flex-end;
-  gap: 8px;
-  background: var(--qwen-bg);
-  border: 1px solid var(--qwen-border);
-  border-radius: var(--qwen-radius-md);
-  padding: 8px 12px;
-  transition: all 0.2s;
-
-  &:focus-within {
-    border-color: var(--qwen-brand-blue);
-    box-shadow: var(--qwen-shadow-focus);
-  }
-}
-
-.chat-input {
-  flex: 1;
-
-  :deep(.el-textarea__inner) {
-    border: none;
-    border-radius: 0;
-    outline: none;
-    background: transparent;
-    font-size: 15px;
-    color: var(--qwen-text-primary);
-    font-family: inherit;
-    resize: none;
-    min-height: 24px;
-    line-height: 1.5;
-    box-shadow: none;
-
-    &::placeholder {
-      color: var(--qwen-text-tertiary);
-    }
-
-    &:disabled {
-      background: transparent;
-      cursor: not-allowed;
-      opacity: 0.6;
-    }
-  }
-}
-
-.chat-send-btn {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 32px;
-  height: 32px;
-  background: var(--qwen-brand-blue);
-  color: #ffffff;
-  border: none;
-  border-radius: var(--radius-sm);
-  cursor: pointer;
-  transition: all 0.2s;
-  flex-shrink: 0;
-  box-shadow: 0 4px 12px rgba(26, 74, 140, 0.18);
-
-  .el-icon {
-    font-size: 16px;
-  }
-
-  &:hover {
-    background: var(--qwen-brand-blue-hover);
-    transform: translateY(-1px);
-    box-shadow: 0 6px 16px rgba(26, 74, 140, 0.24);
-  }
-
-  &:active {
-    transform: translateY(0);
-  }
-
-  &:disabled {
-    opacity: 0.35;
-    cursor: not-allowed;
-  }
-}
-
-.chat-input-footer {
-  text-align: center;
-  margin-top: 8px;
-  font-size: 11px;
-  color: var(--qwen-text-tertiary);
-}
-
-/* ============================================
-   浅色模式适配
-   ============================================ */
-html[data-theme="light"] {
-  .kb-chat-bar {
-    background: rgba(255, 255, 255, 0.7);
-    backdrop-filter: blur(18px) saturate(160%);
-    -webkit-backdrop-filter: blur(18px) saturate(160%);
-    border-top: 1px solid rgba(13, 48, 100, 0.1);
-    box-shadow: 0 -4px 16px rgba(13, 48, 100, 0.08);
-
-    &:hover {
-      background: rgba(255, 255, 255, 0.85);
-    }
-  }
-
-  .kb-chat-bar-input-field {
-    background: rgba(255, 255, 255, 0.7);
-    border: 1px solid rgba(13, 48, 100, 0.1);
-    color: rgb(13, 48, 100);
-    font-weight: 500;
-
-    &::placeholder {
-      color: #4a6ba8;
-    }
-
-    &:hover {
-      background: rgba(255, 255, 255, 0.9);
-      border-color: #3d5bf5;
-      color: rgb(13, 48, 100);
-    }
-  }
-
-  .kb-chat-bar-footer {
-    color: #4a6ba8;
-  }
-
-  .chat-overlay {
-    background: rgba(13, 48, 100, 0.25);
-    backdrop-filter: blur(4px);
-    -webkit-backdrop-filter: blur(4px);
-  }
-
-  .kb-history-fab {
-    top: 0px;
-    right: 0px;
-    background: rgba(255, 255, 255, 0.85);
-    border: 1px solid rgba(13, 48, 100, 0.15);
-    color: rgb(13, 48, 100);
-    backdrop-filter: blur(10px);
-
-    &:hover {
-      background: rgba(255, 255, 255, 1);
-      box-shadow: 0 6px 24px rgba(13, 48, 100, 0.18);
-    }
-
-    &.is-active {
-      background: rgba(13, 48, 100, 0.08);
-      color: rgb(13, 48, 100);
-    }
-  }
-
-  .kb-history-panel {
-    background: rgba(255, 255, 255, 0.96);
-    backdrop-filter: blur(20px) saturate(160%);
-    border-left: 1px solid rgba(13, 48, 100, 0.1);
-    box-shadow: -4px 0 24px rgba(13, 48, 100, 0.1);
-  }
-
-  .kb-history-panel-header {
-    color: rgb(13, 48, 100);
-    border-bottom-color: rgba(13, 48, 100, 0.08);
-  }
-
-  .kb-history-panel-close {
-    background: rgba(13, 48, 100, 0.06);
-    color: rgba(13, 48, 100, 0.5);
-
-    &:hover {
-      background: rgba(13, 48, 100, 0.1);
-      color: rgb(13, 48, 100);
-    }
-  }
-
-  .kb-history-new-btn {
-    background: rgba(13, 48, 100, 0.05);
-    border-color: rgba(13, 48, 100, 0.15);
-    color: rgb(13, 48, 100);
-
-    &:hover {
-      background: rgba(13, 48, 100, 0.1);
-      border-color: rgba(13, 48, 100, 0.3);
-    }
-  }
-
-  .kb-history-loading,
-  .kb-history-empty {
-    color: rgba(13, 48, 100, 0.4);
-  }
-
-  .kb-history-item {
-    &:hover {
-      background: rgba(13, 48, 100, 0.06);
-    }
-
-    &.active {
-      background: rgba(13, 48, 100, 0.1);
-    }
-  }
-
-  .kb-history-item-name {
-    color: rgba(13, 48, 100, 0.85);
-  }
-
-  .kb-history-item-delete {
-    color: rgba(13, 48, 100, 0.3);
-
-    &:hover {
-      background: rgba(220, 50, 50, 0.1);
-      color: rgb(220, 50, 50);
-    }
-  }
-
-  .kb-history-list {
-    &::-webkit-scrollbar-thumb {
-      background: rgba(13, 48, 100, 0.15);
-    }
-  }
-
-  // 管理按钮
-  .kb-history-manage-btn {
-    background: rgba(13, 48, 100, 0.06);
-    border-color: rgba(13, 48, 100, 0.2);
-    color: rgb(13, 48, 100);
-
-    &:hover {
-      background: rgba(13, 48, 100, 0.12);
-      border-color: rgba(13, 48, 100, 0.35);
-    }
-  }
-
-  // 复选框
-  .kb-history-checkbox-box {
-    border-color: rgba(13, 48, 100, 0.35);
-    background: rgba(13, 48, 100, 0.04);
-
-    &.checked {
-      background: #3d5bf5;
-      border-color: #3d5bf5;
-      color: #fff;
-    }
-
-    &:hover {
-      border-color: rgba(0, 102, 255, 0.6);
-      background: rgba(0, 102, 255, 0.08);
-    }
-  }
-
-  // 批量操作栏
-  .kb-history-batch-bar {
-    background: rgba(248, 250, 255, 0.92);
-    border-top-color: rgba(13, 48, 100, 0.1);
-  }
-
-  .kb-history-batch-btn {
-    color: rgba(13, 48, 100, 0.75);
-    border-color: rgba(13, 48, 100, 0.15);
-    background: rgba(13, 48, 100, 0.04);
-
-    &:hover:not(:disabled) {
-      background: rgba(13, 48, 100, 0.1);
-      border-color: rgba(13, 48, 100, 0.3);
-    }
-
-    &:disabled {
-      opacity: 0.3;
-    }
-
-    &.danger {
-      color: rgb(220, 50, 50);
-      border-color: rgba(220, 50, 50, 0.25);
-
-      &:hover:not(:disabled) {
-        background: rgba(220, 50, 50, 0.1);
-        border-color: rgba(220, 50, 50, 0.45);
-        color: rgb(220, 50, 50);
-      }
-    }
-  }
-}
-
-// ============== 历史会话悬浮按钮和面板 ==============
-.kb-history-fab {
-  position: fixed;
-  top: 14px;
-  right: 14px;
-  z-index: 9990;
-  width: 32px;
-  height: 32px;
-  border-radius: 50%;
-  background: linear-gradient(135deg, rgba(77, 166, 255, 0.2) 0%, rgba(100, 150, 255, 0.3) 100%);
-  border: 1px solid rgba(100, 150, 255, 0.28);
-  color: rgba(255, 255, 255, 0.9);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  cursor: pointer;
-  transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
-  box-shadow:
-    0 2px 6px rgba(0, 20, 80, 0.18),
-    inset 0 1px 0 rgba(255, 255, 255, 0.06);
-  padding: 0;
-  margin: 0;
-  line-height: 1;
-
-  :deep(.el-icon) {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    width: 18px;
-    height: 18px;
-    color: inherit;
-  }
-
-  :deep(svg) {
-    fill: currentColor;
-    width: 18px;
-    height: 18px;
-    display: block;
-  }
-
-  &:hover {
-    background: linear-gradient(135deg, rgba(77, 166, 255, 0.38) 0%, rgba(100, 150, 255, 0.28) 100%);
-    border-color: rgba(77, 166, 255, 0.55);
-    color: #ffffff;
-    transform: scale(1.08);
-    box-shadow:
-      0 6px 16px rgba(26, 74, 140, 0.45),
-      0 0 0 1px rgba(77, 166, 255, 0.25),
-      inset 0 1px 0 rgba(255, 255, 255, 0.12);
-  }
-
-  &.is-active {
-    background: linear-gradient(135deg, rgba(77, 166, 255, 0.55) 0%, rgba(100, 150, 255, 0.45) 100%);
-    border-color: rgba(77, 166, 255, 0.6);
-    color: #ffffff;
-  }
-}
-
-.kb-history-panel {
-  position: fixed;
-  top: 0;
-  right: 0;
-  width: 320px;
-  height: 100vh;
-  z-index: 9995;
-  background: rgba(10, 22, 60, 0.95);
-  backdrop-filter: blur(20px) saturate(160%);
-  border-left: 1px solid rgba(77, 166, 255, 0.2);
-  box-shadow: -4px 0 24px rgba(0, 0, 0, 0.4);
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-  padding-bottom: 12px;
-  box-sizing: border-box;
-}
-
-.kb-history-panel-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 20px 20px 16px;
-  border-bottom: 1px solid rgba(77, 166, 255, 0.15);
-  font-size: 16px;
-  font-weight: 600;
-  color: #fff;
-  flex-shrink: 0;
-}
-
-.kb-history-panel-close {
-  width: 32px;
-  height: 32px;
-  border-radius: 50%;
-  border: none;
-  background: rgba(255, 255, 255, 0.08);
-  color: rgba(255, 255, 255, 0.6);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  cursor: pointer;
-  transition: all 0.2s;
-
-  &:hover {
-    background: rgba(255, 255, 255, 0.15);
-    color: #fff;
-  }
-}
-
-.kb-history-new-btn {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin: 12px 16px;
-  padding: 10px 16px;
-  background: rgba(77, 166, 255, 0.15);
-  border: 1px dashed rgba(77, 166, 255, 0.35);
-  border-radius: 8px;
-  font-size: 13px;
-  color: rgba(77, 166, 255, 0.9);
-  cursor: pointer;
-  transition: all 0.2s;
-  flex-shrink: 0;
-
-  &:hover {
-    background: rgba(77, 166, 255, 0.25);
-    border-color: rgba(77, 166, 255, 0.5);
-  }
-}
-
-.kb-history-loading,
-.kb-history-empty {
-  padding: 40px 20px;
-  text-align: center;
-  color: rgba(255, 255, 255, 0.4);
-  font-size: 13px;
-}
-
-.kb-history-list {
-  flex: 1;
-  overflow-y: auto;
-  list-style: none;
-  padding: 4px 8px;
-  margin: 0;
-
-  &::-webkit-scrollbar {
-    width: 4px;
-  }
-
-  &::-webkit-scrollbar-track {
-    background: transparent;
-  }
-
-  &::-webkit-scrollbar-thumb {
-    background: rgba(77, 166, 255, 0.2);
-    border-radius: 2px;
-  }
-}
-
-.kb-history-item {
-  display: flex;
-  align-items: center;
-  padding: 10px 12px;
-  border-radius: 6px;
-  cursor: pointer;
-  transition: all 0.15s;
-  margin-bottom: 2px;
-
-  &:hover {
-    background: rgba(77, 166, 255, 0.12);
-  }
-
-  &.active {
-    background: rgba(77, 166, 255, 0.2);
-  }
-}
-
-.kb-history-item-name {
-  flex: 1;
-  font-size: 13px;
-  color: rgba(255, 255, 255, 0.85);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.kb-history-item-delete {
-  width: 28px;
-  height: 28px;
-  border-radius: 4px;
-  border: none;
-  background: transparent;
-  color: rgba(255, 255, 255, 0.3);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  cursor: pointer;
-  flex-shrink: 0;
-  opacity: 0;
-  transition: all 0.15s;
-
-  .kb-history-item:hover & {
-    opacity: 1;
-  }
-
-  &:hover {
-    background: rgba(255, 80, 80, 0.2);
-    color: rgba(255, 80, 80, 0.8);
-  }
-}
-
-// ============== 历史会话多选样式 ==============
-.kb-history-panel-header-actions {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.kb-history-manage-btn {
-  padding: 4px 12px;
-  border-radius: 4px;
-  border: 1px solid rgba(77, 166, 255, 0.3);
-  background: rgba(77, 166, 255, 0.12);
-  color: rgba(77, 166, 255, 0.9);
-  font-size: 12px;
-  cursor: pointer;
-  transition: all 0.2s;
-
-  &:hover {
-    background: rgba(77, 166, 255, 0.22);
-    border-color: rgba(77, 166, 255, 0.5);
-  }
-}
-
-.kb-history-checkbox {
-  flex-shrink: 0;
-  margin-right: 8px;
-  display: flex;
-  align-items: center;
-}
-
-.kb-history-checkbox-box {
-  width: 18px;
-  height: 18px;
-  border-radius: 4px;
-  border: 1.5px solid rgba(255, 255, 255, 0.45);
-  background: rgba(255, 255, 255, 0.08);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  cursor: pointer;
-  transition: all 0.15s;
-  color: transparent;
-
-  &.checked {
-    background: #7c93ff;
-    border-color: #7c93ff;
-    color: #fff;
-  }
-
-  &:hover {
-    border-color: rgba(77, 166, 255, 0.7);
-    background: rgba(77, 166, 255, 0.12);
-  }
-}
-
-.kb-history-batch-bar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 10px 16px;
-  padding-bottom: max(10px, env(safe-area-inset-bottom, 10px));
-  border-top: 1px solid rgba(77, 166, 255, 0.12);
-  background: rgba(10, 22, 60, 0.6);
-  flex-shrink: 0;
-  margin-top: auto;
-}
-
-.kb-history-batch-btn {
-  padding: 6px 14px;
-  border-radius: 4px;
-  border: 1px solid rgba(255, 255, 255, 0.15);
-  background: rgba(255, 255, 255, 0.06);
-  color: rgba(255, 255, 255, 0.75);
-  font-size: 12px;
-  cursor: pointer;
-  transition: all 0.2s;
-
-  &:hover:not(:disabled) {
-    background: rgba(255, 255, 255, 0.12);
-    border-color: rgba(255, 255, 255, 0.3);
-  }
-
-  &:disabled {
-    opacity: 0.35;
-    cursor: not-allowed;
-  }
-
-  &.danger {
-    color: rgba(255, 80, 80, 0.85);
-    border-color: rgba(255, 80, 80, 0.25);
-
-    &:hover:not(:disabled) {
-      background: rgba(255, 80, 80, 0.15);
-      border-color: rgba(255, 80, 80, 0.45);
-      color: rgba(255, 80, 80, 1);
-    }
-  }
-}
-
-// 面板滑入动画
-.kb-history-slide-enter-active,
-.kb-history-slide-leave-active {
-  transition: transform 0.3s ease, opacity 0.3s ease;
-}
-
-.kb-history-slide-enter-from,
-.kb-history-slide-leave-to {
-  transform: translateX(100%);
-  opacity: 0;
-}
 </style>
 

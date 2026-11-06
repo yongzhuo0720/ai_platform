@@ -342,7 +342,7 @@ describe("DatasetView", () => {
     expect(cardTitles(wrapper)).toHaveLength(3);
   });
 
-  it("请求未回来时是骨架屏，不提前喊「暂无数据集」", async () => {
+  it("请求未回来时是骨架屏，不提前喊「还没有数据集」", async () => {
     let resolveQuery: (value: unknown) => void = () => {};
     query.mockReturnValue(new Promise((resolve) => { resolveQuery = resolve; }));
 
@@ -390,11 +390,11 @@ describe("DatasetView", () => {
     query.mockResolvedValueOnce(ok([]));
     const emptyWrapper = mountView();
     await flushPromises();
-    expect(emptyWrapper.find(".state-block__empty-text").text()).toBe("暂无数据集");
+    expect(emptyWrapper.find(".state-block__empty-text").text()).toBe("还没有数据集");
 
     const wrapper = mountView();
     await flushPromises();
     await wrapper.find('input[placeholder="搜索数据集..."]').setValue("不存在的数据集");
-    expect(wrapper.find(".state-block__empty-text").text()).toBe("没有符合当前搜索与筛选条件的数据集");
+    expect(wrapper.find(".state-block__empty-text").text()).toBe("没有找到匹配的数据集");
   });
 });

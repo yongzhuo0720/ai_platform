@@ -215,24 +215,24 @@ html[data-theme="light"] .el-table {
   background: transparent;
   --el-table-border-color: var(--border-soft);
   --el-table-row-hover-bg-color: rgba(0, 102, 255, 0.06);
-  --el-table-header-bg-color: transparent;
-  --el-table-header-text-color: #ffffff;
+  --el-table-header-bg-color: var(--table-header-bg);
+  --el-table-header-text-color: var(--text-secondary);
   --el-table-text-color: var(--text-primary);
 }
 
 html[data-theme="light"] .el-table__header-wrapper th {
   background: var(--table-header-bg) !important;
   border-right: none !important;
-  color: #ffffff !important;
-  font-weight: 700 !important;
-  font-size: 13px !important;
-  letter-spacing: 0.04em;
-  text-shadow: 0 1px 2px rgba(0, 30, 100, 0.25);
+  color: var(--text-secondary) !important;
+  font-weight: 600 !important;
+  font-size: var(--font-base) !important;
+  letter-spacing: 0;
+  text-shadow: none;
 }
 
 html[data-theme="light"] .el-table__header-wrapper th .cell {
-  color: #ffffff !important;
-  font-weight: 700;
+  color: inherit !important;
+  font-weight: 600;
 }
 
 html[data-theme="light"] .el-table__body-wrapper td {

@@ -448,7 +448,6 @@ onBeforeUnmount(() => {
 }
 .page-content {
   width: 100%;
-  height: 100%;
   position: relative;
 }
 .page-fade-enter-active,

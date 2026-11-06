@@ -39,12 +39,6 @@ export function markKbConversation(conversationId: string) {
   }
 }
 
-/** 从知识库中心会话集合中移除指定会话（删除时清理） */
-export function unmarkKbConversation(conversationId: string) {
-  const ids = getKbConvIds().filter(id => id !== conversationId)
-  setKbConvIds(ids)
-}
-
 /** 判断指定会话是否为知识库中心的会话 */
 export function isKbConversation(conversationId: string): boolean {
   return getKbConvIds().includes(conversationId)

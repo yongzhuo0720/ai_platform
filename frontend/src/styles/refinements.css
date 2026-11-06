@@ -8,7 +8,11 @@
 }
 
 html[data-theme="light"] #app {
-  background: #f3f6fa;
+  background:
+    radial-gradient(1100px 720px at 88% -12%, var(--accent-soft), transparent 60%),
+    radial-gradient(900px 600px at -8% 108%, var(--accent-soft), transparent 55%),
+    linear-gradient(165deg, var(--bg-gradient-start) 0%, var(--bg-gradient-end) 100%);
+  background-attachment: fixed;
 }
 
 .shell-main {
@@ -24,20 +28,9 @@ html[data-theme="light"] #app {
   backdrop-filter: none;
 }
 
-.page-hero::before,
-.page-hero-glow {
-  display: none;
-}
-
 .page-heading h1 {
   font-size: 28px;
   letter-spacing: 0;
-}
-
-.page-section .btn-primary {
-  background: var(--brand-blue);
-  border-radius: 8px;
-  box-shadow: none;
 }
 
 @media (max-width: 720px) {

@@ -64,6 +64,8 @@ export const aiPlatformMenus: any[] = [
     icon: 'Collection',
     items: [
       { title: '知识库中心', path: '/knowledge-bases', routeName: 'knowledge-bases' },
+      { title: '知识检索', path: '/kb-search', routeName: 'kb-search' },
+      { title: 'RAG 评估', path: '/rag-eval', routeName: 'rag-eval' },
     ],
   },
   {
@@ -98,6 +100,15 @@ export const aiPlatformMenus: any[] = [
     items: [
       { title: '模型仓库', path: '/models', routeName: 'models' },
       { title: '数据集仓库', path: '/datasets', routeName: 'datasets' },
+    ],
+  },
+  {
+    id: 'usage',
+    title: '用量中心',
+    icon: 'DataLine',
+    items: [
+      { title: '我的用量', path: '/my-usage', routeName: 'my-usage' },
+      { title: 'API 密钥', path: '/api-keys', routeName: 'api-keys' },
     ],
   },
 ]

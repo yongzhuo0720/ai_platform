@@ -1,27 +1,38 @@
 .dataset-list {
   display: grid;
-  grid-template-columns: repeat(2, 1fr);
+  grid-template-columns: repeat(auto-fill, minmax(420px, 1fr));
   gap: 16px;
 }
 
-/* 数据集标题字体加大 */
+/* 卡片纵向排布：标题/描述不再被右侧操作按钮挤压 */
+.dataset-list .list-card {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 12px;
+}
+
+.dataset-list .list-card-content {
+  width: 100%;
+}
+
 .dataset-list .list-card-title {
-  font-size: 22px;
+  font-size: var(--font-lg);
 }
 
-/* 让头部区域内容垂直居中 */
-.page-heading {
-  align-items: center !important;
+/* 桌面端让标题块与操作按钮垂直居中；窄屏为纵向排列，保持左对齐 */
+@media (min-width: 721px) {
+  .page-heading {
+    align-items: center;
+  }
 }
-
-
 
 /* 卡片底部按钮区域 */
 .list-card-actions {
   display: flex;
+  justify-content: flex-end;
   gap: 8px;
   padding-top: 12px;
-  border-top: 1px solid rgba(100, 150, 255, 0.12);
+  border-top: 1px solid var(--border-soft);
 }
 
 .datasets-toolbar {
@@ -33,45 +44,4 @@
 .datasets-sort {
   flex: none;
   width: 180px;
-}
-
-/* 头部统计样式 - 与能力广场保持一致 */
-.hero-stats {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 16px;
-  height: 100%;
-}
-
-.hero-stat {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 4px;
-  padding: 12px 20px;
-  transition: all 0.3s ease;
-}
-
-.hero-stat:hover {
-  transform: translateY(-2px);
-}
-
-.hero-stat span {
-  font-size: 12px;
-  color: rgba(255, 255, 255, 0.85);
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-}
-
-.hero-stat strong {
-  font-size: 24px;
-  font-weight: 700;
-  font-family: "PingFang SC", "Microsoft YaHei", sans-serif;
-  background: linear-gradient(135deg, #7c93ff 0%, #64d2ff 100%);
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
-  background-clip: text;
-  text-shadow: 0 0 20px rgba(77, 166, 255, 0.3);
 }

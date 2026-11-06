@@ -64,9 +64,7 @@ vi.mock("@/api/knowledgeChat", () => ({
   knowledgeChatStreaming: vi.fn(async () => ({})),
   retrieveFromDataset: vi.fn(async () => []),
   getAppParameters: vi.fn(async () => ({})),
-  getConversations: vi.fn(async () => ({ data: [] })),
   getConversationHistory: vi.fn(async () => ({ data: [] })),
-  deleteConversation: vi.fn(async () => ({})),
   getSuggestedMessages: vi.fn(async () => []),
 }));
 vi.mock("@/api/modelsConfig", () => ({
@@ -92,7 +90,7 @@ import { tagsApi } from "@/api/tags";
 import { tagsBindApi } from "@/api/tagsbind";
 import { modelsConfigApi } from "@/api/modelsConfig";
 import { documentApi } from "@/api/document";
-import { getAppParameters, getConversations, retrieveFromDataset } from "@/api/knowledgeChat";
+import { getAppParameters, retrieveFromDataset } from "@/api/knowledgeChat";
 
 /**
  * 知识库中心：三组列表加载、可见性过滤、管理弹窗校验与权限记录、成员与订阅操作。
@@ -251,7 +249,6 @@ beforeEach(() => {
   ]);
   modelsList.mockResolvedValue({ data: { resp_code: 0, datas: [] } });
   (getAppParameters as Mock).mockResolvedValue({});
-  (getConversations as Mock).mockResolvedValue({ data: [] });
   (retrieveFromDataset as Mock).mockResolvedValue([]);
   getDocuments.mockResolvedValue({ data: [] });
   createDataset.mockResolvedValue({ id: "kb-new", name: "新知识库" });

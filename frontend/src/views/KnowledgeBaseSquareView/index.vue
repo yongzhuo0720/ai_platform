@@ -28,101 +28,8 @@
       :count="6"
       @retry="fetchKnowledgeBases"
     >
-    <!-- 推荐知识库 -->
-    <div v-if="recommendedKnowledgeBases.length > 0" class="kb-square-section">
-      <div class="kb-square-section-header">
-        <div class="kb-square-section-title">推荐知识库</div>
-      </div>
-      <div class="kb-square-grid">
-        <article
-          v-for="kb in recommendedKnowledgeBases"
-          :key="kb.id"
-          class="kb-square-card"
-          @click.stop="handleCardClick(kb)"
-        >
-          <div class="kb-square-card-cover">
-            <img :src="kb.coverImage || defaultCover" :alt="kb.name" />
-          </div>
-          <div class="kb-square-card-content">
-            <h3 class="kb-square-card-name">{{ kb.name }}</h3>
-            <p class="kb-square-card-desc">{{ kb.description || '暂无描述' }}</p>
-            <div class="kb-square-card-meta">
-              {{ kb.member_count || 0 }}人已加入 | {{ kb.document_count || 0 }}个内容 | {{ kb.creator || 'admin' }}
-            </div>
-            <!-- 标签区域 -->
-            <div class="ima-card-tags">
-              <template v-if="canManageKbTags(kb)">
-                <TagDropdown
-                  v-for="(tag, tagIndex) in kb.tagList || []"
-                  :key="`${kb.id}-tag-${tagIndex}`"
-                  :parent="kb"
-                  :allTags="allTags"
-                  :show-add-button="false"
-                  type="knowledge_base"
-                  @refreshTagBind="(id: string) => refreshTagBind(id)"
-                  @getAllTags="getAllTags"
-                >
-                  <template #trigger>
-                    <el-popover placement="bottom" trigger="hover" :width="200" :show-after="200">
-                      <template #reference>
-                        <span class="ima-card-tag">
-                          <PriceTag class="tag-icon" />
-                          {{ tag.name }}
-                        </span>
-                      </template>
-                      <div class="tags-popover">
-                        <div v-for="t in kb.tagList" :key="t.iid" class="tags-popover-item">
-                          <el-icon><PriceTag /></el-icon>
-                          {{ t.name }}
-                        </div>
-                      </div>
-                    </el-popover>
-                  </template>
-                </TagDropdown>
-                <TagDropdown
-                  v-if="!kb.tagList || kb.tagList.length === 0"
-                  :parent="kb"
-                  :allTags="allTags"
-                  :show-add-button="true"
-                  type="knowledge_base"
-                  @refreshTagBind="(id: string) => refreshTagBind(id)"
-                  @getAllTags="getAllTags"
-                />
-              </template>
-              <template v-else>
-                <el-popover
-                  v-for="(tag, tagIndex) in kb.tagList || []"
-                  :key="`${kb.id}-tag-${tagIndex}`"
-                  placement="bottom"
-                  trigger="hover"
-                  :width="200"
-                  :show-after="200"
-                >
-                  <template #reference>
-                    <span class="ima-card-tag">
-                      <PriceTag class="tag-icon" />
-                      {{ tag.name }}
-                    </span>
-                  </template>
-                  <div class="tags-popover">
-                    <div v-for="t in kb.tagList" :key="t.iid" class="tags-popover-item">
-                      <el-icon><PriceTag /></el-icon>
-                      {{ t.name }}
-                    </div>
-                  </div>
-                </el-popover>
-              </template>
-            </div>
-          </div>
-        </article>
-      </div>
-    </div>
-
     <!-- 全部 -->
     <div class="kb-square-section">
-      <div class="kb-square-tabs">
-        <span class="kb-square-tab active">全部</span>
-      </div>
       <div class="kb-square-grid">
         <article
           v-for="kb in filteredKnowledgeBases"
@@ -233,7 +140,6 @@ const {
   searchQuery,
   selectedCategories,
   filteredKnowledgeBases,
-  recommendedKnowledgeBases,
   allTags,
   getAllTags,
   refreshTagBind,

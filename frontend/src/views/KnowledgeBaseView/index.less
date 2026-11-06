@@ -2645,6 +2645,19 @@ html[data-theme="light"] {
     background: transparent;
   }
 
+  .kb-config-alert {
+    border-color: var(--warning-border);
+    background: var(--warning-soft);
+  }
+
+  .kb-config-alert-title {
+    color: var(--warning);
+  }
+
+  .kb-config-alert-hint {
+    color: var(--text-secondary);
+  }
+
   .kb-sidebar {
     background: #f5f9ff;
     backdrop-filter: none;
@@ -3824,5 +3837,54 @@ html[data-theme="light"] {
     .el-checkbox__label {
       color: rgba(255, 255, 255, 0.85);
     }
+  }
+}
+
+// ========================================
+// 窄屏：侧栏改为顶部横向区，详情与对话纵向堆叠
+// ========================================
+@media (max-width: 960px) {
+  .kb-page {
+    flex-direction: column;
+  }
+
+  .kb-sidebar,
+  .kb-sidebar-collapsed {
+    width: 100%;
+    max-height: 208px;
+    padding: 6px 0;
+    border-right: none;
+    border-bottom: 1px solid var(--border-color);
+    overflow-y: auto;
+  }
+
+  /* 窄屏用整页滚动承载内容，折叠按钮只会产生半空状态 */
+  .kb-sidebar-toolbar {
+    display: none;
+  }
+
+  .kb-main {
+    min-height: 0;
+    flex: 1;
+  }
+
+  .kb-content-shared {
+    flex-direction: column;
+    overflow-y: auto;
+  }
+
+  .kb-shared-left {
+    flex: 0 0 auto;
+    height: auto;
+    min-height: 320px;
+    border-right: none;
+    border-bottom: 1px solid var(--border-color);
+  }
+
+  .kb-shared-right {
+    flex: 1 0 auto;
+    height: auto;
+    min-height: 420px;
+    border-radius: 0;
   }
 }

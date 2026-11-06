@@ -27,8 +27,12 @@
       </button>
     </div>
 
-    <div v-else-if="empty" class="state-block__empty">
+    <div v-else-if="empty" class="state-block__empty" role="status">
+      <span class="state-block__empty-icon" aria-hidden="true">
+        <el-icon><Box /></el-icon>
+      </span>
       <p class="state-block__empty-text">{{ emptyText }}</p>
+      <p v-if="emptyHint" class="state-block__empty-hint">{{ emptyHint }}</p>
       <slot name="empty-action" />
     </div>
 
@@ -37,7 +41,7 @@
 </template>
 
 <script setup lang="ts">
-import { WarningFilled } from '@element-plus/icons-vue'
+import { Box, WarningFilled } from '@element-plus/icons-vue'
 
 withDefaults(
   defineProps<{
@@ -46,6 +50,7 @@ withDefaults(
     error?: string
     empty?: boolean
     emptyText?: string
+    emptyHint?: string
     retryText?: string
     variant?: 'rows' | 'cards'
     count?: number
@@ -55,6 +60,7 @@ withDefaults(
     error: '',
     empty: false,
     emptyText: '暂无数据',
+    emptyHint: '',
     retryText: '重试',
     variant: 'rows',
     count: 6,
@@ -128,8 +134,8 @@ const emit = defineEmits<{ retry: [] }>()
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 12px;
-  padding: 40px 20px;
+  gap: var(--space-2);
+  padding: var(--space-10) var(--space-5);
   text-align: center;
 }
 
@@ -143,9 +149,37 @@ const emit = defineEmits<{ retry: [] }>()
   color: var(--text-secondary);
 }
 
+.state-block__empty-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 56px;
+  height: 56px;
+  margin-bottom: var(--space-1);
+  border-radius: var(--radius-md);
+  background: var(--surface-soft);
+  border: 1px solid var(--border-soft);
+  color: var(--text-tertiary);
+  font-size: 24px;
+}
+
 .state-block__empty-text {
   margin: 0;
+  font-size: var(--font-lg);
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.state-block__empty-hint {
+  margin: 0;
+  max-width: 420px;
+  font-size: var(--font-base);
+  line-height: 1.6;
   color: var(--text-tertiary);
+}
+
+.state-block__empty .btn {
+  margin-top: var(--space-2);
 }
 
 .state-block__retry {
