@@ -34,6 +34,7 @@ public class TableSchemaInitializer implements ApplicationListener<ApplicationRe
         ensureKbDocPipeline();
         ensureLongTextColumns();
         ensureCostAndTracingColumns();
+        ensureWeeklyReportUniqueWeek();
         ensureApiTokenTable();
         ensureControllerLogIndex();
         ensureRagEvalTables();
@@ -301,6 +302,26 @@ public class TableSchemaInitializer implements ApplicationListener<ApplicationRe
         execute("CREATE INDEX IF NOT EXISTS idx_aicalllog_model_time ON aicalllogbean (\"modelName\", \"createtime\")");
         execute("ALTER TABLE modelsconfigbean ADD COLUMN IF NOT EXISTS \"priceInputPerMillion\" int8");
         execute("ALTER TABLE modelsconfigbean ADD COLUMN IF NOT EXISTS \"priceOutputPerMillion\" int8");
+    }
+
+    /**
+     * 周报「一周一行」的唯一约束。
+     *
+     * <p>周报生成改为「有则更新、无则插入」后，手动触发与周一凌晨的定时任务
+     * 仍可能同时发现「本周还没有快照」而双双插入。唯一索引是最后一道闸门：
+     * 只放行一条，后到者转去更新赢家行（见 {@code AiWeeklyReportHolder}）。</p>
+     *
+     * <p>历史数据若已存在同周重复行，先保留 iid 最大（最新）的一行再建索引；
+     * 这正是原本「同周重复生成只保留最新一份」的语义。weekStart/weekEnd
+     * 为 NULL 的行不参与去重，也不会互相冲突（PostgreSQL 唯一索引允许多个 NULL）。</p>
+     */
+    private void ensureWeeklyReportUniqueWeek() {
+        execute("DELETE FROM aiweeklyreportbean a USING aiweeklyreportbean b "
+                + "WHERE a.\"weekStart\" = b.\"weekStart\" "
+                + "AND a.\"weekEnd\" = b.\"weekEnd\" "
+                + "AND a.\"iid\" < b.\"iid\"");
+        execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_aiweeklyreport_week "
+                + "ON aiweeklyreportbean (\"weekStart\", \"weekEnd\")");
     }
 
     /**

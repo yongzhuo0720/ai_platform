@@ -124,14 +124,67 @@ public class AiWeeklyReportHolder {
         report.setTopModel(topKey(byModel));
         report.setLastuser("system");
 
-        // 覆盖式写入：同周重复生成只保留最新一份
-        AiWeeklyReportBean whereBean = new AiWeeklyReportBean();
-        whereBean.setWeekStart(report.getWeekStart());
-        reportMapper.delete(whereBean);
-        reportMapper.install(report);
-        log.info("[周报] 已生成 {} ~ {}：{} 次调用 / {} tokens / {} 毫分",
-                report.getWeekStart(), report.getWeekEnd(), total, tokens, cost);
+        return saveSnapshot(report);
+    }
+
+    /**
+     * 覆盖式写入：同周只保留一份快照。
+     *
+     * <p>不用「先删后插」：两步之间如果进程退出，旧快照已经没了、新快照还没写，
+     * 这一周就永久缺一行。改为「有则更新、无则插入」，更新失败时旧快照仍然完整；
+     * 并发首次生成时由 {@code (weekStart, weekEnd)} 唯一索引兜底，
+     * 后到者插入失败后改为更新先前那行。</p>
+     */
+    private Result<AiWeeklyReportBean> saveSnapshot(AiWeeklyReportBean report) {
+        AiWeeklyReportBean week = new AiWeeklyReportBean();
+        week.setWeekStart(report.getWeekStart());
+        week.setWeekEnd(report.getWeekEnd());
+        List<AiWeeklyReportBean> existing = reportMapper.select(null, week);
+        if (existing != null && !existing.isEmpty()) {
+            return updateSnapshot(existing.get(0), report);
+        }
+        try {
+            if (reportMapper.install(report) > 0) {
+                logGenerated(report);
+                return Result.succeed(report, "周报已生成");
+            }
+        } catch (Exception e) {
+            log.warn("[周报] 插入冲突，转为更新已有快照: {} ~ {}，原因: {}",
+                    report.getWeekStart(), report.getWeekEnd(), e.getMessage());
+        }
+        List<AiWeeklyReportBean> winner = reportMapper.select(null, week);
+        if (winner == null || winner.isEmpty()) {
+            return Result.failed(null, "周报保存失败，请稍后重试");
+        }
+        return updateSnapshot(winner.get(0), report);
+    }
+
+    private Result<AiWeeklyReportBean> updateSnapshot(AiWeeklyReportBean current, AiWeeklyReportBean report) {
+        current.setWeekStart(report.getWeekStart());
+        current.setWeekEnd(report.getWeekEnd());
+        current.setTotalCalls(report.getTotalCalls());
+        current.setSuccessCalls(report.getSuccessCalls());
+        current.setFailedCalls(report.getFailedCalls());
+        current.setTotalTokens(report.getTotalTokens());
+        current.setCostCents(report.getCostCents());
+        current.setAvgLatencyMs(report.getAvgLatencyMs());
+        current.setAvgFirstTokenMs(report.getAvgFirstTokenMs());
+        current.setTopUser(report.getTopUser());
+        current.setTopModel(report.getTopModel());
+        current.setLastuser("system");
+        AiWeeklyReportBean where = new AiWeeklyReportBean();
+        where.setIid(current.getIid());
+        if (reportMapper.update(current, where) <= 0) {
+            return Result.failed(null, "周报保存失败，请稍后重试");
+        }
+        logGenerated(report);
         return Result.succeed(report, "周报已生成");
+    }
+
+    private void logGenerated(AiWeeklyReportBean report) {
+        log.info("[周报] 已生成 {} ~ {}：{} 次调用 / {} tokens / {} 毫分",
+                report.getWeekStart(), report.getWeekEnd(),
+                report.getTotalCalls(), report.getTotalTokens(), report.getCostCents());
     }
 
     /** 周报列表（按周倒序） */
