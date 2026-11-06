@@ -10,6 +10,7 @@ import com.aiproject.ai.service.mapper.KbChunkBeanMapper;
 import com.aiproject.ai.service.mapper.KbDocBeanMapper;
 import com.aiproject.ai.service.mapper.KbDocContentBeanMapper;
 import com.aiproject.ai.service.notification.NotificationTypes;
+import com.aiproject.ai.service.schedule.ScheduledTaskGuard;
 import com.heneng.hnsp.common.db.utils.PageRequest;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -17,6 +18,7 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.InOrder;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
+import org.mockito.Spy;
 import org.mockito.junit.jupiter.MockitoExtension;
 
 import java.util.ArrayList;
@@ -64,6 +66,10 @@ class KbDocRunnerTest {
 
     @Mock
     NotificationHolder notificationHolder;
+
+    /** 无 Redis 的守卫会直接执行任务体，等价于单机部署 */
+    @Spy
+    ScheduledTaskGuard scheduledTaskGuard = new ScheduledTaskGuard();
 
     @InjectMocks
     KbDocRunner runner;

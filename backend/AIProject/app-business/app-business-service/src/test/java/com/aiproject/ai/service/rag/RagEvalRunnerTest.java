@@ -15,6 +15,7 @@ import com.aiproject.ai.service.mapper.RagEvalCaseResultBeanMapper;
 import com.aiproject.ai.service.mapper.RagEvalDatasetBeanMapper;
 import com.aiproject.ai.service.mapper.RagEvalRunBeanMapper;
 import com.aiproject.ai.service.rag.dto.RagEvalHitDto;
+import com.aiproject.ai.service.schedule.ScheduledTaskGuard;
 import com.heneng.hnsp.common.croe.model.Result;
 import com.heneng.hnsp.common.db.utils.PageRequest;
 import org.junit.jupiter.api.Test;
@@ -22,6 +23,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
+import org.mockito.Spy;
 import org.mockito.junit.jupiter.MockitoExtension;
 
 import java.util.ArrayList;
@@ -79,6 +81,10 @@ class RagEvalRunnerTest {
 
     @Mock
     NotificationHolder notificationHolder;
+
+    /** 无 Redis 的守卫会直接执行任务体，等价于单机部署 */
+    @Spy
+    ScheduledTaskGuard scheduledTaskGuard = new ScheduledTaskGuard();
 
     @InjectMocks
     RagEvalRunner runner;

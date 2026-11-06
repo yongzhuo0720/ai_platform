@@ -11,6 +11,7 @@ import com.aiproject.ai.service.mapper.KbChunkBeanMapper;
 import com.aiproject.ai.service.mapper.KbDocBeanMapper;
 import com.aiproject.ai.service.mapper.KbDocContentBeanMapper;
 import com.aiproject.ai.service.notification.NotificationTypes;
+import com.aiproject.ai.service.schedule.ScheduledTaskGuard;
 import com.heneng.hnsp.common.db.utils.PageRequest;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -41,6 +42,8 @@ public class KbDocRunner {
     private static final int BATCH_ATTEMPTS = 2;
     private static final long BATCH_RETRY_DELAY_MS = 200L;
     private static final int TRUNCATE_ERROR_CHARS = 1000;
+    /** 锁 TTL 要小于 5 分钟调度间隔，否则一次异常退出会让回收停摆一整轮 */
+    private static final long RECOVERY_LOCK_TTL_SECONDS = 240L;
 
     @Autowired
     KbDocBeanMapper<KbDocBean> docMapper;
@@ -56,6 +59,9 @@ public class KbDocRunner {
 
     @Autowired
     NotificationHolder notificationHolder;
+
+    @Autowired
+    ScheduledTaskGuard scheduledTaskGuard;
 
     /** 后台执行入口：任何未捕获异常都必须落成 failed，不能让文档永久停在 processing */
     public void execute(Long docIid, String uid) {
@@ -220,9 +226,17 @@ public class KbDocRunner {
     /**
      * 回收僵死任务：进程重启或线程异常退出后，文档会停在 queued/chunking/embedding。
      * 不回收会让用户永远看到「处理中」，且无法重新上传（去重索引还占着）。
+     *
+     * <p>多实例下用 Redis 锁只让一个实例扫描；锁 TTL 小于 5 分钟调度间隔，
+     * 保证下一轮一定能重新抢锁。回收本身按状态 CAS，Redis 故障时重复扫描也无害。</p>
      */
     @Scheduled(fixedDelay = 5 * 60 * 1000, initialDelay = 2 * 60 * 1000)
     public void recoverStaleDocs() {
+        scheduledTaskGuard.run("kb-doc-stale-recovery", RECOVERY_LOCK_TTL_SECONDS,
+                this::recoverStaleDocsOnce);
+    }
+
+    void recoverStaleDocsOnce() {
         long cutoff = System.currentTimeMillis() - STALE_DOC_MS;
         int recovered = 0;
         for (String status : new String[]{

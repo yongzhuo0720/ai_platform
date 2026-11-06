@@ -1,5 +1,6 @@
 package com.aiproject.ai.service.holde;
 
+import com.aiproject.ai.service.schedule.ScheduledTaskGuard;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.scheduling.annotation.Scheduled;
@@ -14,11 +15,22 @@ import org.springframework.stereotype.Component;
 @Component
 public class AiWeeklyReportScheduler {
 
+    /** 周报全量聚合可能跑几分钟，给足 TTL 又不至于挂死后永久占锁 */
+    private static final long LOCK_TTL_SECONDS = 1800L;
+
     @Autowired
     AiWeeklyReportHolder holder;
 
+    @Autowired
+    ScheduledTaskGuard scheduledTaskGuard;
+
     @Scheduled(cron = "0 0 2 ? * MON")
     public void generateWeekly() {
+        // 多实例下只让一个实例生成；周报本身有唯一约束，Redis 故障时重复执行也无害
+        scheduledTaskGuard.run("weekly-report", LOCK_TTL_SECONDS, this::generateWeeklyOnce);
+    }
+
+    void generateWeeklyOnce() {
         try {
             holder.generate(null);
         } catch (Exception e) {

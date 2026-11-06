@@ -15,6 +15,7 @@ import com.aiproject.ai.service.mapper.RagEvalCaseResultBeanMapper;
 import com.aiproject.ai.service.mapper.RagEvalDatasetBeanMapper;
 import com.aiproject.ai.service.mapper.RagEvalRunBeanMapper;
 import com.aiproject.ai.service.rag.dto.RagEvalHitDto;
+import com.aiproject.ai.service.schedule.ScheduledTaskGuard;
 import com.heneng.hnsp.common.croe.model.Result;
 import com.heneng.hnsp.common.db.utils.PageRequest;
 import lombok.extern.slf4j.Slf4j;
@@ -58,6 +59,8 @@ public class RagEvalRunner {
     private static final String RETRIEVAL_HYBRID = "hybrid-rrf";
     private static final String RETRIEVAL_HYBRID_RERANK = "hybrid-rrf+rerank";
     private static final int PREVIEW_CHARS = 200;
+    /** 锁 TTL 要小于 5 分钟调度间隔，否则一次异常退出会让回收停摆一整轮 */
+    private static final long RECOVERY_LOCK_TTL_SECONDS = 240L;
 
     @Autowired
     RagEvalRunBeanMapper<RagEvalRunBean> runMapper;
@@ -76,6 +79,9 @@ public class RagEvalRunner {
 
     @Autowired
     NotificationHolder notificationHolder;
+
+    @Autowired
+    ScheduledTaskGuard scheduledTaskGuard;
 
     /**
      * 后台执行入口。任何未捕获异常都要落到运行记录上，否则前端会一直看到
@@ -518,9 +524,16 @@ public class RagEvalRunner {
     /**
      * 回收僵死运行：进程重启或线程异常退出后，记录会停留在 queued/running。
      * 不清理会导致该数据集被活动运行唯一索引永久挡住。
+     *
+     * <p>多实例下用 Redis 锁只让一个实例扫描；回收按 runKey 更新，重复执行幂等。</p>
      */
     @Scheduled(fixedDelay = 5 * 60 * 1000, initialDelay = 2 * 60 * 1000)
     public void recoverStaleRuns() {
+        scheduledTaskGuard.run("rag-eval-stale-recovery", RECOVERY_LOCK_TTL_SECONDS,
+                this::recoverStaleRunsOnce);
+    }
+
+    void recoverStaleRunsOnce() {
         long cutoff = System.currentTimeMillis() - STALE_RUN_MS;
         int recovered = 0;
         for (String status : new String[]{RagEvalStatus.QUEUED, RagEvalStatus.RUNNING}) {

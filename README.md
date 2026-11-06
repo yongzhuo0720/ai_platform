@@ -255,7 +255,7 @@ npm run check:bundle     # 首屏 gzip 体积预算（需先 build）
 
 | 项目 | 结果 |
 |---|---|
-| 后端单元测试 | **596 项 / 53 份 Surefire 报告，0 失败 / 0 错误 / 0 跳过**（`mvn -o test`，JDK 8 Dragonwell 8；app-common 7、permission 71、service 491、app-start 27） |
+| 后端单元测试 | **606 项 / 55 份 Surefire 报告，0 失败 / 0 错误 / 0 跳过**（`mvn -o test`，JDK 8 Dragonwell 8；app-common 7、permission 71、service 501、app-start 27） |
 | 前端 TypeScript 检查 | 通过 |
 | 前端图标注册检查 | 通过 |
 | 硬编码色值棘轮检查 | 通过（48 个文件 / 2102 处，等于基线；新增即失败，只允许减少） |
