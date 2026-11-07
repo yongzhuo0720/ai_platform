@@ -39,6 +39,12 @@ async function setup(page: Page) {
     else if (path.endsWith('/agentToolBean/save')) { tools.push({ ...data, iid: 51 }); value = data }
     else if (path.endsWith('/agentRunBean/list')) value = runs
     else if (path.endsWith('/agentRunBean/detail')) value = { run, steps }
+    else if (path.endsWith('/agentRunBean/streamResume')) {
+      // 默认不提供续播流：让前端按「断流、未收到最终结果」收尾，
+      // 保持既有「不自动重放执行请求」用例的语义；专门的续播用例会覆盖这个 route。
+      await route.fulfill({ contentType: 'application/json', body: JSON.stringify({ resp_code: 1, resp_msg: '续播不可用' }) })
+      return
+    }
     else throw new Error(`未定义的 Agent 测试接口: ${path}`)
     await route.fulfill({ contentType: 'application/json', body: JSON.stringify({ resp_code: 0, datas: value }) })
   })
@@ -157,6 +163,34 @@ test('终态归属异常保留步骤、释放界面且不自动重试', async ({
   await expect(page.getByTestId('final-answer')).toHaveCount(0)
   await expect(page.getByRole('button', { name: '开始运行', exact: true })).toBeEnabled()
   expect(calls).toBe(1)
+})
+
+test('断流后按 Last-Event-ID 续播补齐步骤，且不重放收费请求', async ({ page }) => {
+  await setup(page)
+  const frameWithId = (event: string, value: unknown, id: number) =>
+    `event: ${event}\nid: ${id}\ndata: ${JSON.stringify(value)}\n\n`
+  let streamCalls = 0
+  let resumeBody: any = null
+  await page.route('**/ai/api/agentBean/streamRun', async route => {
+    streamCalls += 1
+    // 只发开始 + 第 1 步就断流，模拟网络中断
+    await route.fulfill({ contentType: 'text/event-stream', body:
+      frame('agent_start', { runKey: run.runKey }) + frameWithId('agent_step', steps[0], 1) })
+  })
+  await page.route('**/ai/api/agentRunBean/streamResume', async route => {
+    resumeBody = route.request().postDataJSON()
+    // 补发帧可能与断线前重叠（第 1 步），前端应按 SSE id 去重
+    await route.fulfill({ contentType: 'text/event-stream', body:
+      frameWithId('agent_step', steps[0], 1) + frameWithId('agent_step', steps[1], 2)
+      + frameWithId('agent_step', steps[2], 3) + frame('agent_done', { run, steps }) })
+  })
+  await page.goto('/#/agents')
+  await page.getByRole('textbox', { name: '运行问题' }).fill('查询当前时间')
+  await page.getByRole('button', { name: '开始运行', exact: true }).click()
+  await expect(page.getByTestId('final-answer')).toContainText('工具执行结束')
+  expect(streamCalls).toBe(1)
+  expect(resumeBody).toEqual({ data: { runKey: run.runKey, lastEventId: 1 } })
+  expect(page.getByText('准备查询时间', { exact: true })).toBeVisible()
 })
 
 test('服务端拒绝和断流不显示成功、不自动发起第二次收费请求', async ({ page }) => {

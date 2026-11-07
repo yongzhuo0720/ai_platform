@@ -173,4 +173,70 @@ describe('Agent API 契约', () => {
     await vi.advanceTimersByTimeAsync(150_000)
     expect(cb.onError).toHaveBeenCalledTimes(1)
   })
+
+  describe('断线续播（显式启用 resume 才生效）', () => {
+    const frameWithId = (type: string, data: unknown, id: number) =>
+      `event: ${type}\nid: ${id}\ndata: ${JSON.stringify(data)}\n\n`
+
+    it('断线只续播只读接口，绝不重放 /streamRun', async () => {
+      const step2 = { ...step, stepNo: 2 }
+      const urls: string[] = []
+      const bodies: string[] = []
+      vi.stubGlobal('fetch', vi.fn(async (url: string, init: RequestInit) => {
+        urls.push(url)
+        bodies.push(String(init.body))
+        if (url.includes('/streamRun')) {
+          return response([encode(start + frameWithId('agent_step', step, 1))])
+        }
+        return response([encode(frameWithId('agent_step', step2, 2) + frame('agent_done', detail))])
+      }))
+      const cb = callbacks()
+      cb.resume = { maxAttempts: 2, onAttempt: vi.fn() }
+      streamAgentRun(payload, cb)
+      await vi.waitFor(() => expect(cb.onDone).toHaveBeenCalledTimes(1), { timeout: 4000 })
+      expect(urls.filter(u => u.includes('/streamRun'))).toHaveLength(1)
+      expect(urls.filter(u => u.includes('/streamResume'))).toHaveLength(1)
+      expect(cb.onStep).toHaveBeenCalledTimes(2)
+      expect(cb.resume.onAttempt).toHaveBeenCalledWith(1, 500)
+      expect(JSON.parse(bodies[1])).toEqual({ data: { runKey: 'run-1', lastEventId: 1 } })
+    })
+
+    it('补发帧与断线前重复时按 SSE id 去重', async () => {
+      const step2 = { ...step, stepNo: 2 }
+      vi.stubGlobal('fetch', vi.fn(async (url: string) => url.includes('/streamRun')
+        ? response([encode(start + frameWithId('agent_step', step, 1))])
+        : response([encode(frameWithId('agent_step', step, 1)
+          + frameWithId('agent_step', step2, 2) + frame('agent_done', detail))])))
+      const cb = callbacks()
+      cb.resume = { maxAttempts: 2 }
+      streamAgentRun(payload, cb)
+      await vi.waitFor(() => expect(cb.onDone).toHaveBeenCalledTimes(1), { timeout: 4000 })
+      expect(cb.onStep).toHaveBeenCalledTimes(2)
+      expect(cb.onStep).toHaveBeenLastCalledWith(step2)
+    })
+
+    it('续播次数耗尽后明确报错，不再发起请求', async () => {
+      vi.stubGlobal('fetch', vi.fn(async (url: string) => url.includes('/streamRun')
+        ? response([encode(start + frameWithId('agent_step', step, 1))])
+        : response([encode(frameWithId('agent_step', step, 1))])))
+      const cb = callbacks()
+      cb.resume = { maxAttempts: 1, onAttempt: vi.fn() }
+      streamAgentRun(payload, cb)
+      await vi.waitFor(() => expect(cb.onError).toHaveBeenCalledTimes(1), { timeout: 4000 })
+      expect(cb.onError).toHaveBeenCalledWith(expect.stringContaining('已停止自动恢复'))
+    })
+
+    it('未启用 resume 时断线行为不变，不发起任何续播请求', async () => {
+      const urls: string[] = []
+      vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+        urls.push(url)
+        return response([encode(start + frame('agent_step', step))])
+      }))
+      const cb = callbacks()
+      streamAgentRun(payload, cb)
+      await vi.waitFor(() => expect(cb.onError).toHaveBeenCalledTimes(1))
+      expect(urls).toEqual(['/ai/api/agentBean/streamRun'])
+      expect(cb.onError).toHaveBeenCalledWith(expect.stringContaining('尚未收到最终结果'))
+    })
+  })
 })

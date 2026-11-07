@@ -843,3 +843,71 @@ Phase 5 要求补齐备份与恢复，因此本轮针对真实 PostgreSQL 18.6 �
 
 浏览器端此前没有保留登录态，未在自动化浏览器里重放页面；页面刷新后会重新
 请求模块状态，`file.configured` 将由数据库实时计算为 `true`，配置引导消失。
+
+---
+
+## 2026-11-07（十七）：Agent SSE 断线续播（`Last-Event-ID`）
+
+### 背景
+
+第七、九轮验收三次把「断线重连 / `Last-Event-ID` 事件补发」标为遗留；本轮开始前
+全仓 grep `Last-Event-ID|lastEventId|reconnect` **零命中**。前端在 `streamRun` 断流时
+直接 `fail(...)`，只能让用户去运行历史手动刷新，步骤时间线丢失。
+
+难点：执行接口是 **POST** 且会真正调用模型，浏览器原生 `EventSource` 只支持 GET、
+不能带请求体；重连若重新 POST `/streamRun`，会**重新执行模型、重复消耗 Token 与费用**。
+既有 E2E 也专门锁死了「不自动发起第二次收费请求」这条语义。
+
+### 设计取舍：只读续播，不重放执行
+
+- 实时帧带 SSE `id`：`agent_start` = 0，`agent_step` = `stepNo`；帧格式改为
+  `event: X\nid: N\ndata: ...\n\n`（`event` 仍在首行，既有解析与单测不受影响）。
+- 新增 `POST /api/agentRunBean/streamResume`，入参 `{data:{runKey,lastEventId}}`，
+  兼容标准 `Last-Event-ID` 请求头；服务端只查 `agentrunbean` / `agentstepbean`，
+  按 `stepNo > lastEventId` 补发步骤，运行未结束时短轮询（30 × 1 秒）等待，
+  到达 `succeeded`/`failed` 后发 `agent_done`。
+- **全程不触发 `AgentRunner`**：零模型调用、零新增计费、零重复执行。
+  `agentRunHolder.detail()` 自带 `(runKey, lastuser)` 归属校验，续播不会越权。
+- 前端解析 `id`、按 id 去重（补发帧可能与断线前重叠）、指数退避重连
+  （500ms → 8s，默认最多 6 次），**只请求续播接口**；收到终态即停止重连。
+- **默认关闭**：只有 `callbacks.resume` 存在才启用，`useAgentRun` 显式订阅。
+  这样既有 26 个逻辑用例、30 个组件用例与「不自动重放收费请求」E2E 的语义零改动。
+- 页面在恢复期间显示「正在从已完成的步骤恢复（第 n 次）…不会重新发起执行请求」，
+  收到新步骤或终态后自动清除提示。
+
+### 变更文件
+
+**新增**：`agent/dto/AgentResumeRequest.java`、`controller/AgentRunBeanControllerTest.java`（5 项）。
+
+**修改**：`AgentBeanController.java`（`SseListener` 改为包内可复用 + 帧带 id）、
+`AgentRunBeanController.java`（续播接口）、`frontend/src/api/agent.ts`（id 解析/去重/重连）、
+`frontend/src/views/AgentView/useAgentRun.ts`（启用续播与提示）、
+`frontend/src/api/__tests__/agent.spec.ts`（+4 项）、`frontend/e2e/agent.spec.ts`（+1 项浏览器用例）、
+`README.md` 与 `docs/项目说明-通俗版.md`（数字校准 + 修正两处过时表述）。
+
+### 验证（2026-11-07 晚，逐项实跑）
+
+| 项目 | 实测 |
+|---|---|
+| 后端 `mvn -o test` | **702 项 / 64 份报告，0 失败 / 0 错误 / 0 跳过**（service 594 + permission 71 + app-start 30 + app-common 7；本轮 +5 项续播用例） |
+| 前端逻辑单测 | **26 文件 / 303 项**，文件对账 26/26 通过（本轮 +4 项） |
+| 前端组件测试 | **30 文件 / 300 项**，文件对账 30/30 通过 |
+| Playwright E2E | **23 项通过**（+1 项「断流后按 Last-Event-ID 续播补齐步骤，且不重放收费请求」） |
+| typecheck / 图标 59 / 色值 45 文件 1777 处 / 流式 14 / Markdown 10 | 全通过 |
+| 生产构建 15.48s / 体积预算 / 114 产物文件密钥扫描 | 全通过 |
+
+顺带修正文档失真：`项目说明-通俗版.md` 第九节原先仍写「SSE 读循环是同步阻塞的」
+（实际已改为 Servlet 异步中继 + 3 秒心跳）与「配置缓存最多 5 分钟生效」
+（实际已做版本轮询跨实例同步，约 2 秒；只剩直接改库仍需等 TTL）。
+
+### 已知限制
+
+- 续播依赖**本次页面**记住 `runKey`；刷新到全新设备仍需从运行历史进入，
+  未实现跨设备/跨标签页的运行进度同步。
+- 未使用浏览器原生 `EventSource` 自动重连语义（POST 执行接口不适用），
+  重连由前端显式退避调度。
+- 单次续播连接最长驻留 30 秒，超时静默结束后由前端再次续播；极长运行会经历多次重连。
+- 续播按 `stepNo` 补发；若某步骤**落库失败**，实时流与续播流都会缺这一步（同源数据）。
+- 真实对话模型（含 `tool_calls` 能力）的上游联调仍待可用密钥，本轮前后端验证均使用
+  本地 mock 上游或已落库步骤，未冒充真实模型效果。
+

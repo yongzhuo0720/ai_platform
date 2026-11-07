@@ -53,7 +53,7 @@ export function useAgentRun(options: {
       live.receiving = false
       live.phase = 'interrupted'
       live.errorMessage = message || '实时连接中断'
-      live.notice = '已保留收到的步骤，请到运行历史刷新查看最终结果；不会自动重发请求。'
+      live.notice = '已保留收到的步骤，请到运行历史刷新查看最终结果；不会自动重发请求。断线期间只从已落库步骤续播，不会重复计费。'
       release()
     }
     try {
@@ -67,6 +67,7 @@ export function useAgentRun(options: {
           if (!current() || (live.runKey && step.runKey !== live.runKey)) return
           live.runKey = step.runKey
           live.phase = 'receiving'
+          live.notice = ''
           live.steps = mergeSteps(live.steps, [step])
         },
         onDone(detail) {
@@ -76,6 +77,7 @@ export function useAgentRun(options: {
             return
           }
           live.runKey = detail.run.runKey
+          live.notice = ''
           live.steps = mergeSteps(live.steps, detail.steps)
           live.detail = { run: detail.run, steps: live.steps }
           live.receiving = false
@@ -84,6 +86,13 @@ export function useAgentRun(options: {
           options.onDone()
         },
         onError: fail,
+        // 断线只续播已落库步骤（只读接口），绝不重新执行模型或重复计费
+        resume: {
+          onAttempt(n) {
+            if (!current()) return
+            live.notice = `实时连接中断，正在从已完成的步骤恢复（第 ${n} 次）…不会重新发起执行请求。`
+          },
+        },
       })
       // 也覆盖 stream 在返回停止函数前同步报错/完成的情况。
       if (current()) stopListening = stop

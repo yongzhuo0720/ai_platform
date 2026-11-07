@@ -129,25 +129,30 @@ public class AgentBeanController {
         }
     }
 
-    private static class SseListener implements AgentRunner.Listener {
+    /**
+     * SSE 帧写入器。包内复用于 {@code /streamRun} 与 {@code /streamResume}，
+     * 保证实时流与续播流的帧格式完全一致（含 {@code id:} 事件序号）。
+     */
+    static final class SseListener implements AgentRunner.Listener {
         private final HttpServletResponse response;
         private final ObjectMapper mapper = new ObjectMapper();
         private boolean disconnected;
         private String runKey;
 
-        private SseListener(HttpServletResponse response) {
+        SseListener(HttpServletResponse response) {
             this.response = response;
         }
 
         @Override
         public void onStart(String runKey) {
             this.runKey = runKey;
-            send("agent_start", Collections.singletonMap("runKey", runKey));
+            send("agent_start", Collections.singletonMap("runKey", runKey), 0L);
         }
 
         @Override
         public void onStep(AgentStepBean step) {
-            send("agent_step", step);
+            long id = step.getStepNo() == null ? 0L : step.getStepNo().longValue();
+            send("agent_step", step, id);
         }
 
         @Override
@@ -155,11 +160,20 @@ public class AgentBeanController {
             return disconnected;
         }
 
-        private void error(String message) {
-            send("agent_error", Collections.singletonMap("message", message));
+        String runKey() {
+            return runKey;
         }
 
-        private void send(String event, Object data) {
+        void error(String message) {
+            send("agent_error", Collections.singletonMap("message", message), null);
+        }
+
+        void send(String event, Object data) {
+            send(event, data, null);
+        }
+
+        /** id 为 SSE 事件序号，续播时用它做 Last-Event-ID 去重 */
+        void send(String event, Object data, Long id) {
             if (disconnected) {
                 return;
             }
@@ -169,9 +183,14 @@ public class AgentBeanController {
             } catch (JsonProcessingException e) {
                 throw new IllegalStateException("流式事件序列化失败", e);
             }
+            StringBuilder frame = new StringBuilder();
+            frame.append("event: ").append(event).append('\n');
+            if (id != null) {
+                frame.append("id: ").append(id).append('\n');
+            }
+            frame.append("data: ").append(json).append("\n\n");
             try {
-                response.getOutputStream().write(("event: " + event + "\ndata: " + json + "\n\n")
-                        .getBytes(StandardCharsets.UTF_8));
+                response.getOutputStream().write(frame.toString().getBytes(StandardCharsets.UTF_8));
                 response.flushBuffer();
             } catch (IOException e) {
                 disconnected = true;
