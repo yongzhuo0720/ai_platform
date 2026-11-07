@@ -664,3 +664,53 @@ Redis 异常回退本地、无上限不访问 Redis），版本同步 9 项、Ho
   分区；Redis 故障时的降级行为由单元测试覆盖；
 - 版本轮询最坏有约 2 秒延迟；直接改库（绕过后台写接口）仍只能等 5 分钟 TTL；
 - 联调脚本为一次性验证，保留在本地 `.tmp`，未加入默认 CI 套件。
+
+## 2026-11-07（十三）：数据库备份恢复演练脚本化
+
+### 背景
+
+此前只有「库里数据是真的」的验收，没有验证过「备份文件能不能恢复」。
+Phase 5 要求补齐备份与恢复，因此本轮针对真实 PostgreSQL 18.6 做了一次完整演练，
+并把流程固化为可重复执行的脚本，而不是留在一次性命令里。
+
+### 实现
+
+新增 `scripts/backup-restore-drill.ps1`：
+
+- 从 `application-dev.properties` 读取账号密码（支持 `${ENV:default}` 占位符），
+  全程不打印密码，也不把口令写进命令历史或日志；
+- `pg_dump -Fc` 生成自定义格式备份，`pg_restore --no-owner --exit-on-error`
+  恢复到临时库；恢复前先 `pg_terminate_backend` 清掉旧连接；
+- 校验三组证据：逐表行数（`query_to_xml` 单条 SQL 扫描全部业务表）、
+  索引/约束/序列数量、9 张关键表的整表内容 MD5；
+- 演练库名必须包含 `drill`/`restore`，否则要求 `-Force`；不允许与源库同名；
+- 默认在 `finally` 里删除演练库与容器内备份，`-DumpOut` 可另存留档；
+- 修复了 PowerShell 5.1 的一个真实坑：`$ErrorActionPreference=Stop` 且
+  `2>&1` 时，原生命令写到 stderr 的 NOTICE 会被当成终止错误，
+  导致 `drop database if exists` 这种成功语句把脚本打挂。改为局部降级
+  错误偏好、按退出码判断，并从返回值中剔除 NOTICE/WARNING/INFO 行；
+- 统一控制台输出为 UTF-8，避免中文 Windows 下日志乱码。
+
+同时清理了本地 `docs/部署手册.md`（按 `.gitignore` 仅保留在本机、不入库）
+里遗留的明文数据库口令示例，改为从环境变量注入，并补充备份频率与恢复演练建议。
+
+### 验证（真实库，非 mock）
+
+| 项目 | 实测 |
+|---|---|
+| 备份 | 552800 字节，耗时 0.21 秒 |
+| 恢复 | `--exit-on-error` 成功，耗时 1.85 秒 |
+| 逐表行数 | 37 张表 / 13369 行，源库与恢复库无差异 |
+| 架构对象 | 索引 82、约束 74、序列 39，两边一致 |
+| 关键表内容哈希 | agentbean、agentrunbean、agentstepbean、aicalllogbean、kbchunkbean、kbdocbean、modelsconfigbean、notificationbean、ragevalrunbean 共 9 张表 MD5 一致 |
+| 重复执行 | 连续第二次运行仍通过（覆盖演练库已存在、需先删除的路径） |
+| 安全护栏 | `-DrillDatabase ai` 被拒绝，退出码 1，未触碰源库 |
+| 清理 | 演练库计数 0、容器内 dump 计数 0、临时输出文件已删除 |
+
+### 已知限制
+
+- 演练与生产在同一台机器、同一个 PostgreSQL 实例，未覆盖「整机损坏后从异地
+  备份重建」；也没有接入 WAL 归档，因此不具备时间点恢复（PITR）能力；
+- 恢复后的库只做了数据与架构比对，没有启动一个指向该库的后端实例做功能冒烟；
+- `-DumpOut` 留档的文件包含真实业务数据，仓库已忽略 `.tmp/`，但仍需控制
+  文件权限与保留周期。
