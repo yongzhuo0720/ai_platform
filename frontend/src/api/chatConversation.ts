@@ -25,6 +25,9 @@ export const chatConversationApi = {
     axios.post('/ai/api/chatConversation/save', { data }),
   delete: (convId: string) =>
     axios.post('/ai/api/chatConversation/delete', { data: { convId } }),
+  /** 列表只含元数据，打开或合并较旧会话时按 ID 批量取正文 */
+  detail: (convIds: string[]) =>
+    axios.post('/ai/api/chatConversation/detail', { data: { convIds } }),
 }
 
 export default chatConversationApi

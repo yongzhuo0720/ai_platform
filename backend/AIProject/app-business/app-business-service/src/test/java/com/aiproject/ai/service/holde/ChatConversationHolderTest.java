@@ -4,16 +4,22 @@ import com.aiproject.ai.service.bean.ChatConversationBean;
 import com.aiproject.ai.service.mapper.ChatConversationBeanMapper;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 
+import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collections;
+import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -122,6 +128,60 @@ class ChatConversationHolderTest {
     void unauthenticatedSaveDoesNotWriteData() {
         assertFalse(holder.save(" ", conversation(100L, "answer")).getDatas());
         verify(holder.mapper, never()).install(any(ChatConversationBean.class));
+    }
+
+    /** 列表只给元数据：正文可能接近 512KB，不能每次登录全量下发 */
+    @Test
+    void listReturnsMetadataWithoutPayload() {
+        ChatConversationBean row = conversation(100L, "large payload");
+        row.setTitle("季度总结");
+        when(holder.mapper.select(isNull(), any(ChatConversationBean.class)))
+                .thenReturn(new ArrayList<ChatConversationBean>(Collections.singletonList(row)));
+
+        List<ChatConversationBean> rows = holder.list("u1").getDatas();
+
+        assertEquals(1, rows.size());
+        assertNull(rows.get(0).getPayload(), "列表响应不应携带会话正文");
+        assertEquals("季度总结", rows.get(0).getTitle());
+        assertEquals(Long.valueOf(100), rows.get(0).getClientUpdatedAt());
+    }
+
+    /** 按需正文只返回本人的行；空值、重复值与别人的 ID 都被跳过 */
+    @Test
+    void detailOnlyReturnsOwnedRowsAndDeduplicatesIds() {
+        ChatConversationBean owned = conversation(100L, "body");
+        when(holder.mapper.select(isNull(), any(ChatConversationBean.class)))
+                .thenReturn(Collections.<ChatConversationBean>emptyList(),
+                        Collections.singletonList(owned));
+
+        List<ChatConversationBean> rows = holder.detail(
+                "u1", Arrays.asList("other-user-conv", " ", "conversation-1", "conversation-1"))
+                .getDatas();
+
+        assertEquals(1, rows.size());
+        assertEquals("body", rows.get(0).getPayload());
+        ArgumentCaptor<ChatConversationBean> captor =
+                ArgumentCaptor.forClass(ChatConversationBean.class);
+        verify(holder.mapper, times(2)).select(isNull(), captor.capture());
+        assertEquals("u1", captor.getAllValues().get(0).getUserId());
+        assertEquals("other-user-conv", captor.getAllValues().get(0).getConvId());
+        assertEquals("u1", captor.getAllValues().get(1).getUserId());
+        assertEquals("conversation-1", captor.getAllValues().get(1).getConvId());
+    }
+
+    @Test
+    void detailRequiresLoginAndCapsBatchSize() {
+        assertNull(holder.detail(" ", Collections.singletonList("c1")).getDatas());
+        verify(holder.mapper, never()).select(any(), any(ChatConversationBean.class));
+
+        List<String> ids = new ArrayList<String>();
+        for (int i = 0; i < 51; i++) {
+            ids.add("conv-" + i);
+        }
+        when(holder.mapper.select(isNull(), any(ChatConversationBean.class)))
+                .thenReturn(Collections.<ChatConversationBean>emptyList());
+        assertTrue(holder.detail("u1", ids).getDatas().isEmpty());
+        verify(holder.mapper, times(50)).select(isNull(), any(ChatConversationBean.class));
     }
 
     private ChatConversationBean conversation(Long updatedAt, String payload) {

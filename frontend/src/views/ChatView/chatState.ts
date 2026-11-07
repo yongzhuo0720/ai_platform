@@ -26,6 +26,8 @@ export const activeModelId = ref(
 // ============== 直连模型（OpenAI 兼容协议，经 AI 网关路由） ==============
 export const directConversationsKey = (uid: string) => `ai-direct-conversations-${uid}`;
 const DIRECT_MODEL_KEY_PREFIX = "direct-";
+/** 与后端 ChatConversationHolder.MAX_DETAIL_BATCH 保持一致 */
+const DETAIL_BATCH_SIZE = 50;
 export const directConversations = ref<DirectConversation[]>(
   readStorage<DirectConversation[]>(directConversationsKey(chatRuntime.ownerUserId), [])
 );
@@ -77,7 +79,13 @@ export const syncConversationToCloud = (conv: DirectConversation) => {
   cloudSyncTimers.set(conv.id, timer);
 };
 
-/** 登录后从云端拉取并与本地合并：同 id 取 clientUpdatedAt 较新者 */
+/**
+ * 登录后从云端拉取并与本地合并：同 id 取 clientUpdatedAt 较新者。
+ *
+ * <p>列表接口只返回元数据（单条正文上限 512KB，全量下发会拖慢登录），
+ * 所以先按版本筛出「本地缺失或更旧」的会话，再按 ID 批量拉正文。
+ * 服务端旧版本列表自带 payload 时直接用，不再多发一次请求。</p>
+ */
 export const mergeCloudConversations = async () => {
   const owner = chatRuntime.ownerUserId;
   if (owner !== getCurrentUser() || owner === "guest") return;
@@ -87,8 +95,8 @@ export const mergeCloudConversations = async () => {
     if (res.resp_code !== 0 || !Array.isArray(res.datas)) return;
     const localById = new Map(directConversations.value.map((c) => [c.id, c]));
     const deletedIds = new Set(readDeletedConversationIds(owner));
-    let changed = false;
-    for (const row of res.datas) {
+    const staleRows: CloudConversation[] = [];
+    for (const row of res.datas as CloudConversation[]) {
       if (!row?.convId) continue;
       if (deletedIds.has(row.convId)) {
         // 本地已删除但云端还在（删除时离线）：继续清理，且不要合并回本地
@@ -102,19 +110,47 @@ export const mergeCloudConversations = async () => {
           .catch(() => undefined);
         continue;
       }
-      if (!row.payload) continue;
       const local = localById.get(row.convId);
-      const cloudUpdatedAt = row.clientUpdatedAt ?? 0;
-      if (!local || (local.updatedAt ?? 0) < cloudUpdatedAt) {
-        try {
-          const parsed = JSON.parse(row.payload) as DirectConversation;
-          if (parsed && parsed.id === row.convId && Array.isArray(parsed.messages)) {
-            localById.set(row.convId, parsed);
-            changed = true;
+      if (local && (local.updatedAt ?? 0) >= (row.clientUpdatedAt ?? 0)) continue;
+      staleRows.push(row);
+    }
+    if (!staleRows.length) return;
+
+    const payloadById = new Map<string, string>();
+    const missing: string[] = [];
+    for (const row of staleRows) {
+      if (row.payload) payloadById.set(row.convId, row.payload);
+      else missing.push(row.convId);
+    }
+    // 后端单次最多 50 条，分批拉完；否则新设备登录时永远只合并前 50 条
+    for (let i = 0; i < missing.length; i += DETAIL_BATCH_SIZE) {
+      const batch = missing.slice(i, i + DETAIL_BATCH_SIZE);
+      try {
+        const { data: detailRes } = await chatConversationApi.detail(batch);
+        if (owner !== chatRuntime.ownerUserId || owner !== getCurrentUser()) return;
+        if (detailRes?.resp_code === 0 && Array.isArray(detailRes.datas)) {
+          for (const row of detailRes.datas as CloudConversation[]) {
+            if (row?.convId && row.payload) payloadById.set(row.convId, row.payload);
           }
-        } catch {
-          // 云端快照损坏：跳过该条，本地为准
         }
+      } catch (e) {
+        // 单批失败保留本地，下次登录再合并；继续尝试后续批次
+        console.warn('[云端会话] 拉取正文失败（保留本地）:', (e as Error)?.message || e);
+      }
+    }
+
+    let changed = false;
+    for (const row of staleRows) {
+      const payload = payloadById.get(row.convId);
+      if (!payload) continue;
+      try {
+        const parsed = JSON.parse(payload) as DirectConversation;
+        if (parsed && parsed.id === row.convId && Array.isArray(parsed.messages)) {
+          localById.set(row.convId, parsed);
+          changed = true;
+        }
+      } catch {
+        // 云端快照损坏：跳过该条，本地为准
       }
     }
     if (changed) {

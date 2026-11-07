@@ -9,7 +9,9 @@ import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Set;
 
 /**
  * 云端会话存取：按 (userId, convId) upsert，整会话 JSON 快照。
@@ -24,11 +26,19 @@ public class ChatConversationHolder {
 
     private static final int MAX_PAYLOAD_CHARS = 512 * 1024;
     private static final int MAX_CONVERSATIONS_PER_USER = 500;
+    /** 单次按需拉正文的会话数上限：一次登录最多只需要合并最近的几十条 */
+    private static final int MAX_DETAIL_BATCH = 50;
 
     @Autowired
     ChatConversationBeanMapper<ChatConversationBean> mapper;
 
-    /** 列出用户全部云端会话（按客户端更新时间倒序，置顶优先） */
+    /**
+     * 列出用户全部云端会话（按客户端更新时间倒序，置顶优先）。
+     *
+     * <p>只返回元数据，不返回 {@code payload}：单条快照上限 512KB，
+     * 500 条的完整列表最坏情况下接近 250MB，每次登录都下发会拖垮首屏。
+     * 前端先按元数据比对版本，只为本地缺失或较旧的会话调用 {@link #detail}。</p>
+     */
     public Result<List<ChatConversationBean>> list(String uid) {
         ChatConversationBean where = new ChatConversationBean();
         where.setUserId(uid);
@@ -49,6 +59,48 @@ public class ChatConversationHolder {
                 return Long.compare(tb, ta);
             }
         });
+        for (ChatConversationBean row : rows) {
+            row.setPayload(null);
+        }
+        return Result.succeed(rows);
+    }
+
+    /**
+     * 按 ID 批量拉取会话正文，只返回属于当前用户且确实存在的行。
+     *
+     * <p>用逐条等值查询而不是 {@code IN}：框架的实体条件只支持等值，
+     * 而 {@code (userId, convId)} 有唯一索引，几十次点查的成本可控。
+     * 请求里的空值、重复值和越权 ID 一律跳过，不报错——多端同步是增强能力，
+     * 某条会话在另一端刚被删除不应该让整次合并失败。</p>
+     */
+    public Result<List<ChatConversationBean>> detail(String uid, List<String> convIds) {
+        List<ChatConversationBean> rows = new ArrayList<ChatConversationBean>();
+        if (uid == null || uid.trim().isEmpty()) {
+            return Result.failed(null, "请先登录");
+        }
+        if (convIds == null || convIds.isEmpty()) {
+            return Result.succeed(rows);
+        }
+        Set<String> seen = new LinkedHashSet<String>();
+        for (String convId : convIds) {
+            if (convId == null || convId.trim().isEmpty()) {
+                continue;
+            }
+            if (seen.size() >= MAX_DETAIL_BATCH) {
+                break;
+            }
+            String trimmed = convId.trim();
+            if (!seen.add(trimmed)) {
+                continue;
+            }
+            ChatConversationBean where = new ChatConversationBean();
+            where.setUserId(uid);
+            where.setConvId(trimmed);
+            List<ChatConversationBean> found = mapper.select(null, where);
+            if (found != null && !found.isEmpty()) {
+                rows.add(found.get(0));
+            }
+        }
         return Result.succeed(rows);
     }
 

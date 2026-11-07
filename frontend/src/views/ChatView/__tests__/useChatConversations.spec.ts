@@ -66,6 +66,7 @@ vi.mock("@/api/chatConversation", () => ({
     list: vi.fn(),
     save: vi.fn(),
     delete: vi.fn(),
+    detail: vi.fn(),
   },
 }));
 
@@ -143,6 +144,9 @@ describe("useChatConversations", () => {
     cloudSyncRequests.clear();
     vi.mocked(chatConversationApi.save).mockResolvedValue({} as never);
     vi.mocked(chatConversationApi.delete).mockResolvedValue({} as never);
+    vi.mocked(chatConversationApi.detail).mockResolvedValue({
+      data: { resp_code: 0, datas: [] },
+    } as never);
   });
 
   const clearSyncTimers = () => {
@@ -431,6 +435,95 @@ describe("useChatConversations", () => {
       expect(persistedDirect()[0].messages).toEqual([
         { role: "user", content: "云端问题" },
       ]);
+      // 旧服务端列表自带正文时不再多发一次详情请求
+      expect(chatConversationApi.detail).not.toHaveBeenCalled();
+    });
+
+    it("列表只给元数据时只为本地缺失或较旧的会话拉正文", async () => {
+      const cloudNewer = {
+        ...makeConversation("d-cloud", [{ role: "user", content: "云端新内容" }]),
+        updatedAt: 200,
+      };
+      const localNewer = {
+        ...makeConversation("d-local", [{ role: "user", content: "本地新内容" }]),
+        updatedAt: 500,
+      };
+      directConversations.value = [localNewer];
+      vi.mocked(chatConversationApi.list).mockResolvedValue({
+        data: {
+          resp_code: 0,
+          datas: [
+            { convId: "d-cloud", clientUpdatedAt: 200 },
+            { convId: "d-local", clientUpdatedAt: 100 },
+          ],
+        },
+      } as never);
+      vi.mocked(chatConversationApi.detail).mockResolvedValue({
+        data: {
+          resp_code: 0,
+          datas: [
+            {
+              convId: "d-cloud",
+              clientUpdatedAt: 200,
+              payload: JSON.stringify(cloudNewer),
+            },
+          ],
+        },
+      } as never);
+
+      await mergeCloudConversations();
+
+      expect(chatConversationApi.detail).toHaveBeenCalledTimes(1);
+      expect(chatConversationApi.detail).toHaveBeenCalledWith(["d-cloud"]);
+      const byId = new Map(directConversations.value.map((c) => [c.id, c]));
+      expect(byId.get("d-cloud")?.messages).toEqual([
+        { role: "user", content: "云端新内容" },
+      ]);
+      expect(byId.get("d-local")?.messages).toEqual([
+        { role: "user", content: "本地新内容" },
+      ]);
+    });
+
+    it("按需正文拉取失败时保留本地快照，不让合并整体失败", async () => {
+      const localFresh = {
+        ...makeConversation("d-local", [{ role: "user", content: "本地内容" }]),
+        updatedAt: 500,
+      };
+      directConversations.value = [localFresh];
+      vi.mocked(chatConversationApi.list).mockResolvedValue({
+        data: {
+          resp_code: 0,
+          datas: [{ convId: "d-cloud", clientUpdatedAt: 200 }],
+        },
+      } as never);
+      vi.mocked(chatConversationApi.detail).mockRejectedValue(new Error("offline"));
+
+      await mergeCloudConversations();
+
+      expect(chatConversationApi.detail).toHaveBeenCalledWith(["d-cloud"]);
+      expect(directConversations.value.map((c) => c.id)).toEqual(["d-local"]);
+    });
+
+    it("待合并会话超过 50 条时分批拉正文，避免只同步前 50 条", async () => {
+      vi.mocked(chatConversationApi.list).mockResolvedValue({
+        data: {
+          resp_code: 0,
+          datas: Array.from({ length: 51 }, (_, i) => ({
+            convId: `d-${i}`,
+            clientUpdatedAt: 100 + i,
+          })),
+        },
+      } as never);
+      vi.mocked(chatConversationApi.detail).mockResolvedValue({
+        data: { resp_code: 0, datas: [] },
+      } as never);
+
+      await mergeCloudConversations();
+
+      const calls = vi.mocked(chatConversationApi.detail).mock.calls;
+      expect(calls).toHaveLength(2);
+      expect(calls[0][0]).toHaveLength(50);
+      expect(calls[1][0]).toEqual(["d-50"]);
     });
 
     it("墓碑中的会话不合并回本地，并在合并时重试云端删除", async () => {

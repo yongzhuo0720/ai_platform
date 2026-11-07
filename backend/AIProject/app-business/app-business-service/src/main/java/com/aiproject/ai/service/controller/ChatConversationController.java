@@ -41,6 +41,17 @@ public class ChatConversationController {
         return holder.list(uid);
     }
 
+    @ApiOperation(value = "按 ID 拉取会话正文", httpMethod = "POST", notes = "列表只返回元数据，正文按需拉取")
+    @ControllerLog(value = "拉取云端会话正文", user = "uid", target = "")
+    @PostMapping("/detail")
+    public Result<List<ChatConversationBean>> detail(@LoginUserId String uid,
+                                                     @RequestBody DetailRequest data) {
+        if (uid == null || uid.trim().isEmpty()) {
+            return Result.failed(null, "请先登录");
+        }
+        return holder.detail(uid, data == null ? null : data.getConvIds());
+    }
+
     @ApiOperation(value = "同步（upsert）单个会话", httpMethod = "POST")
     @ControllerLog(value = "同步云端会话", user = "uid", target = "")
     @PostMapping("/save")
@@ -69,5 +80,10 @@ public class ChatConversationController {
             return Result.failed(false, "请求体格式不正确：需要 { \"data\": { ... } }");
         }
         return holder.delete(uid, data.getConvId());
+    }
+
+    @lombok.Data
+    public static class DetailRequest {
+        List<String> convIds;
     }
 }
