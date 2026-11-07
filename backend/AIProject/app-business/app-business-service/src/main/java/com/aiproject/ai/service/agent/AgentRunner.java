@@ -163,7 +163,17 @@ public class AgentRunner {
                 // 最终答案已经产出，不再有后续动作，预算无需拦截——
                 // 这一轮的 token 已经花掉，判失败只会丢掉用户已付费的完整回答
                 if (reply.getToolCalls().isEmpty()) {
-                    answer = reply.getContent() == null ? "" : reply.getContent();
+                    String content = reply.getContent() == null ? "" : reply.getContent();
+                    // 空回复不能算成功：用户拿到的是「运行成功 + 空白答案」，
+                    // 既无法判断是模型拒绝、内容过滤还是上游异常
+                    if (content.trim().isEmpty()) {
+                        error = "模型未返回内容，请重试或更换模型";
+                        stepNo++;
+                        recordStep(listener, uid, runKey, stepNo, iteration, "error", null, null,
+                                null, "failed", 0L, 0L, 0L, 0L, truncate(error), null);
+                        break;
+                    }
+                    answer = content;
                     status = "succeeded";
                     error = null;
                     stepNo++;

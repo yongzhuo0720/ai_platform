@@ -206,6 +206,20 @@ class AgentRunnerTest {
     }
 
     @Test
+    void run_shouldFailWhenModelReturnsBlankAnswer() throws Exception {
+        stubRun(agent(8, 20000L), new ArrayList<AgentToolBean>());
+        when(modelClient.call(any(AgentInvocation.class))).thenReturn(answer("   ", 10L, 0L));
+
+        runner.run(UID, KEY, "问题");
+
+        ArgumentCaptor<String> error = ArgumentCaptor.forClass(String.class);
+        verify(runHolder).finish(eq(UID), anyString(), eq("failed"), eq(1),
+                eq(10L), eq(0L), eq(0L), anyLong(), eq(""), error.capture());
+        assertTrue(error.getValue().contains("未返回内容"));
+        verify(modelClient, times(1)).call(any(AgentInvocation.class));
+    }
+
+    @Test
     void run_shouldStopWhenTokenBudgetExhausted() throws Exception {
         stubRun(agent(8, 20L), Collections.singletonList(tool()));
         when(modelClient.call(any(AgentInvocation.class)))
