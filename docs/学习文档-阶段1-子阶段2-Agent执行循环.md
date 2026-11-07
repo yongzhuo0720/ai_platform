@@ -341,3 +341,25 @@ HTTP 工具白名单、单步重试、并发闸门冲突的友好提示，以及
 > - 4 个测试类（共 24 项新用例）、本文档
 >
 > 无前端改动、未 push。
+
+## 11. 2026-11-07 补强：僵死 `running` 记录的回收
+
+§9.2 与 Q3 说「`finish` 在 `finally` 里，不会留下永远 running 的记录」，
+这只覆盖**进程还活着**的路径。进程被 kill、机器重启、线程池异常退出时，
+`finally` 不会执行，记录会永久停在 `queued`/`running`；
+更糟的是 `idx_agentrun_active` 的唯一索引会一直占着，该用户在这个 Agent 上
+再也发不起新一轮运行。
+
+新增 `AgentRunRecoveryScheduler`：
+
+- 每 5 分钟扫描一次（首次延迟 3 分钟），把 `startedAt` 超过 30 分钟的
+  `queued`/`running` 记录改为 `failed`，写入可读原因与 `finishedAt`/`durationMs`；
+- 更新条件是 `runKey + lastuser + 原 status` 的 CAS：如果 Runner 恰好刚完成并置为
+  `succeeded`，这里更新 0 行，绝不会覆盖正常结果；
+- 多实例用 `ScheduledTaskGuard` 的 Redis 锁互斥（TTL 240 秒 < 调度间隔 5 分钟，
+  Redis 故障时 fail-open，重复扫描因 CAS 无害）；
+- 单条记录失败只记日志，不中断整批。
+
+测试：`AgentRunHolderTest` +3（只碰超时记录且带状态 CAS、CAS 竞争失败不计成功、
+缺 `startedAt`/`runKey` 跳过），`AgentRunRecoverySchedulerTest` +1（锁内按 30 分钟
+阈值调用回收）。

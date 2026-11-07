@@ -220,6 +220,79 @@ class AgentRunHolderTest {
         assertSame(conflict, assertThrows(DuplicateKeyException.class, this::finish));
     }
 
+    @Test
+    void recoverStale_shouldOnlyTouchTimedOutRunsAndUseStatusCas() {
+        long now = 10_000_000L;
+        long cutoff = now - 30 * 60 * 1000L;
+        AgentRunBean stale = run("run-old", "running", cutoff - 1);
+        AgentRunBean fresh = run("run-fresh", "running", cutoff);
+        when(runMapper.select(any(PageRequest.class), any(AgentRunBean.class)))
+                .thenAnswer(invocation -> {
+                    AgentRunBean where = invocation.getArgument(1);
+                    return "running".equals(where.getStatus())
+                            ? Arrays.asList(stale, fresh)
+                            : new ArrayList<AgentRunBean>();
+                });
+        when(runMapper.update(any(AgentRunBean.class), any(AgentRunBean.class))).thenReturn(1);
+
+        assertEquals(1, holder.recoverStale(cutoff, now, "运行已回收"));
+
+        ArgumentCaptor<AgentRunBean> patch = ArgumentCaptor.forClass(AgentRunBean.class);
+        ArgumentCaptor<AgentRunBean> where = ArgumentCaptor.forClass(AgentRunBean.class);
+        verify(runMapper).update(patch.capture(), where.capture());
+        assertEquals("failed", patch.getValue().getStatus());
+        assertEquals("运行已回收", patch.getValue().getErrorMessage());
+        assertEquals(Long.valueOf(now), patch.getValue().getFinishedAt());
+        assertEquals(Long.valueOf(now - stale.getStartedAt()), patch.getValue().getDurationMs());
+        assertEquals("run-old", where.getValue().getRunKey(), "只回收超时的那条");
+        assertEquals(UID, where.getValue().getLastuser());
+        assertEquals("running", where.getValue().getStatus(), "必须按原状态 CAS，避免覆盖正常收尾");
+    }
+
+    @Test
+    void recoverStale_shouldNotClaimSuccessWhenCasLosesRace() {
+        long now = 10_000_000L;
+        long cutoff = now - 30 * 60 * 1000L;
+        when(runMapper.select(any(PageRequest.class), any(AgentRunBean.class)))
+                .thenAnswer(invocation -> {
+                    AgentRunBean where = invocation.getArgument(1);
+                    return "running".equals(where.getStatus())
+                            ? Collections.singletonList(run("run-old", "running", cutoff - 1))
+                            : new ArrayList<AgentRunBean>();
+                });
+        // 执行循环在扫描之后刚好完成并写了 succeeded：CAS 更新 0 行
+        when(runMapper.update(any(AgentRunBean.class), any(AgentRunBean.class))).thenReturn(0);
+
+        assertEquals(0, holder.recoverStale(cutoff, now, "运行已回收"));
+    }
+
+    @Test
+    void recoverStale_shouldSkipRunsWithoutStartTimeOrKey() {
+        long now = 10_000_000L;
+        long cutoff = now - 30 * 60 * 1000L;
+        AgentRunBean noStart = run("run-no-start", "running", null);
+        AgentRunBean noKey = run(null, "running", cutoff - 1);
+        when(runMapper.select(any(PageRequest.class), any(AgentRunBean.class)))
+                .thenAnswer(invocation -> {
+                    AgentRunBean where = invocation.getArgument(1);
+                    return "running".equals(where.getStatus())
+                            ? Arrays.asList(noStart, noKey)
+                            : new ArrayList<AgentRunBean>();
+                });
+
+        assertEquals(0, holder.recoverStale(cutoff, now, "运行已回收"));
+        verify(runMapper, never()).update(any(AgentRunBean.class), any(AgentRunBean.class));
+    }
+
+    private AgentRunBean run(String runKey, String status, Long startedAt) {
+        AgentRunBean run = new AgentRunBean();
+        run.setRunKey(runKey);
+        run.setLastuser(UID);
+        run.setStatus(status);
+        run.setStartedAt(startedAt);
+        return run;
+    }
+
     private AgentStepBean addStep() {
         return holder.addStep(UID, "run-1", 1, 1, "llm", null, null, "回答", "success",
                 10L, 5L, 3L, 20L, null, "request-1");

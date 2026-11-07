@@ -84,6 +84,13 @@ public class AiGatewayProperties {
      */
     private int circuitOpenMs = 30000;
 
+    /**
+     * 半开探针的最长等待时间（毫秒）。探针在这个时间内没有成功/失败结论，
+     * 按失败处理并重新进入冷却，避免一个卡死的探针把后续请求永久挡在门外。
+     * 应小于上游读超时，否则探针会先被 HTTP 超时终结，这个兜底不会生效。
+     */
+    private int circuitProbeTimeoutMs = 60000;
+
     /** 日志中错误信息最大长度 */
     private int maxErrorLength = 1000;
 

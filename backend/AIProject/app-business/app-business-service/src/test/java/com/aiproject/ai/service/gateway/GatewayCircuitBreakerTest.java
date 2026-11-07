@@ -26,6 +26,7 @@ class GatewayCircuitBreakerTest {
         properties = new AiGatewayProperties();
         properties.setCircuitFailureThreshold(3);
         properties.setCircuitOpenMs(10_000);
+        properties.setCircuitProbeTimeoutMs(5_000);
         breaker = new GatewayCircuitBreaker();
         breaker.properties = properties;
         breaker.clock = () -> now;
@@ -57,7 +58,7 @@ class GatewayCircuitBreakerTest {
         assertNotNull(probe);
         assertNull(breaker.tryAcquire(KEY), "探针未返回前不能再放第二个请求");
 
-        breaker.recordSuccess(KEY);
+        breaker.recordSuccess(probe);
         probe.release();
         assertEquals("CLOSED", breaker.stateOf(KEY));
         assertNotNull(breaker.tryAcquire(KEY), "恢复后应正常放行");
@@ -70,7 +71,7 @@ class GatewayCircuitBreakerTest {
 
         GatewayCircuitBreaker.Admission probe = breaker.tryAcquire(KEY);
         assertNotNull(probe);
-        breaker.recordFailure(KEY);
+        breaker.recordFailure(probe);
         probe.release();
 
         assertEquals("OPEN", breaker.stateOf(KEY), "探针失败必须重新熔断");
@@ -112,6 +113,88 @@ class GatewayCircuitBreakerTest {
         assertEquals("CLOSED", breaker.stateOf("models|http://other"));
         assertNotNull(breaker.tryAcquire("models|http://other"),
                 "一个上游熔断不能影响另一个上游");
+    }
+
+    /** 熔断前已在途的普通请求迟到成功，不能替还没验证的探针关闭熔断 */
+    @Test
+    void staleNonProbeSuccessCannotCloseHalfOpen() {
+        GatewayCircuitBreaker.Admission stale = allow(KEY);
+        openCircuit();
+        now += 10_000;
+
+        GatewayCircuitBreaker.Admission probe = breaker.tryAcquire(KEY);
+        assertNotNull(probe);
+        assertEquals("HALF_OPEN", breaker.stateOf(KEY));
+
+        breaker.recordSuccess(stale);
+        assertEquals("HALF_OPEN", breaker.stateOf(KEY),
+                "非探针结果不能结束半开");
+
+        breaker.recordSuccess(probe);
+        probe.release();
+        assertEquals("CLOSED", breaker.stateOf(KEY), "只有当前探针成功才恢复");
+    }
+
+    /** 半开期间旁路失败也不能覆盖探针窗口 */
+    @Test
+    void nonProbeFailureDuringHalfOpenIsIgnored() {
+        openCircuit();
+        now += 10_000;
+        GatewayCircuitBreaker.Admission probe = breaker.tryAcquire(KEY);
+        assertNotNull(probe);
+
+        breaker.recordFailure(KEY);
+        assertEquals("HALF_OPEN", breaker.stateOf(KEY),
+                "旁路失败不能把正在验证的半开直接重新熔断");
+
+        breaker.recordSuccess(probe);
+        probe.release();
+        assertEquals("CLOSED", breaker.stateOf(KEY));
+    }
+
+    /** 探针卡住超过期限：自动重新熔断，不能把所有请求永久挡住 */
+    @Test
+    void probeTimeoutReopensCircuitAndStaleReleaseDoesNotUnlockNextProbe() {
+        openCircuit();
+        now += 10_000;
+        GatewayCircuitBreaker.Admission first = breaker.tryAcquire(KEY);
+        assertNotNull(first);
+        assertEquals("HALF_OPEN", breaker.stateOf(KEY));
+
+        now += 5_000;
+        assertNull(breaker.tryAcquire(KEY), "探针超时后本次请求仍应快速拒绝");
+        assertEquals("OPEN", breaker.stateOf(KEY), "超时探针按失败处理，重新冷却");
+
+        // 旧探针迟到的 release 不能把新探针的名额放出来
+        first.release();
+        now += 10_000;
+        GatewayCircuitBreaker.Admission second = breaker.tryAcquire(KEY);
+        assertNotNull(second);
+        assertNull(breaker.tryAcquire(KEY), "新探针在途时仍只允许一个请求");
+        assertEquals("HALF_OPEN", breaker.stateOf(KEY));
+    }
+
+    /** 旧探针的迟到结果属于上一代，不能结束新的半开窗口 */
+    @Test
+    void staleProbeResultCannotCloseNewHalfOpenWindow() {
+        openCircuit();
+        now += 10_000;
+        GatewayCircuitBreaker.Admission first = breaker.tryAcquire(KEY);
+        assertNotNull(first);
+
+        now += 5_000;
+        assertNull(breaker.tryAcquire(KEY));
+        now += 10_000;
+        GatewayCircuitBreaker.Admission second = breaker.tryAcquire(KEY);
+        assertNotNull(second);
+
+        breaker.recordSuccess(first);
+        assertEquals("HALF_OPEN", breaker.stateOf(KEY),
+                "上一代探针的结果不能替当前探针判定");
+
+        breaker.recordSuccess(second);
+        second.release();
+        assertEquals("CLOSED", breaker.stateOf(KEY));
     }
 
     private void openCircuit() {

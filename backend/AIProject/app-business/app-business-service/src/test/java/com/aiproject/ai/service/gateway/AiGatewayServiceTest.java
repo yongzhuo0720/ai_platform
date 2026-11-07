@@ -476,6 +476,52 @@ class AiGatewayServiceTest {
     }
 
     /**
+     * 4xx 说明请求本身有问题，不能当成「上游健康」的证据。
+     * 如果把 4xx 记成成功，持续返回 401/403 的上游会永远进不了熔断。
+     */
+    @Test
+    void clientErrorDoesNotResetConsecutiveFailures() {
+        service.properties.setCircuitFailureThreshold(3);
+        upstream.responseStatus = 500;
+        assertEquals(500, proxy("chat", chatRequest(), "u1").getStatus());
+        assertEquals(500, proxy("chat", chatRequest(), "u1").getStatus());
+
+        upstream.responseStatus = 400;
+        upstream.responseBody = "{\"error\":\"bad request\"}";
+        assertEquals(400, proxy("chat", chatRequest(), "u1").getStatus());
+
+        upstream.responseStatus = 500;
+        assertEquals(500, proxy("chat", chatRequest(), "u1").getStatus());
+        assertEquals("OPEN", circuitBreaker.stateOf("chat|" + upstream.baseUrl()),
+                "4xx 不能把之前累计的失败清零");
+    }
+
+    /**
+     * 半开探针收到 4xx 时既不能算成功也不能算失败：
+     * 不能替探针判定恢复，应保持半开等待下一个探针。
+     */
+    @Test
+    void halfOpenProbeWith4xxDoesNotCloseCircuit() {
+        service.properties.setCircuitFailureThreshold(1);
+        service.properties.setCircuitOpenMs(10_000);
+        service.properties.setCircuitProbeTimeoutMs(5_000);
+        long[] now = {1_000_000L};
+        circuitBreaker.clock = () -> now[0];
+        String key = "chat|" + upstream.baseUrl();
+
+        upstream.responseStatus = 500;
+        assertEquals(500, proxy("chat", chatRequest(), "u1").getStatus());
+        assertEquals("OPEN", circuitBreaker.stateOf(key));
+
+        now[0] += 10_000;
+        upstream.responseStatus = 400;
+        upstream.responseBody = "{\"error\":\"bad request\"}";
+        assertEquals(400, proxy("chat", chatRequest(), "u1").getStatus());
+        assertEquals("HALF_OPEN", circuitBreaker.stateOf(key),
+                "4xx 不能替半开探针判成功");
+    }
+
+    /**
      * 上游持续吐字但永远不结束：到总时长上限必须主动断流。
      * readTimeout 约束的是「两次读取之间」，管不住这种慢速长响应；
      * 断开时已转发过正文，按预扣值计费，审计状态记为 504。

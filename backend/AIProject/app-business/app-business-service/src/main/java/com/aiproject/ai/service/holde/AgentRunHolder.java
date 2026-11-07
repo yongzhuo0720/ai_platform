@@ -135,6 +135,63 @@ public class AgentRunHolder {
         return step;
     }
 
+    /**
+     * 回收僵死运行：进程重启、线程被卡死或客户端断开后执行循环没能收尾时，
+     * 记录会永远停在 queued/running，占着 idx_agentrun_active，导致这个
+     * 用户在这个 Agent 上再也发不出新一轮请求。
+     *
+     * <p>按「状态 CAS」更新：只有仍然停留在原状态的记录才会被改成 failed；
+     * 如果执行循环刚好完成并写了 succeeded，这里更新 0 行，绝不会覆盖正常结果。</p>
+     *
+     * @return 实际回收的条数
+     */
+    public int recoverStale(long staleBefore, long now, String errorMessage) {
+        int recovered = 0;
+        for (String status : new String[]{"queued", "running"}) {
+            AgentRunBean where = new AgentRunBean();
+            where.setStatus(status);
+            PageRequest page = new PageRequest(1, 500);
+            page.setOrder("iid");
+            page.setDesc("asc");
+            List<AgentRunBean> runs;
+            try {
+                runs = runMapper.select(page, where);
+            } catch (Exception e) {
+                log.warn("[Agent] 查询僵死运行失败, status={}: {}", status, e.getMessage());
+                continue;
+            }
+            if (runs == null) {
+                continue;
+            }
+            for (AgentRunBean run : runs) {
+                if (run == null || AgentConfigHolder.blank(run.getRunKey())
+                        || run.getStartedAt() == null || run.getStartedAt() >= staleBefore) {
+                    continue;
+                }
+                AgentRunBean patch = new AgentRunBean();
+                patch.setStatus("failed");
+                patch.setErrorMessage(errorMessage);
+                patch.setFinishedAt(now);
+                patch.setDurationMs(Math.max(0L, now - run.getStartedAt()));
+                AgentRunBean casWhere = new AgentRunBean();
+                casWhere.setRunKey(run.getRunKey());
+                casWhere.setLastuser(run.getLastuser());
+                casWhere.setStatus(status);
+                try {
+                    if (runMapper.update(patch, casWhere) > 0) {
+                        recovered++;
+                        log.warn("[Agent] 回收僵死运行: runKey={}, status={}, ageMs={}",
+                                run.getRunKey(), status, now - run.getStartedAt());
+                    }
+                } catch (Exception e) {
+                    log.warn("[Agent] 回收僵死运行失败, runKey={}: {}",
+                            run.getRunKey(), e.getMessage());
+                }
+            }
+        }
+        return recovered;
+    }
+
     /** 收尾：只 SET 汇总字段，where 带 runKey + 归属 */
     public void finish(String uid, String runKey, String status, int iterations,
                        long prompt, long completion, long cost, long durationMs,

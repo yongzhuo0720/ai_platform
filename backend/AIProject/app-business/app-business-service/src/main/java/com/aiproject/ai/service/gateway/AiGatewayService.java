@@ -1075,9 +1075,9 @@ public class AiGatewayService {
                         userId, module, parser.getTotalTokens(), upstreamStatus);
             }
 
-            // 上游 5xx 说明服务端确实不可用；其余状态说明连接与协议都正常，
+            // 5xx 说明服务端确实不可用；4xx 按中性处理；其余状态说明连接与协议都正常，
             // 包括上游在 200 里塞业务错误帧的情况——那不是「连不上」。
-            recordCircuitHealth(circuitKey, upstreamStatus);
+            recordCircuitHealth(circuitKey, upstreamStatus, circuitAdmission);
             // 放在计费判断之后：按预扣值计费时，审计里的 tokens 必须等于真正扣掉的额度
             record(userId, module, auditEndpoint, method, status, upstreamStatus, parser,
                     start, error, clientIp);
@@ -1108,7 +1108,7 @@ public class AiGatewayService {
             // - 客户端主动断开：请求本身是通的，不能算上游故障；
             // - 网关总时长截止：可能是正常的长回答，不能算上游故障。
             if (!aborted && !timedOut && e instanceof IOException) {
-                circuitBreaker.recordFailure(circuitKey);
+                circuitBreaker.recordFailure(circuitAdmission);
             }
 
             if (!response.isCommitted()) {
@@ -1210,11 +1210,15 @@ public class AiGatewayService {
         return module + "|" + apiUrl;
     }
 
-    private void recordCircuitHealth(String key, Integer upstreamStatus) {
+    private void recordCircuitHealth(String key, Integer upstreamStatus,
+                                     GatewayCircuitBreaker.Admission admission) {
         if (upstreamStatus != null && upstreamStatus >= 500) {
-            circuitBreaker.recordFailure(key);
+            circuitBreaker.recordFailure(admission);
+        } else if (upstreamStatus != null && upstreamStatus >= 400) {
+            // 4xx 说明请求本身有问题：上游能回包但没证明能正常服务。
+            // 按中性处理，既不累加失败，也不能替半开探针判成功。
         } else {
-            circuitBreaker.recordSuccess(key);
+            circuitBreaker.recordSuccess(admission);
         }
     }
 

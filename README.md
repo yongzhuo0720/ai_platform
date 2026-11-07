@@ -263,13 +263,15 @@ npm run check:bundle     # 首屏 gzip 体积预算（需先 build）
 
 本地一键验证使用 `scripts/verify.ps1 -JavaHome '<你的 JDK 8 路径>'`（13 步，含后端；
 跑完会打印 `后端单测汇总：N 项 / M 份报告`，一份报告都没生成就直接判失败——这是为了
-堵住「测试被静默跳过但 BUILD SUCCESS」这类最危险的绿色）。日志统一 UTF-8，可直接重定向存档。
+堵住「测试被静默跳过但 BUILD SUCCESS」这类最危险的绿色。前端同理：`npm run test` /
+`npm run test:component` 先扫磁盘上的 spec 文件，再与 Vitest 实际执行的文件对账，
+少了、多了或一项没跑都直接失败，不再靠人肉发现漏跑。日志统一 UTF-8，可直接重定向存档。
 
-### 当前测试结果（2026-11-06 实测）
+### 当前测试结果（2026-11-07 实测）
 
 | 项目 | 结果 |
 |---|---|
-| 后端单元测试 | **636 项，0 失败 / 0 错误 / 0 跳过**（`mvn -o test`，JDK 8 Dragonwell 8；app-common 7、permission 71、service 531、app-start 27） |
+| 后端单元测试 | **646 项 / 59 份报告，0 失败 / 0 错误 / 0 跳过**（`mvn -o test`，JDK 8 Dragonwell 8；app-common 7、permission 71、service 541、app-start 27） |
 | 前端 TypeScript 检查 | 通过 |
 | 前端图标注册检查 | 通过（59 个在用图标全部可解析） |
 | 硬编码色值棘轮检查 | 通过（45 个文件 / 1777 处，等于基线；新增即失败，只允许减少） |
@@ -286,9 +288,9 @@ npm run check:bundle     # 首屏 gzip 体积预算（需先 build）
 > **环境说明（2026-11-06 再次校准）**：`scripts/verify.ps1` 在带批量删除/写入防护的
 > 受限执行环境下，可能出现四类失败，均**不是用例回归**：
 > ① Vitest 的 `Proxy.fetch` 写临时文件被 `node-brokered-fs-shim` 拦截（`EPERM`），
->    `npm run test` 会 `exit=1` 且**静默少跑 1 个逻辑单测文件**
->    （`src/views/ChatView/__tests__/useChatConversations.spec.ts`，16 项）——
->    需补跑 `npx vitest run src/views/ChatView/__tests__/useChatConversations.spec.ts`；
+>    某个逻辑单测文件会执行失败。`scripts/run-vitest.mjs` 的文件数对账会把它变成
+>    **显式的红**（打印缺失文件并 `exit=1`），不再是此前的「静默少跑」——
+>    按提示补跑该文件即可；
 > ② Vite 清空 `dist/assets` 触发 `SAFE_DELETE_BULK_CONFIRM_REQUIRED`——
 >    先把旧 `dist` **移动**到临时目录（不要删除）再 `npm run build` 即 exit=0；
 > ③ Playwright 清理 `test-results` 触发同样的批量删除告警——先移走旧 `test-results`；
@@ -505,6 +507,7 @@ npm run check:bundle     # 首屏 gzip 体积预算（需先 build）
 - **AI 能力依赖外部服务**：Dify 与直连模型各自依赖对应上游；本地 RAG 的向量化仍需可用的向量模型接口。
 - **网关需先配置上游**：Dify 需在数据库 `difyconfigbean`（后台「Dify 配置管理」）或服务端 `DIFY_*` 环境变量配置；直连模型需在「模型配置」里配齐地址与密钥。未配置时对应模块返回 503。前端已不读取任何 `VITE_DIFY_*_KEY`，密钥不存在于浏览器侧。
 - **流式治理的边界**：Token 统计依赖上游返回 usage（Dify 聊天在 `message_end`，工作流在 `data.total_tokens`）；上游不返回时只统计调用次数与耗时，配额无法按 Token 精确扣减。
+- **Agent 链路治理不完整**：Agent 的模型调用复用了限流、配额预扣/结算与审计，但不经过网关的并发闸门与熔断；工具执行尚未按配置超时中断。僵死 `running` 记录已由每 5 分钟一次的回收任务兜底（30 分钟阈值 + 状态 CAS）。
 - **验证边界**：自动测试不等于真实上游与数据库验收；网关与模型协议测试使用本机临时 HTTP 服务，数据库写入使用 Mapper mock，未连接真实 Dify / 向量服务 / 生产数据库。其余待改进项见本次检查记录。
 - **依赖版本需锁定**：私有框架 `hnsp-public-common-croe` 把 `mybatis` 声明为 `<version>LATEST</version>`。2026-10-29 实测当天 16:55 构建正常、16:57 拉到 `mybatis 3.6.0`（Java 11 编译）后 JDK 8 直接编译失败。已在根 `pom.xml` 用 `dependencyManagement` 锁定 `3.5.19`（离线仓库中最高的 Java 8 兼容版本）。**不要移除这个锁定。**
 - **SSO** 依赖外部 OpenID 服务（默认关闭），本地请使用账号密码登录。
