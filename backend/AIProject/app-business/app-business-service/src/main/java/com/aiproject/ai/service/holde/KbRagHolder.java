@@ -59,6 +59,14 @@ public class KbRagHolder {
      */
     private static final int MAX_SCAN_CHUNKS = 5000;
 
+    /**
+     * 关键词路最多展开的词项数。
+     *
+     * <p>中文按二元滑窗展开，2000 字的查询会产生近两千个词项，
+     * 全部拼进 SQL 既慢又失去区分度。取前 16 个已经覆盖正常提问。</p>
+     */
+    private static final int MAX_LEXICAL_TERMS = 16;
+
     private final ObjectMapper objectMapper = new ObjectMapper();
 
     @Autowired
@@ -291,7 +299,8 @@ public class KbRagHolder {
      * 融合排名——RRF 只看排名不看原始分，因此不需要把余弦分和词频归一到同一量纲，
      * 这是它比加权求和更适合这里的原因。</p>
      *
-     * <p><b>两路的分工</b>：关键词路用 PostgreSQL 全文检索（GIN 表达式索引）做候选召回，
+     * <p><b>两路的分工</b>：关键词路用 PostgreSQL 全文检索（GIN 表达式索引）加二元词项
+     * 子串匹配做候选召回——前者擅长英文词级匹配，后者补上 simple 配置缺失的中文切词；
      * 向量路对自有分块算余弦（单次最多 {@link #MAX_SCAN_CHUNKS} 块）。
      * 召回阶段用索引、精排阶段在内存，与当前「万块以内」的规模匹配。</p>
      */
@@ -594,14 +603,18 @@ public class KbRagHolder {
     }
 
     /**
-     * 关键词路召回：用 PostgreSQL 全文检索找出内容命中的分块 iid。
+     * 关键词路召回：全文检索 + 二元词项 LIKE，找出内容命中的分块 iid。
      *
-     * <p>用 {@code plainto_tsquery('simple', ...)} 而不是 {@code to_tsquery}：
-     * 前者把用户输入当纯文本处理，不解析 {@code & | !} 等操作符，
-     * 避免了「用户输入包含布尔语法导致查询报错」，也缩小了注入面。</p>
+     * <p>为什么不能只用 {@code plainto_tsquery('simple', 整句)}：PostgreSQL 的
+     * simple 配置没有中文分词，把连续中文当成一个词元，整句查询只能命中
+     * 原文中连续出现的同一整串。实测「差旅报销的审批流程是什么」召回为空，
+     * 中文关键词路等于不存在。这里把查询按 {@link #tokenize} 展开成二元词项，
+     * 用 ILIKE 做子串召回；英文仍保留全文检索（词级匹配比子串更准）。</p>
      *
-     * <p>查询文本仍必须转义——它来自用户输入。这里只做最小必要转义
-     * （单引号加倍 + 去 NUL），因为 plainto_tsquery 内部不再解释语法。</p>
+     * <p>用 {@code plainto_tsquery} 而不是 {@code to_tsquery}：前者把用户输入
+     * 当纯文本处理，不解析 {@code & | !} 等操作符，避免查询报错，也缩小注入面。
+     * 查询文本仍必须转义；ILIKE 的词项只含字母、数字与汉字，
+     * 不含 {@code % _ \} 等通配符，因此不会被用户输入改变匹配范围。</p>
      *
      * <p>任何异常都返回空集合而非抛出：让检索降级为纯向量路。</p>
      */
@@ -613,10 +626,8 @@ public class KbRagHolder {
             if (kbName != null && !kbName.trim().isEmpty()) {
                 where.setKbName(kbName.trim());
             }
-            String escaped = escapeSqlLiteral(query);
-            String ftsWhere = "to_tsvector('simple', \"content\") @@ plainto_tsquery('simple', '" + escaped + "')";
             List<KbChunkBean> matched = kbChunkBeanMapper.select(
-                    new PageRequest(1, MAX_SCAN_CHUNKS), where, ftsWhere);
+                    new PageRequest(1, MAX_SCAN_CHUNKS), where, buildLexicalWhere(query));
             if (matched != null) {
                 for (KbChunkBean chunk : matched) {
                     if (chunk.getIid() != null) {
@@ -630,6 +641,36 @@ public class KbRagHolder {
             log.warn("[KbRag] 关键词路召回失败，降级为纯向量检索: {}", e.getMessage());
         }
         return hits;
+    }
+
+    /**
+     * 构造关键词路的 WHERE 片段：全文检索（整句/英文词）OR 二元词项 ILIKE。
+     *
+     * <p>整体包一层括号，与归属条件做 AND 组合时不会出现运算优先级问题。
+     * 词项来自 {@link #tokenize}，只含字母、数字与汉字，不含 LIKE 通配符；
+     * 仍然套一层 {@link #escapeSqlLiteral} 作为纵深防御。</p>
+     */
+    static String buildLexicalWhere(String query) {
+        String escaped = escapeSqlLiteral(query == null ? "" : query);
+        StringBuilder where = new StringBuilder("(to_tsvector('simple', \"content\") @@ plainto_tsquery('simple', '")
+                .append(escaped).append("')");
+        List<String> terms = new ArrayList<String>();
+        Set<String> seen = new HashSet<String>();
+        if (query != null) {
+            for (String term : tokenize(query)) {
+                if (term.isEmpty() || !seen.add(term)) {
+                    continue;
+                }
+                terms.add(term);
+                if (terms.size() >= MAX_LEXICAL_TERMS) {
+                    break;
+                }
+            }
+        }
+        for (String term : terms) {
+            where.append(" OR \"content\" ILIKE '%").append(escapeSqlLiteral(term)).append("%'");
+        }
+        return where.append(')').toString();
     }
 
     /**

@@ -487,11 +487,20 @@ class KbRagHolderTest {
         holder.search("u1", "it's a test'; DROP TABLE kbchunkbean; --", null, 5);
 
         ArgumentCaptor<KbChunkBean> captor = ArgumentCaptor.forClass(KbChunkBean.class);
-        verify(kbChunkBeanMapper).select(any(PageRequest.class), captor.capture(), anyString());
+        ArgumentCaptor<String> sqlCaptor = ArgumentCaptor.forClass(String.class);
+        verify(kbChunkBeanMapper, atLeastOnce()).select(any(PageRequest.class), captor.capture(), sqlCaptor.capture());
         for (KbChunkBean where : captor.getAllValues()) {
             assertNotNull(where);
             assertEquals("u1", where.getLastuser(), "关键词路也必须带归属条件");
         }
+        String lexicalSql = null;
+        for (String sql : sqlCaptor.getAllValues()) {
+            if (sql.contains("ILIKE")) {
+                lexicalSql = sql;
+            }
+        }
+        assertNotNull(lexicalSql, "关键词路 SQL 必须包含子串召回");
+        assertTrue(lexicalSql.contains("it''s"), "恶意输入里的单引号必须被转义");
     }
 
     /**
@@ -637,6 +646,55 @@ class KbRagHolderTest {
         List<String> terms = KbRagHolder.tokenize("报");
         assertEquals(1, terms.size());
         assertEquals("报", terms.get(0));
+    }
+
+    /**
+     * 中文查询必须展开成二元词项做子串召回。
+     *
+     * <p>只用 plainto_tsquery('simple', 整句) 时，PostgreSQL 没有中文分词，
+     * 整句是一个词元，实测召回为空。</p>
+     */
+    @Test
+    void buildLexicalWhere_shouldExpandChineseBigrams() {
+        String where = KbRagHolder.buildLexicalWhere("差旅报销");
+
+        assertTrue(where.startsWith("("), "整体加括号，避免与归属条件 AND 时优先级出错");
+        assertTrue(where.endsWith(")"));
+        assertTrue(where.contains("plainto_tsquery('simple', '差旅报销')"), "保留整句全文检索");
+        assertTrue(where.contains("\"content\" ILIKE '%差旅%'"));
+        assertTrue(where.contains("\"content\" ILIKE '%旅报%'"));
+        assertTrue(where.contains("\"content\" ILIKE '%报销%'"));
+    }
+
+    /** 长查询只展开前 16 个词项，避免 SQL 无限膨胀 */
+    @Test
+    void buildLexicalWhere_shouldCapTerms() {
+        String where = KbRagHolder.buildLexicalWhere("差旅报销审批流程采购合同付款制度规定要求说明");
+
+        int ilikeCount = 0;
+        int from = 0;
+        while ((from = where.indexOf("ILIKE", from)) >= 0) {
+            ilikeCount++;
+            from += 5;
+        }
+        assertEquals(16, ilikeCount);
+    }
+
+    /** 词项只含字母/数字/汉字，LIKE 通配符不会从用户输入进入模式串 */
+    @Test
+    void buildLexicalWhere_shouldNotEmitLikeWildcards() {
+        String where = KbRagHolder.buildLexicalWhere("100%_safe \\ it's");
+
+        assertTrue(where.contains("it''s"), "FTS 字面量里的单引号必须加倍");
+        java.util.regex.Matcher m = java.util.regex.Pattern
+                .compile("ILIKE '%([^']*)%'").matcher(where);
+        int patterns = 0;
+        while (m.find()) {
+            patterns++;
+            assertTrue(m.group(1).matches("[A-Za-z0-9\\u4e00-\\u9fff]+"),
+                    "ILIKE 模式串不能含通配符或引号: " + m.group(1));
+        }
+        assertTrue(patterns > 0, "英文词项也应参与子串召回");
     }
 
     private static String fill(char c, int count) {
