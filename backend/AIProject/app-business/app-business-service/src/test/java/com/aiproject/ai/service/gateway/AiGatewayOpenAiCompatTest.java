@@ -8,6 +8,7 @@ import com.aiproject.ai.service.holde.AiCallLogHolder;
 import com.aiproject.ai.service.holde.KbRagHolder;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import org.apache.http.impl.client.HttpClients;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -50,6 +51,7 @@ class AiGatewayOpenAiCompatTest {
     private final ObjectMapper mapper = new ObjectMapper();
     private AiGatewayService service;
     private AiUpstreamStub upstream;
+    private AiGatewayHeartbeatScheduler heartbeatScheduler;
 
     @BeforeEach
     void setUp() throws Exception {
@@ -67,6 +69,9 @@ class AiGatewayOpenAiCompatTest {
         GatewayCircuitBreaker circuitBreaker = new GatewayCircuitBreaker();
         circuitBreaker.properties = service.properties;
         service.circuitBreaker = circuitBreaker;
+        heartbeatScheduler = new AiGatewayHeartbeatScheduler();
+        service.heartbeatScheduler = heartbeatScheduler;
+        service.httpClient = HttpClients.custom().disableAutomaticRetries().build();
         when(service.idempotencyGuard.acquire(anyString(), anyString(), any()))
                 .thenReturn(AiIdempotencyGuard.Acquisition.none());
         // 白名单是纯逻辑，用真身才能顺带验到「iid / 平台名 / 上游名任一命中」
@@ -77,7 +82,9 @@ class AiGatewayOpenAiCompatTest {
     }
 
     @AfterEach
-    void tearDown() {
+    void tearDown() throws Exception {
+        heartbeatScheduler.shutdown();
+        service.httpClient.close();
         upstream.close();
     }
 

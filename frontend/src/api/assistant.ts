@@ -1,25 +1,14 @@
 import axios from './axios'
 
 /**
- * 助手（多智能体）配置。
- * 通过配置不同的接口参数，接入不同类型的智能体服务
- * （当前支持 qwen_paw，预留 wanwu 等扩展）。
+ * 助手配置：名称 + 提示词，底层模型与智能体分发由服务端统一处理。
+ * 权限字段由后端维护，前端只在列表里读取 userId 判断可否编辑。
  */
 export interface AssistantData {
   iid?: number
   name: string
   prompt: string
   userId?: string
-  /** 智能体服务类型（qwen_paw / wanwu 等） */
-  type?: string
-  /** 智能体 ID（对应 Header X-Agent-Id） */
-  agentId?: string
-  /** 接口地址（API 基础 URL） */
-  apiUrl?: string
-  /** 认证 Token（Authorization Bearer） */
-  authToken?: string
-  /** 调用渠道（如 console） */
-  channel?: string
   /** 权限类型：public=所有人可见 / partial_invisible=部分不可见 */
   permissionType?: string
   /** 不可见部门编号（JSON 数组字符串） */

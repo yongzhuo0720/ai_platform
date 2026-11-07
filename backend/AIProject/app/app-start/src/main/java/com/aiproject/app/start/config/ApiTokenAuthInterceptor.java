@@ -54,6 +54,11 @@ public class ApiTokenAuthInterceptor implements HandlerInterceptor {
     @Override
     public boolean preHandle(HttpServletRequest request, HttpServletResponse response, Object handler)
             throws IOException {
+        // 异步派发只是转发结束后的收尾，不会再次执行 Controller；
+        // 初始请求已经验过密钥，这里跳过可避免长流结束后再写一个 401。
+        if (request.getDispatcherType() == javax.servlet.DispatcherType.ASYNC) {
+            return true;
+        }
         // CORS 预检不带自定义头，也不该被鉴权拦下
         if ("OPTIONS".equalsIgnoreCase(request.getMethod())) {
             return true;

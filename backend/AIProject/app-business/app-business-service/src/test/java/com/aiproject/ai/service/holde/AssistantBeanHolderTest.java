@@ -16,7 +16,6 @@ import java.util.Collections;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.verify;
@@ -25,13 +24,9 @@ import static org.mockito.Mockito.when;
 /**
  * 助手列表与更新的安全测试。
  *
- * <p>覆盖两类曾经真实存在的问题：</p>
- * <ol>
- *   <li>authToken 泄露——超管创建的助手对所有登录用户可见，
- *       修复前列表接口把 authToken 一起返回，任何人都能拿到他人的接口 Bearer Token；</li>
- *   <li>update 可改 owner——data.userId 会进 UPDATE 的 SET 子句，
- *       修复前未强制为当前 uid，所有者能把助手转让给任意 uid。</li>
- * </ol>
+ * <p>覆盖曾经真实存在的问题：update 的 data.userId 会进 UPDATE 的 SET 子句，
+ * 修复前未强制为当前 uid，所有者能把助手转让给任意 uid。
+ * 列表侧的可见性规则（超管助手全员可见、黑名单对普通用户生效）也在这里回归。</p>
  */
 @ExtendWith(MockitoExtension.class)
 class AssistantBeanHolderTest {
@@ -52,54 +47,46 @@ class AssistantBeanHolderTest {
         return u;
     }
 
-    private AssistantBean assistant(long iid, String owner, String authToken) {
+    private AssistantBean assistant(long iid, String owner) {
         AssistantBean a = new AssistantBean();
         a.setIid(iid);
         a.setUserId(owner);
-        a.setAuthToken(authToken);
         a.setPermissionType("public");
         a.setRoleiids("[]");
         a.setUnitsnos("[]");
         return a;
     }
 
-    /** 自己的助手：authToken 要留着，否则前端调不了智能体 */
     @Test
-    void queryList_shouldKeepAuthTokenForOwner() {
+    void queryList_shouldReturnOwnAssistant() {
         when(myUserBaseDbHolder.queryUserByUid("u1")).thenReturn(user("u1", 5L));
         when(assistantBeanMapper.select(any(), any(AssistantBean.class)))
-                .thenReturn(Collections.<AssistantBean>singletonList(assistant(1L, "u1", "secret-token")));
+                .thenReturn(Collections.singletonList(assistant(1L, "u1")));
 
         Result<List<AssistantBean>> result = holder.queryList("u1");
 
         assertEquals(1, result.getDatas().size());
-        assertEquals("secret-token", result.getDatas().get(0).getAuthToken());
+        assertEquals("u1", result.getDatas().get(0).getUserId());
     }
 
-    /**
-     * 他人的助手：authToken 必须被抹掉。
-     * 「可见」不等于「可拿走凭据」。
-     */
+    /** 超管创建的助手对普通用户可见；可见性由是否超管创建 / 黑名单共同决定 */
     @Test
-    void queryList_shouldStripAuthTokenForNonOwner() {
-        // 调用者是普通用户；助手由超管创建，因此对所有人可见
+    void queryList_shouldExposeAdminAssistantToNormalUser() {
         when(myUserBaseDbHolder.queryUserByUid("u1")).thenReturn(user("u1", 5L));
         when(myUserBaseDbHolder.queryUserByUid("admin")).thenReturn(user("admin", 99999L));
         when(assistantBeanMapper.select(any(), any(AssistantBean.class)))
-                .thenReturn(Collections.<AssistantBean>singletonList(assistant(1L, "admin", "admin-secret")));
+                .thenReturn(Collections.singletonList(assistant(1L, "admin")));
 
         Result<List<AssistantBean>> result = holder.queryList("u1");
 
         assertEquals(1, result.getDatas().size(), "超管创建的助手对其他人可见");
-        assertNull(result.getDatas().get(0).getAuthToken(),
-                "非所有者绝不能拿到他人的 authToken");
     }
 
     /** update 必须把 data.userId 收敛为当前登录 uid，否则可转让助手 */
     @Test
     void update_shouldForceOwnerToCurrentUser() {
-        AssistantBean data = assistant(1L, "attacker", "token");
-        AssistantBean where = assistant(1L, "victim", null);
+        AssistantBean data = assistant(1L, "attacker");
+        AssistantBean where = assistant(1L, "victim");
         when(assistantBeanMapper.update(any(AssistantBean.class), any(AssistantBean.class))).thenReturn(1);
 
         Result<Boolean> result = holder.update("u1", data, where);

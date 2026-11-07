@@ -1,5 +1,6 @@
 package com.aiproject.ai.service.controller;
 
+import com.aiproject.ai.service.gateway.AiGatewayAsyncDispatcher;
 import com.aiproject.ai.service.gateway.AiGatewayService;
 import io.swagger.annotations.Api;
 import io.swagger.annotations.ApiOperation;
@@ -9,6 +10,7 @@ import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.context.request.async.WebAsyncTask;
 
 import javax.servlet.http.HttpServletRequest;
 import javax.servlet.http.HttpServletResponse;
@@ -31,14 +33,21 @@ import javax.servlet.http.HttpServletResponse;
 @Api(value = "OpenAI 兼容端点", tags = "AI 开放接口")
 public class OpenAiCompatController {
 
+    private static final String OPENAI_CHAT_LABEL = "v1/chat/completions";
+
     @Autowired
     AiGatewayService aiGatewayService;
+
+    @Autowired
+    AiGatewayAsyncDispatcher asyncDispatcher;
 
     @ApiOperation(value = "对话补全（OpenAI 协议）", httpMethod = "POST",
             notes = "支持 stream=true 的 SSE 与非流式 JSON")
     @PostMapping("/chat/completions")
-    public void chatCompletions(HttpServletRequest request, HttpServletResponse response) {
-        aiGatewayService.proxyOpenAiChat(request, response);
+    public WebAsyncTask<Void> chatCompletions(HttpServletRequest request,
+                                              HttpServletResponse response) {
+        return asyncDispatcher.dispatch(OPENAI_CHAT_LABEL, request,
+                gate -> aiGatewayService.proxyOpenAiChat(request, response, gate));
     }
 
     @ApiOperation(value = "可用模型列表（OpenAI 协议）", httpMethod = "GET",

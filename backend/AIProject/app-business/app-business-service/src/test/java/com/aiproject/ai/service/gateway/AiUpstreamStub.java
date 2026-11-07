@@ -109,6 +109,9 @@ class AiUpstreamStub implements AutoCloseable {
     private void writeSilentSse(com.sun.net.httpserver.HttpExchange exchange) throws IOException {
         exchange.getResponseHeaders().set("Content-Type", "text/event-stream");
         exchange.sendResponseHeaders(200, 0);
+        // JDK HttpServer 的响应头默认随首块正文一起发出；这里必须立刻 flush，
+        // 否则「上游静默」在客户端看来是「连响应头都还没到」，测不到心跳阶段
+        exchange.getResponseBody().flush();
         try {
             Thread.sleep(1500);
             exchange.getResponseBody().write("data: {}\n\n".getBytes(StandardCharsets.UTF_8));

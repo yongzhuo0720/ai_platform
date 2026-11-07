@@ -24,26 +24,6 @@ public class AssistantBean extends DbEntityBase {
     @ApiModelProperty(value = "用户ID")
     String userId;
 
-    @SqlColumn()
-    @ApiModelProperty(value = "智能体服务类型（如 qwen_paw、wanwu 等，预留扩展）")
-    String type;
-
-    @SqlColumn()
-    @ApiModelProperty(value = "智能体 ID（对应接口 Header 中的 X-Agent-Id）")
-    String agentId;
-
-    @SqlColumn(method = "text")
-    @ApiModelProperty(value = "接口地址（智能体服务 API 基础 URL）")
-    String apiUrl;
-
-    @SqlColumn(method = "text")
-    @ApiModelProperty(value = "认证 Token（Authorization Bearer）")
-    String authToken;
-
-    @SqlColumn()
-    @ApiModelProperty(value = "调用渠道（如 console 等）")
-    String channel;
-
     @SqlColumn(method = "text")
     @ApiModelProperty(value = "权限类型: public=所有人可见 / partial_invisible=部分不可见")
     String permissionType;

@@ -66,8 +66,29 @@ public class AiGatewayProperties {
      * 作用有两个：让 Nginx 等中间层不把长时间无数据的 SSE 当死连接掐掉；
      * 更重要的是借这次写入探测浏览器是否已经关页面——读阻塞在上游时，
      * 只有写客户端才能知道连接是否还在。
+     * <p>
+     * 该值同时是上游静默时的读轮询间隔：浏览器点「停止」后，最迟一个间隔
+     * 就会因心跳写失败而释放上游连接，因此不能配得过大（默认 3 秒）。
      */
-    private int sseHeartbeatMs = 15000;
+    private int sseHeartbeatMs = 3000;
+
+    /**
+     * 网关转发是否交给专用线程池执行（Servlet 异步）。
+     * <p>
+     * 开启后 Tomcat 请求线程在开始转发时立即归还，长流只占用
+     * {@code ai-gateway-*} 中继线程，登录、管理后台等接口不会被慢速流拖住。
+     * 容器或过滤器链不支持异步时自动退回同步执行。
+     */
+    private boolean asyncDispatchEnabled = true;
+
+    /** 网关中继线程池核心线程数（只有真正转发时才创建线程） */
+    private int relayCoreThreads = 8;
+
+    /** 网关中继线程池最大线程数；需覆盖 Dify 三个模块 + 模型直连的同时进行数 */
+    private int relayMaxThreads = 48;
+
+    /** 网关中继线程池等待队列；满后由调用线程执行（退化为同步转发），不丢请求 */
+    private int relayQueueCapacity = 128;
 
     /**
      * 同一上游连续失败多少次后熔断，<=0 表示关闭熔断。

@@ -15,6 +15,19 @@ import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.heneng.hnsp.common.croe.model.Result;
 import lombok.extern.slf4j.Slf4j;
+import org.apache.http.Header;
+import org.apache.http.HttpEntity;
+import org.apache.http.client.config.RequestConfig;
+import org.apache.http.client.methods.CloseableHttpResponse;
+import org.apache.http.client.methods.HttpEntityEnclosingRequestBase;
+import org.apache.http.client.methods.HttpGet;
+import org.apache.http.client.methods.HttpHead;
+import org.apache.http.client.methods.HttpRequestBase;
+import org.apache.http.entity.ByteArrayEntity;
+import org.apache.http.entity.ContentType;
+import org.apache.http.entity.InputStreamEntity;
+import org.apache.http.impl.client.CloseableHttpClient;
+import org.apache.http.message.BasicHeader;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
@@ -28,9 +41,8 @@ import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
-import java.net.HttpURLConnection;
 import java.net.SocketTimeoutException;
-import java.net.URL;
+import java.net.URI;
 import java.net.URLDecoder;
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
@@ -40,9 +52,11 @@ import java.util.Collection;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.ScheduledFuture;
 
 /**
  * AI 网关核心：把浏览器对 Dify 的调用收口到后端。
@@ -95,6 +109,15 @@ public class AiGatewayService {
     /** SSE 注释帧：客户端解析器会忽略，顺带起到保活与断连探测的作用 */
     private static final byte[] SSE_HEARTBEAT = ": ping\n\n".getBytes(StandardCharsets.UTF_8);
 
+    /**
+     * 写响应体时的分片大小。
+     * <p>
+     * 分片不是为了性能，而是为了「已转发字节数」的准确性：一次写入中途失败时，
+     * 失败前已经写进客户端缓冲的部分必须计入，否则客户端明明收到了半截回答，
+     * 网关却按「一个字节都没发出去」全额退额度。分片让计数误差收敛到 256 字节内。
+     */
+    private static final int WRITE_SLICE = 256;
+
     @Autowired
     AiGatewayProperties properties;
 
@@ -127,6 +150,21 @@ public class AiGatewayService {
 
     @Autowired
     GatewayCircuitBreaker circuitBreaker;
+
+    @Autowired
+    AiGatewayHeartbeatScheduler heartbeatScheduler;
+
+    /**
+     * 上游转发客户端。
+     *
+     * <p>不用 {@link java.net.HttpURLConnection}：它的分块响应读是同步方法，
+     * 读阻塞时持锁，另一个线程调 {@code disconnect()} 会被同一把锁卡住，
+     * 浏览器关页面后网关根本停不下来上游（一直生成到读超时，继续计费）。
+     * HttpClient 的 {@code abort()} 直接关闭连接，能立即唤醒阻塞的读，
+     * 是「客户端取消即停止上游」这条链路的前提。</p>
+     */
+    @Autowired
+    CloseableHttpClient httpClient;
 
     /**
      * 全链路请求 ID。
@@ -170,20 +208,44 @@ public class AiGatewayService {
      */
     private final ThreadLocal<Boolean> openAiErrorShape = new ThreadLocal<Boolean>();
 
+    /**
+     * 本次请求的异步响应门闸。
+     *
+     * <p>容器结束异步请求后会把 response 回收给下一个请求，中继线程仍在执行的
+     * catch/finally 不能再碰它。门闸由控制器经调度器传入，这里用 ThreadLocal
+     * 让深层调用（writeError/appendSseError/flushBuffer）都能读到同一把门闸。
+     * 同步调用（无门闸）时取 {@link AsyncResponseGate#NONE}，行为不变。</p>
+     */
+    private final ThreadLocal<AsyncResponseGate> currentResponseGate =
+            new ThreadLocal<AsyncResponseGate>();
+
     public void proxy(String module, String userId,
                       HttpServletRequest request, HttpServletResponse response) {
+        proxy(module, userId, request, response, AsyncResponseGate.NONE);
+    }
+
+    public void proxy(String module, String userId,
+                      HttpServletRequest request, HttpServletResponse response,
+                      AsyncResponseGate responseGate) {
         long start = System.currentTimeMillis();
-        String method = request.getMethod();
         String requestId = resolveRequestId(request);
         currentRequestId.set(requestId);
         firstTokenAt.set(null);
+        currentResponseGate.set(responseGate == null ? AsyncResponseGate.NONE : responseGate);
         try {
             doProxyEntry(module, userId, request, response, start, requestId);
         } finally {
             // Tomcat 线程复用，必须清理，否则 ID 会串到下一个请求
             currentRequestId.remove();
             firstTokenAt.remove();
+            currentResponseGate.remove();
         }
+    }
+
+    /** 当前请求的响应门闸；同步转发没有门闸，恒为放行 */
+    private AsyncResponseGate responseGate() {
+        AsyncResponseGate gate = currentResponseGate.get();
+        return gate == null ? AsyncResponseGate.NONE : gate;
     }
 
     /** proxy() 的主体，拆出来只是为了包住 try/finally 清理 ThreadLocal */
@@ -665,16 +727,23 @@ public class AiGatewayService {
      * 中断计费、预扣结算这些行为与站内对话一模一样，不另写一份。
      */
     public void proxyOpenAiChat(HttpServletRequest request, HttpServletResponse response) {
+        proxyOpenAiChat(request, response, AsyncResponseGate.NONE);
+    }
+
+    public void proxyOpenAiChat(HttpServletRequest request, HttpServletResponse response,
+                                AsyncResponseGate responseGate) {
         long start = System.currentTimeMillis();
         currentRequestId.set(resolveRequestId(request));
         firstTokenAt.set(null);
         openAiErrorShape.set(Boolean.TRUE);
+        currentResponseGate.set(responseGate == null ? AsyncResponseGate.NONE : responseGate);
         try {
             doProxyOpenAiChat(request, response, start);
         } finally {
             openAiErrorShape.remove();
             currentRequestId.remove();
             firstTokenAt.remove();
+            currentResponseGate.remove();
         }
     }
 
@@ -868,7 +937,8 @@ public class AiGatewayService {
                          AiGatewayGuard.Reservation reservation) {
         String method = request.getMethod();
         String clientIp = clientIp(request);
-        HttpURLConnection conn = null;
+        HttpRequestBase upstreamRequest = null;
+        CloseableHttpResponse upstreamResponse = null;
         InputStream upstream = null;
         // 提升到 try 外：客户端中途断开时 catch 里要用它记审计，
         // 记录「上游当时到底回了什么状态」，而不是笼统的 502
@@ -892,6 +962,14 @@ public class AiGatewayService {
         String circuitKey = circuitKey(module, config);
         // 响应是否为 SSE，提到 try 外供 catch 里的计费判断使用
         boolean sseResponse = false;
+        // SSE 写入门闸：心跳线程写失败时置位，catch 据此把「上游被网关关闭」
+        // 引起的 Socket closed 判成客户端断开，而不是上游故障
+        SseWriteGate streamGate = null;
+        // 容器回收 response 后，所有写入都必须停手；门闸同时负责在取消时关闭上游
+        final AsyncResponseGate asyncGate = responseGate();
+        // 响应体是否已被完整读完。读完的连接要归还连接池复用；
+        // 中途退出（客户端断开、超时、上游异常）则必须 abort，不能留在池里
+        boolean upstreamConsumed = false;
         try {
             AiIdempotencyGuard.Acquisition idempotency =
                     idempotencyGuard.acquire(userId, module, request);
@@ -942,48 +1020,56 @@ public class AiGatewayService {
                 target = target + "?" + query;
             }
 
-            conn = (HttpURLConnection) new URL(target).openConnection();
-            conn.setConnectTimeout(properties.getConnectTimeoutMs());
-            conn.setReadTimeout(properties.getReadTimeoutMs());
-            conn.setInstanceFollowRedirects(false);
-            conn.setRequestMethod(method.toUpperCase());
-            conn.setRequestProperty("Authorization", "Bearer " + config.getApiKey());
-            conn.setRequestProperty("Accept", "text/event-stream, application/json");
+            upstreamRequest = buildUpstreamRequest(method, target);
+            upstreamRequest.setConfig(RequestConfig.custom()
+                    .setConnectTimeout(properties.getConnectTimeoutMs())
+                    .setConnectionRequestTimeout(properties.getConnectTimeoutMs())
+                    .setSocketTimeout(properties.getReadTimeoutMs())
+                    // 与原来的 setInstanceFollowRedirects(false) 一致：
+                    // 重定向交给调用方，避免网关把鉴权头代传到计划外地址
+                    .setRedirectsEnabled(false)
+                    .build());
+            upstreamRequest.setHeader("Authorization", "Bearer " + config.getApiKey());
+            upstreamRequest.setHeader("Accept", "text/event-stream, application/json");
             // 全链路请求 ID 透传给上游：上游日志里出现同一个 ID，
             // 就能把「网关看到的」和「上游看到的」对齐，定位是网关问题还是上游问题
             String rid = currentRequestId.get();
             if (rid != null) {
-                conn.setRequestProperty(REQUEST_ID_HEADER, rid);
+                upstreamRequest.setHeader(REQUEST_ID_HEADER, rid);
             }
             // 让上游不要压缩，否则透传的 SSE / JSON 会变成二进制
-            conn.setRequestProperty("Accept-Encoding", "identity");
-            String contentType = request.getContentType();
-            boolean multipart = contentType != null
-                    && contentType.toLowerCase().startsWith("multipart/form-data");
-            if (contentType != null && !multipart) {
-                conn.setRequestProperty("Content-Type", contentType);
+            upstreamRequest.setHeader("Accept-Encoding", "identity");
+
+            HttpEntity requestEntity = buildRequestEntity(request, method, module, userId, presetBody);
+            if (requestEntity != null && upstreamRequest instanceof HttpEntityEnclosingRequestBase) {
+                ((HttpEntityEnclosingRequestBase) upstreamRequest).setEntity(requestEntity);
             }
 
-            if (presetBody != null) {
-                conn.setDoOutput(true);
-                conn.setFixedLengthStreamingMode(presetBody.length);
-                OutputStream bodyOut = conn.getOutputStream();
-                bodyOut.write(presetBody);
-                bodyOut.flush();
-                bodyOut.close();
-            } else {
-                relayRequestBody(request, conn, method, module, userId);
-            }
+            // 容器取消异步请求时中继线程可能正阻塞在上游读上，interrupt 唤不醒
+            // 阻塞 socket；直接 abort 才能让它立刻收尾、释放并发许可与预扣。
+            final HttpRequestBase cancelableRequest = upstreamRequest;
+            asyncGate.onCancel(new Runnable() {
+                @Override
+                public void run() {
+                    cancelableRequest.abort();
+                }
+            });
 
-            upstreamStatus = conn.getResponseCode();
-            String upstreamType = conn.getContentType();
-            upstream = upstreamStatus >= 400 ? conn.getErrorStream() : conn.getInputStream();
-            if (upstream == null) {
-                upstream = new java.io.ByteArrayInputStream(new byte[0]);
-            }
+            upstreamResponse = httpClient.execute(upstreamRequest);
+            upstreamStatus = upstreamResponse.getStatusLine().getStatusCode();
+            Header contentTypeHeader = upstreamResponse.getFirstHeader("Content-Type");
+            String upstreamType = contentTypeHeader == null ? null : contentTypeHeader.getValue();
+            HttpEntity responseEntity = upstreamResponse.getEntity();
+            upstream = responseEntity == null
+                    ? new java.io.ByteArrayInputStream(new byte[0])
+                    : responseEntity.getContent();
 
+            if (asyncGate.isCancelled()) {
+                // 上游响应回来时容器可能已经结束请求；此时 response 不能再改
+                throw new ResponseCancelledException();
+            }
             response.setStatus(upstreamStatus);
-            copyResponseHeaders(conn, response);
+            copyResponseHeaders(upstreamResponse, response);
 
             boolean sse = upstreamType != null
                     && upstreamType.toLowerCase().contains("text/event-stream");
@@ -993,34 +1079,45 @@ public class AiGatewayService {
                 response.setHeader("X-Accel-Buffering", "no");
             }
 
-            // 先下发检索来源，再透传上游回答：前端拿到的是模型真正收到的片段
-            if (sse && upstreamStatus < 400) {
-                Object kbSourcesEvent = request.getAttribute(KB_SOURCES_ATTR);
-                if (kbSourcesEvent instanceof byte[]) {
-                    OutputStream eventOut = response.getOutputStream();
-                    eventOut.write((byte[]) kbSourcesEvent);
-                    eventOut.flush();
-                }
-            }
-
             long deadline = streamDeadline(start);
-            int heartbeatMs = properties.getSseHeartbeatMs();
+            final int heartbeatMs = properties.getSseHeartbeatMs();
             if (sse) {
-                // 把 socket 读超时缩短到心跳间隔：上游长时间不吐字时，读循环会定期醒来
-                // 给浏览器写心跳，借这次写入发现「页面已经关了」。
-                // 真正的「上游彻底没声了」仍按 readTimeoutMs 判定（见 streamSse）。
-                if (heartbeatMs > 0) {
-                    int poll = Math.max(100, heartbeatMs);
-                    if (properties.getReadTimeoutMs() > 0) {
-                        poll = Math.min(poll, properties.getReadTimeoutMs());
+                // 心跳必须由独立线程写：上游发完响应头就静默时，中继线程会一直
+                // 阻塞在读上，靠它自己「读超时醒来写心跳」根本不会发生。
+                // 心跳写失败后用 request.abort() 关连接，读会立刻被唤醒并收尾。
+                final SseWriteGate gate = new SseWriteGate(
+                        response.getOutputStream(), upstreamRequest, asyncGate);
+                streamGate = gate;
+                ScheduledFuture<?> heartbeat = null;
+                try {
+                    // 先下发检索来源，再透传上游回答：前端拿到的是模型真正收到的片段
+                    if (upstreamStatus < 400) {
+                        Object kbSourcesEvent = request.getAttribute(KB_SOURCES_ATTR);
+                        if (kbSourcesEvent instanceof byte[]) {
+                            byte[] event = (byte[]) kbSourcesEvent;
+                            gate.write(event, 0, event.length);
+                        }
                     }
-                    conn.setReadTimeout(poll);
+                    if (heartbeatMs > 0) {
+                        heartbeat = heartbeatScheduler.schedule(new Runnable() {
+                            @Override
+                            public void run() {
+                                gate.heartbeatIfIdle(heartbeatMs);
+                            }
+                        }, heartbeatMs);
+                    }
+                    streamSse(upstream, gate, parser, relayed,
+                            deadline, heartbeatMs, properties.getReadTimeoutMs());
+                } finally {
+                    if (heartbeat != null) {
+                        heartbeat.cancel(false);
+                    }
+                    gate.finish();
                 }
-                streamSse(upstream, response.getOutputStream(), parser, relayed,
-                        deadline, heartbeatMs, properties.getReadTimeoutMs());
             } else {
-                relayBody(upstream, response.getOutputStream(), parser, relayed, deadline);
+                relayBody(upstream, response.getOutputStream(), parser, relayed, deadline, asyncGate);
             }
+            upstreamConsumed = true;
 
             // 上游提前断流时只会看到 EOF：HTTP 200、没有 error 帧、也没有 usage。
             // 不把这种流判成失败，用户就能靠「断开上游」白拿已经生成的内容。
@@ -1097,11 +1194,28 @@ public class AiGatewayService {
             record(userId, module, auditEndpoint, method, "failed", status,
                     null, start, e.getReason(), clientIp);
         } catch (Exception e) {
+            // 异步模式下客户端断开时，Spring 的 triggerAfterError 会对中继任务 cancel(true)，
+            // 线程带着中断标志走到这里。Druid 的 getConnection 用 lockInterruptibly，
+            // 不清标志会立刻抛 InterruptedException，审计就静默丢了（额度已扣、日志空白）。
+            boolean interrupted = Thread.interrupted();
             String message = rootMessage(e);
-            boolean aborted = isClientAbort(e);
+            // 心跳写失败说明浏览器已关；此后网关主动关闭上游，读上抛出的可能只是
+            // "Socket closed"，单看异常形状会误判成上游故障并按失败计入熔断。
+            // 门闸被容器关闭时同理：请求是被强制结束的，不是上游不健康。
+            boolean aborted = isClientAbort(e) || interrupted
+                    || e instanceof ResponseCancelledException
+                    || asyncGate.isCancelled()
+                    || (streamGate != null && streamGate.isClientGone());
             boolean timedOut = e instanceof StreamDeadlineException;
             String status = aborted ? "aborted" : "failed";
             String error = aborted ? "客户端已断开连接" : message;
+            // 上游已经吐出正文后流中断（提前关连接、响应体被截断）：与「读到 EOF」的
+            // 截断流保持同一口径，不把底层库的英文异常直接写进用户可见的审计说明。
+            // 读超时不在此列：它有自己的「AI 响应超时」文案。
+            if (!aborted && !timedOut && sseResponse && relayed.bytes > 0) {
+                error = parser.getErrorMessage() != null
+                        ? parser.getErrorMessage() : "上游流式响应提前结束";
+            }
             boolean billedByReserve = false;
 
             // 只有「连接失败 / 读超时 / 上游断流」才算上游不健康：
@@ -1147,16 +1261,21 @@ public class AiGatewayService {
             // 只有「按预扣值计费」这一条路径把 parser 写进审计：此刻它的 totalTokens 就是我们真正扣掉的额度。
             // 其他异常分支传 null——上游没给完整 usage，写进去会让看板显示的用量和实际扣掉的额度对不上。
             Integer auditStatus;
-            if (aborted) {
-                auditStatus = upstreamStatus;
-            } else if (timedOut) {
+            if (timedOut) {
                 auditStatus = HttpServletResponse.SC_GATEWAY_TIMEOUT;
+            } else if (upstreamStatus != null) {
+                // 只要收到过上游响应，就记真实状态：流中途断掉（200 之后读失败）
+                // 不是「网关没连上上游」，写 502 会让看板把上游可用性算错
+                auditStatus = upstreamStatus;
             } else {
                 auditStatus = HttpServletResponse.SC_BAD_GATEWAY;
             }
             record(userId, module, auditEndpoint, method, status,
                     auditStatus, billedByReserve ? parser : null, start, error, clientIp);
         } finally {
+            // 中断可能在 catch 与 finally 之间才到达（cancel(true) 由容器线程触发）；
+            // 结算、释放幂等键都要访问 Redis/DB，带着中断标志同样会失败。
+            Thread.interrupted();
             // 先还并发许可再结算：结算要访问 Redis，不该让下一个请求陪着等
             if (concurrencyLease != null) {
                 concurrencyLease.release();
@@ -1181,12 +1300,27 @@ public class AiGatewayService {
                     idempotencyGuard.release(idempotencyLease);
                 }
             }
+            if (!upstreamConsumed && upstreamRequest != null) {
+                // 没读完就退出：abort 直接关连接，既唤醒可能仍阻塞的读，
+                // 也避免带着半截响应体的连接被放回池里复用
+                upstreamRequest.abort();
+            }
             closeQuietly(upstream);
-            if (conn != null) {
-                conn.disconnect();
+            if (upstreamResponse != null) {
+                try {
+                    upstreamResponse.close();
+                } catch (Exception ignored) {
+                    // 连接可能已被 abort，关闭失败不影响收尾
+                }
             }
             try {
-                response.flushBuffer();
+                // 容器已结束异步请求时 response 可能已被复用，这次 flush 必须放弃
+                asyncGate.runIfActive(new AsyncResponseGate.ResponseAction() {
+                    @Override
+                    public void run() throws IOException {
+                        response.flushBuffer();
+                    }
+                });
             } catch (Exception ignored) {
                 // 客户端可能已断开
             }
@@ -1236,15 +1370,43 @@ public class AiGatewayService {
         return !sse || firstTokenAt.get() != null;
     }
 
-    private void relayRequestBody(HttpServletRequest request, HttpURLConnection conn,
-                                  String method, String module, String userId) throws Exception {
+    /** 按 HTTP 方法构造上游请求；GET/HEAD 无请求体，其余方法统一用可携带实体的请求对象 */
+    private static HttpRequestBase buildUpstreamRequest(String method, String target) {
+        String httpMethod = method == null ? "GET" : method.toUpperCase(Locale.ROOT);
+        if ("GET".equals(httpMethod)) {
+            return new HttpGet(target);
+        }
+        if ("HEAD".equals(httpMethod)) {
+            return new HttpHead(target);
+        }
+        HttpEntityEnclosingRequestBase request = new HttpEntityEnclosingRequestBase() {
+            @Override
+            public String getMethod() {
+                return httpMethod;
+            }
+        };
+        request.setURI(URI.create(target));
+        return request;
+    }
+
+    /**
+     * 构造转发给上游的请求体。
+     * <p>
+     * 三种来源：服务端已收敛的 JSON（models 直连）、Dify 对话 JSON（需注入 user）、
+     * 其余原样透传。返回 null 表示无请求体。
+     */
+    private HttpEntity buildRequestEntity(HttpServletRequest request, String method, String module,
+                                          String userId, byte[] presetBody) throws Exception {
         if ("GET".equalsIgnoreCase(method) || "HEAD".equalsIgnoreCase(method)) {
-            return;
+            return null;
+        }
+        if (presetBody != null) {
+            return new ByteArrayEntity(presetBody, ContentType.APPLICATION_JSON);
         }
         String contentType = request.getContentType();
-        if (contentType != null && contentType.toLowerCase().startsWith("multipart/form-data")) {
-            relayMultipart(request, conn, isDifyChatModule(module) ? userId : null);
-            return;
+        if (contentType != null
+                && contentType.toLowerCase(Locale.ROOT).startsWith("multipart/form-data")) {
+            return new MultipartPartsEntity(request, isDifyChatModule(module) ? userId : null);
         }
         long contentLength = request.getContentLengthLong();
         boolean chunked = "chunked".equalsIgnoreCase(request.getHeader("Transfer-Encoding"));
@@ -1253,7 +1415,8 @@ public class AiGatewayService {
         // conversation_id 隔离，存在越权读取/续写他人对话的风险。注入后以服务端登录身份
         // 强制隔离。models 直连为无状态 OpenAI 协议，不在此处理（由 readModelRequestBody 收敛）。
         if (isDifyChatModule(module)) {
-            if (contentType != null && !contentType.toLowerCase().startsWith("application/json")) {
+            if (contentType != null
+                    && !contentType.toLowerCase(Locale.ROOT).startsWith("application/json")) {
                 throw new ResponseStatusException(HttpStatus.UNSUPPORTED_MEDIA_TYPE, "对话请求体必须是 JSON");
             }
             ByteArrayOutputStream buffer = new ByteArrayOutputStream(8192);
@@ -1267,28 +1430,20 @@ public class AiGatewayService {
                     buffer.write(chunk, 0, read);
                 }
             }
-            byte[] body = injectUserField(buffer.toByteArray(), userId);
-            conn.setDoOutput(true);
-            conn.setFixedLengthStreamingMode(body.length);
-            try (OutputStream out = conn.getOutputStream()) {
-                out.write(body);
-            }
-            return;
+            return new ByteArrayEntity(injectUserField(buffer.toByteArray(), userId),
+                    ContentType.APPLICATION_JSON);
         }
         if (contentLength <= 0 && !chunked) {
-            return;
+            return null;
         }
-        // 其他模块（file 等）或非 Dify 对话模块：原样流式透传
-        conn.setDoOutput(true);
-        if (contentLength > 0 && !chunked) {
-            conn.setFixedLengthStreamingMode(contentLength);
-        } else {
-            conn.setChunkedStreamingMode(8192);
+        // 其他模块（file 等）：原样流式透传，不把整包读进内存
+        InputStreamEntity entity = contentLength > 0 && !chunked
+                ? new InputStreamEntity(request.getInputStream(), contentLength)
+                : new InputStreamEntity(request.getInputStream(), -1);
+        if (contentType != null) {
+            entity.setContentType(contentType);
         }
-        try (InputStream in = request.getInputStream();
-             OutputStream out = conn.getOutputStream()) {
-            copy(in, out);
-        }
+        return entity;
     }
 
     /** 是否需要对请求体注入 user 的 Dify 对话模块 */
@@ -1360,16 +1515,54 @@ public class AiGatewayService {
      * 此时按 Content-Length 转发原始流会因「写入字节不足」失败。
      * 因此改为从已解析的 Part 重新拼一份 multipart（新的 boundary）发给上游，
      * 语义等价且不依赖请求体是否已被读取。
+     * <p>
+     * 这里实现成流式 Entity 而不是先拼字节数组：上传文件可能有上百 MB，
+     * 拼进内存会直接把堆打满；HttpClient 边调 writeTo 边发，配合 chunked 不占内存。
      */
-    private void relayMultipart(HttpServletRequest request, HttpURLConnection conn, String userId) throws Exception {
-        String boundary = "----AiGatewayBoundary"
-                + UUID.randomUUID().toString().replace("-", "");
-        conn.setDoOutput(true);
-        conn.setChunkedStreamingMode(8192);
-        conn.setRequestProperty("Content-Type", "multipart/form-data; boundary=" + boundary);
+    private static final class MultipartPartsEntity implements HttpEntity {
+        private final Collection<Part> parts;
+        private final String boundary;
+        private final String userId;
 
-        Collection<Part> parts = request.getParts();
-        try (OutputStream out = conn.getOutputStream()) {
+        MultipartPartsEntity(HttpServletRequest request, String userId) throws Exception {
+            this.parts = request.getParts();
+            this.boundary = "----AiGatewayBoundary"
+                    + UUID.randomUUID().toString().replace("-", "");
+            this.userId = userId;
+        }
+
+        @Override
+        public boolean isRepeatable() {
+            return false;
+        }
+
+        @Override
+        public boolean isChunked() {
+            return true;
+        }
+
+        @Override
+        public long getContentLength() {
+            return -1;
+        }
+
+        @Override
+        public Header getContentType() {
+            return new BasicHeader("Content-Type", "multipart/form-data; boundary=" + boundary);
+        }
+
+        @Override
+        public Header getContentEncoding() {
+            return null;
+        }
+
+        @Override
+        public InputStream getContent() {
+            throw new UnsupportedOperationException("multipart 请求体只支持流式写出");
+        }
+
+        @Override
+        public void writeTo(OutputStream out) throws IOException {
             for (Part part : parts) {
                 if (userId != null && "user".equals(part.getName())) {
                     continue;
@@ -1398,6 +1591,17 @@ public class AiGatewayService {
                         + userId + "\r\n").getBytes(StandardCharsets.UTF_8));
             }
             out.write(("--" + boundary + "--\r\n").getBytes(StandardCharsets.UTF_8));
+            out.flush();
+        }
+
+        @Override
+        public void consumeContent() {
+            // 请求体由 writeTo 流式写出，没有可预读的内容
+        }
+
+        @Override
+        public boolean isStreaming() {
+            return true;
         }
     }
 
@@ -1426,7 +1630,126 @@ public class AiGatewayService {
         private long bytes;
     }
 
-    private void streamSse(InputStream in, OutputStream out, AiGatewayUsageParser parser,
+    /**
+     * SSE 输出门闸：中继线程与心跳线程共用，保证注释帧不会插进半个事件。
+     *
+     * <p>心跳写失败意味着浏览器已关闭，此时只置标志还不够——中继线程可能仍阻塞在
+     * 上游读上（关页面不会让上游发数据）。必须主动关闭上游连接把读唤醒。
+     * {@code clientGone} 同时供 catch 判定中断性质：这时读上抛出的通常只是
+     * "Socket closed"，不能当成上游故障计入熔断。</p>
+     */
+    private static final class SseWriteGate {
+        private final OutputStream out;
+        private final HttpRequestBase request;
+        private final AsyncResponseGate responseGate;
+        private final Object lock = new Object();
+        private long lastWriteAt = System.currentTimeMillis();
+        private boolean finished;
+        private boolean clientGone;
+        private IOException failure;
+
+        SseWriteGate(OutputStream out, HttpRequestBase request, AsyncResponseGate responseGate) {
+            this.out = out;
+            this.request = request;
+            this.responseGate = responseGate;
+        }
+
+        /** 控制帧（如检索来源事件）：不计入「已转发的模型输出」 */
+        void write(byte[] buffer, int offset, int length) throws IOException {
+            write(buffer, offset, length, null);
+        }
+
+        /** 模型输出：按片写入并逐片计入已转发字节，中途失败也能保住已送达的部分 */
+        void writeData(byte[] buffer, int offset, int length, Relayed relayed) throws IOException {
+            write(buffer, offset, length, relayed);
+        }
+
+        private void write(final byte[] buffer, final int offset, final int length,
+                           final Relayed relayed) throws IOException {
+            synchronized (lock) {
+                if (failure != null) {
+                    throw failure;
+                }
+                // 与容器回收 response 互斥：门闸关闭后一个字节都不再写
+                boolean active = responseGate.runIfActive(new AsyncResponseGate.ResponseAction() {
+                    @Override
+                    public void run() throws IOException {
+                        writeSlices(out, buffer, offset, length, relayed);
+                        out.flush();
+                    }
+                });
+                if (!active) {
+                    failure = new ResponseCancelledException();
+                    throw failure;
+                }
+                lastWriteAt = System.currentTimeMillis();
+            }
+        }
+
+        /** 距上次写过久（上游静默）才补一帧；有数据在流动时由中继写入天然完成断连探测 */
+        void heartbeatIfIdle(long intervalMs) {
+            boolean abort = false;
+            IOException error = null;
+            synchronized (lock) {
+                if (finished || clientGone) {
+                    return;
+                }
+                long now = System.currentTimeMillis();
+                if (now - lastWriteAt < intervalMs) {
+                    return;
+                }
+                try {
+                    // 容器已结束请求时心跳也不能再写；顺手关掉上游把中继线程唤醒
+                    boolean active = responseGate.runIfActive(new AsyncResponseGate.ResponseAction() {
+                        @Override
+                        public void run() throws IOException {
+                            out.write(SSE_HEARTBEAT);
+                            out.flush();
+                        }
+                    });
+                    if (!active) {
+                        failure = new ResponseCancelledException();
+                        abort = true;
+                    } else {
+                        lastWriteAt = now;
+                    }
+                } catch (IOException e) {
+                    failure = e;
+                    clientGone = true;
+                    error = e;
+                    abort = true;
+                }
+            }
+            if (abort) {
+                log.info("[AiGateway] 心跳写入失败或请求已结束，判定客户端已断开: {}",
+                        error == null ? "响应已被容器回收" : error.getMessage());
+                // 只 abort、不 close 输入流：HttpClient 的 abort 直接关连接，
+                // 阻塞中的 read 立刻抛异常；而 close 可能等待读线程释放流锁
+                if (request != null) {
+                    request.abort();
+                }
+            }
+        }
+
+        boolean isClientGone() {
+            return clientGone;
+        }
+
+        void finish() {
+            synchronized (lock) {
+                finished = true;
+            }
+        }
+    }
+
+    /** 容器已结束异步请求并回收 response：中继线程的后续写入必须全部放弃 */
+    private static final class ResponseCancelledException extends IOException {
+        ResponseCancelledException() {
+            super("异步请求已结束，响应不可再写");
+        }
+    }
+
+    private void streamSse(InputStream in, SseWriteGate out, AiGatewayUsageParser parser,
                            Relayed relayed, long deadline, int heartbeatMs, int idleTimeoutMs)
             throws IOException {
         byte[] buffer = new byte[8192];
@@ -1441,23 +1764,19 @@ public class AiGatewayService {
                 if (now >= deadline) {
                     throw new StreamDeadlineException(streamTimeoutMessage());
                 }
-                // 上游没吐字不代表浏览器还在：写一帧心跳，写失败就是页面已关，
-                // 异常会沿原有链路走到 catch，把审计记为 aborted 并关闭上游
+                // 上游静默期间「浏览器是否还在」由独立心跳线程探测（见 SseWriteGate），
+                // 这里只负责「上游自己是否已经长时间没声了」。
                 if (heartbeatMs <= 0
                         || (idleTimeoutMs > 0 && now - lastUpstreamAt >= idleTimeoutMs)) {
                     throw poll;
                 }
-                out.write(SSE_HEARTBEAT);
-                out.flush();
                 continue;
             }
             if (read == -1) {
                 break;
             }
             lastUpstreamAt = System.currentTimeMillis();
-            out.write(buffer, 0, read);
-            out.flush();
-            relayed.bytes += read;
+            out.writeData(buffer, 0, read, relayed);
             for (int i = 0; i < read; i++) {
                 byte value = buffer[i];
                 if (value == '\n') {
@@ -1493,15 +1812,24 @@ public class AiGatewayService {
      * 在 MAX_JSON_PARSE 以内的响应可精确解析，超出则对头部 best-effort（仍优于完全漏记）。
      */
     private void relayBody(InputStream in, OutputStream out, AiGatewayUsageParser parser,
-                           Relayed relayed, long deadline) throws IOException {
+                           Relayed relayed, long deadline, AsyncResponseGate responseGate)
+            throws IOException {
         ByteArrayOutputStream parseBuf = new ByteArrayOutputStream(8192);
-        byte[] chunk = new byte[8192];
+        final byte[] chunk = new byte[8192];
         boolean parseSpilled = false;
         int read;
         while ((read = in.read(chunk)) != -1) {
-            out.write(chunk, 0, read);
-            out.flush();
-            relayed.bytes += read;
+            final int count = read;
+            boolean active = responseGate.runIfActive(new AsyncResponseGate.ResponseAction() {
+                @Override
+                public void run() throws IOException {
+                    writeSlices(out, chunk, 0, count, relayed);
+                    out.flush();
+                }
+            });
+            if (!active) {
+                throw new ResponseCancelledException();
+            }
             if (!parseSpilled) {
                 if (parseBuf.size() + read > MAX_JSON_PARSE) {
                     parseSpilled = true;
@@ -1533,14 +1861,20 @@ public class AiGatewayService {
      * 已提交的 SSE 响应无法再改状态码，补一帧协议对应的 error 事件。
      * Dify 与 OpenAI 兼容端点的事件形状不同，按 module 区分。
      */
-    private void appendSseError(HttpServletResponse response, String module, String message) {
+    private void appendSseError(final HttpServletResponse response, String module, final String message) {
+        final String payload = ModelGatewayResolver.MODULE_MODELS.equals(module)
+                ? "{\"error\":{\"message\":\"" + escapeQuoted(message) + "\"}}"
+                : "{\"event\":\"error\",\"message\":\"" + escapeQuoted(message) + "\"}";
         try {
-            String payload = ModelGatewayResolver.MODULE_MODELS.equals(module)
-                    ? "{\"error\":{\"message\":\"" + escapeQuoted(message) + "\"}}"
-                    : "{\"event\":\"error\",\"message\":\"" + escapeQuoted(message) + "\"}";
-            OutputStream out = response.getOutputStream();
-            out.write(("data: " + payload + "\n\n").getBytes(StandardCharsets.UTF_8));
-            out.flush();
+            // 超时被容器结束时 response 可能已被回收，补帧必须服从门闸
+            responseGate().runIfActive(new AsyncResponseGate.ResponseAction() {
+                @Override
+                public void run() throws IOException {
+                    OutputStream out = response.getOutputStream();
+                    out.write(("data: " + payload + "\n\n").getBytes(StandardCharsets.UTF_8));
+                    out.flush();
+                }
+            });
         } catch (Exception ignored) {
             // 客户端可能已经断开，补发失败不影响审计与结算
         }
@@ -1553,18 +1887,13 @@ public class AiGatewayService {
         }
     }
 
-    private void copyResponseHeaders(HttpURLConnection conn, HttpServletResponse response) {
-        for (Map.Entry<String, java.util.List<String>> entry : conn.getHeaderFields().entrySet()) {
-            String name = entry.getKey();
-            if (name == null) {
+    private void copyResponseHeaders(CloseableHttpResponse upstream, HttpServletResponse response) {
+        for (Header header : upstream.getAllHeaders()) {
+            String name = header.getName();
+            if (name == null || SKIP_RESPONSE_HEADERS.contains(name.toLowerCase(Locale.ROOT))) {
                 continue;
             }
-            if (SKIP_RESPONSE_HEADERS.contains(name.toLowerCase())) {
-                continue;
-            }
-            for (String value : entry.getValue()) {
-                response.addHeader(name, value);
-            }
+            response.addHeader(name, header.getValue());
         }
     }
 
@@ -1674,37 +2003,48 @@ public class AiGatewayService {
         writeError(response, status, code, message, null);
     }
 
-    private void writeError(HttpServletResponse response, int status, String code, String message,
-                            Map<String, String> extraHeaders) {
+    private void writeError(final HttpServletResponse response, final int status, final String code,
+                            final String message, final Map<String, String> extraHeaders) {
         try {
-            if (response.isCommitted()) {
-                return;
-            }
-            response.reset();
-            response.setStatus(status);
-            response.setCharacterEncoding("UTF-8");
-            response.setContentType("application/json;charset=UTF-8");
-            // reset 会清掉之前设置的头，所以附加头必须在 reset 之后写
-            if (extraHeaders != null) {
-                for (Map.Entry<String, String> header : extraHeaders.entrySet()) {
-                    response.setHeader(header.getKey(), header.getValue());
+            // 容器结束异步请求后 response 可能已被复用；门闸关闭则一个字都不写
+            responseGate().runIfActive(new AsyncResponseGate.ResponseAction() {
+                @Override
+                public void run() throws IOException {
+                    writeErrorBody(response, status, code, message, extraHeaders);
                 }
-            }
-            // 错误响应也带上请求 ID：用户报障时把这个 ID 给管理员，
-            // 管理员能直接捞出完整链路，不用靠「大概几点」猜
-            String rid = currentRequestId.get();
-            if (rid != null) {
-                response.setHeader(REQUEST_ID_HEADER, rid);
-            }
-            Object body = Boolean.TRUE.equals(openAiErrorShape.get())
-                    ? openAiErrorBody(code, message, status, rid)
-                    : platformErrorBody(code, message, status, rid);
-            response.getOutputStream().write(
-                    MAPPER.writeValueAsBytes(body));
-            response.flushBuffer();
+            });
         } catch (Exception e) {
             log.warn("[AiGateway] 写错误响应失败: {}", e.getMessage());
         }
+    }
+
+    private void writeErrorBody(HttpServletResponse response, int status, String code, String message,
+                                Map<String, String> extraHeaders) throws IOException {
+        if (response.isCommitted()) {
+            return;
+        }
+        response.reset();
+        response.setStatus(status);
+        response.setCharacterEncoding("UTF-8");
+        response.setContentType("application/json;charset=UTF-8");
+        // reset 会清掉之前设置的头，所以附加头必须在 reset 之后写
+        if (extraHeaders != null) {
+            for (Map.Entry<String, String> header : extraHeaders.entrySet()) {
+                response.setHeader(header.getKey(), header.getValue());
+            }
+        }
+        // 错误响应也带上请求 ID：用户报障时把这个 ID 给管理员，
+        // 管理员能直接捞出完整链路，不用靠「大概几点」猜
+        String rid = currentRequestId.get();
+        if (rid != null) {
+            response.setHeader(REQUEST_ID_HEADER, rid);
+        }
+        Object body = Boolean.TRUE.equals(openAiErrorShape.get())
+                ? openAiErrorBody(code, message, status, rid)
+                : platformErrorBody(code, message, status, rid);
+        response.getOutputStream().write(
+                MAPPER.writeValueAsBytes(body));
+        response.flushBuffer();
     }
 
     /** 站内网关的错误信封：前端 axios 按 code 分支 */
@@ -1777,6 +2117,20 @@ public class AiGatewayService {
             out.write(buffer, 0, read);
         }
         out.flush();
+    }
+
+    /** 分片写出并逐片累计；relayed 为 null 表示这部分只是控制帧，不算模型输出 */
+    private static void writeSlices(OutputStream out, byte[] buffer, int offset, int length,
+                                    Relayed relayed) throws IOException {
+        int written = 0;
+        while (written < length) {
+            int slice = Math.min(length - written, WRITE_SLICE);
+            out.write(buffer, offset + written, slice);
+            written += slice;
+            if (relayed != null) {
+                relayed.bytes += slice;
+            }
+        }
     }
 
     private static String truncate(String value, int max) {

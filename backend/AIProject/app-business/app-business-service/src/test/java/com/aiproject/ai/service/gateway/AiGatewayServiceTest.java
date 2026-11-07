@@ -8,6 +8,7 @@ import com.aiproject.ai.service.holde.KbRagHolder;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.heneng.hnsp.common.croe.model.Result;
+import org.apache.http.impl.client.HttpClients;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -37,6 +38,7 @@ import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.atLeastOnce;
+import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -47,6 +49,7 @@ class AiGatewayServiceTest {
     private AiGatewayService service;
     private AiUpstreamStub upstream;
     private GatewayCircuitBreaker circuitBreaker;
+    private AiGatewayHeartbeatScheduler heartbeatScheduler;
 
     @BeforeEach
     void setUp() throws Exception {
@@ -64,6 +67,9 @@ class AiGatewayServiceTest {
         circuitBreaker = new GatewayCircuitBreaker();
         circuitBreaker.properties = service.properties;
         service.circuitBreaker = circuitBreaker;
+        heartbeatScheduler = new AiGatewayHeartbeatScheduler();
+        service.heartbeatScheduler = heartbeatScheduler;
+        service.httpClient = HttpClients.custom().disableAutomaticRetries().build();
         when(service.idempotencyGuard.acquire(anyString(), anyString(), any()))
                 .thenReturn(AiIdempotencyGuard.Acquisition.none());
         // 默认不预扣（等同配额不限）；需要验证预扣行为的用例自行覆盖
@@ -72,7 +78,9 @@ class AiGatewayServiceTest {
     }
 
     @AfterEach
-    void tearDown() {
+    void tearDown() throws Exception {
+        heartbeatScheduler.shutdown();
+        service.httpClient.close();
         upstream.close();
     }
 
@@ -591,7 +599,9 @@ class AiGatewayServiceTest {
         service.proxy("chat", "u1", request, new AbortingResponse());
 
         long elapsed = System.currentTimeMillis() - started;
-        assertTrue(elapsed < 2000,
+        // 上游要 1.5s 后才吐第一帧；若心跳仍依赖「读超时醒来后再写」，这里会等满
+        // 那一帧才发现断开。一个心跳周期（100ms）左右收尾才证明独立心跳线程生效。
+        assertTrue(elapsed < 1000,
                 "静默上游下的客户端断连应在一个心跳周期左右被发现，实际 " + elapsed + "ms");
         verify(service.guard).settle(reservation, 0L);
 
@@ -599,6 +609,33 @@ class AiGatewayServiceTest {
         verify(service.callLogHolder).record(captor.capture());
         assertEquals("aborted", captor.getValue().getStatus());
         assertEquals("客户端已断开连接", captor.getValue().getErrorMessage());
+    }
+
+    /**
+     * 上游静默期间必须持续给浏览器写注释帧。心跳若仍挂在读循环的
+     * {@link java.net.SocketTimeoutException} 上，这里一帧都不会有：
+     * HttpURLConnection 建连后改读超时不会影响已建立的 socket。
+     */
+    @Test
+    void silentUpstreamStillReceivesHeartbeatFrames() throws Exception {
+        upstream.silentSse = true;
+        service.properties.setSseHeartbeatMs(100);
+        service.properties.setReadTimeoutMs(5000);
+        when(service.configResolver.isSupported("chat")).thenReturn(true);
+        when(service.configResolver.resolve("chat")).thenReturn(
+                new AiGatewayConfigResolver.ResolvedConfig(upstream.baseUrl(), "test-key"));
+        when(service.guard.check("u1", "chat")).thenReturn(AiGatewayGuard.Decision.allow());
+
+        MockHttpServletRequest request = request("POST", "chat", "chat-messages");
+        request.setContentType("application/json");
+        request.setContent("{\"query\":\"hi\",\"user\":\"u1\"}".getBytes(StandardCharsets.UTF_8));
+
+        MockHttpServletResponse response = new MockHttpServletResponse();
+        service.proxy("chat", "u1", request, response);
+
+        String body = response.getContentAsString(StandardCharsets.UTF_8);
+        assertTrue(body.contains(": ping"), "静默期间应持续下发心跳注释帧: " + body);
+        assertTrue(body.contains("data: {}"), "上游恢复吐字后应继续正常透传: " + body);
     }
 
     /** 直连模型：请求体不合法时不预扣，避免用户为一次根本没发出去的请求占额度 */
@@ -772,6 +809,43 @@ class AiGatewayServiceTest {
     }
 
     /**
+     * 异步模式下客户端断开时，Spring 会对中继任务 {@code cancel(true)}，
+     * 线程带着中断标志进入收尾。Druid 取连接走 {@code lockInterruptibly}，
+     * 不清除标志会立刻抛 {@link InterruptedException}——额度按预扣值扣掉了，
+     * 审计却一行都没有，看板上这次调用凭空消失。
+     */
+    @Test
+    void asyncCancelInterruptDoesNotLoseAuditRecord() throws Exception {
+        upstream.slowSse = true;
+        when(service.configResolver.isSupported("chat")).thenReturn(true);
+        when(service.configResolver.resolve("chat")).thenReturn(
+                new AiGatewayConfigResolver.ResolvedConfig(upstream.baseUrl(), "test-key"));
+        when(service.guard.check("u1", "chat")).thenReturn(AiGatewayGuard.Decision.allow());
+        AiGatewayGuard.Reservation reservation =
+                AiGatewayGuard.Reservation.active("u1", null, 1500L);
+        when(service.guard.reserve("u1", "chat")).thenReturn(reservation);
+        doAnswer(invocation -> {
+            assertFalse(Thread.currentThread().isInterrupted(),
+                    "写审计前必须清除异步取消留下的中断标志，否则取不到数据库连接");
+            return null;
+        }).when(service.callLogHolder).record(any());
+
+        MockHttpServletRequest request = request("POST", "chat", "chat-messages");
+        request.setContentType("application/json");
+        request.setContent("{\"query\":\"hi\",\"user\":\"u1\"}".getBytes(StandardCharsets.UTF_8));
+
+        service.proxy("chat", "u1", request, new InterruptingAbortResponse(256));
+
+        assertFalse(Thread.currentThread().isInterrupted(), "收尾后不应把中断标志留给线程池线程");
+        verify(service.guard).settle(reservation, 1500L);
+
+        ArgumentCaptor<AiCallLogBean> captor = ArgumentCaptor.forClass(AiCallLogBean.class);
+        verify(service.callLogHolder).record(captor.capture());
+        assertEquals("aborted", captor.getValue().getStatus());
+        assertEquals(Long.valueOf(1500L), captor.getValue().getTotalTokens());
+    }
+
+    /**
      * 非客户端原因的中途失败（上游连接重置、读超时、容器网络抖动）同样不能全额退款：
      * 只要上游已经受理并送出过正文，模型就真实生成过内容。
      * 这里用「浏览器端写入失败但不带 connection reset 语义」模拟，
@@ -849,6 +923,52 @@ class AiGatewayServiceTest {
         }
     }
 
+    /**
+     * 模拟 Spring 在客户端断开时对中继任务 cancel(true)：先送出部分正文，
+     * 随后写入失败的同时线程被中断。真实链路里这两个动作来自容器线程与本次写入，
+     * 先后顺序不固定，测试按最坏顺序（先中断、再写失败）构造。
+     */
+    private static class InterruptingAbortResponse extends MockHttpServletResponse {
+        private final long allowBytes;
+        private long written;
+        private boolean committed;
+
+        InterruptingAbortResponse(long allowBytes) {
+            this.allowBytes = allowBytes;
+        }
+
+        private final ServletOutputStream stream = new ServletOutputStream() {
+            @Override
+            public boolean isReady() {
+                return true;
+            }
+
+            @Override
+            public void setWriteListener(WriteListener listener) {
+            }
+
+            @Override
+            public void write(int b) throws IOException {
+                committed = true;
+                if (written >= allowBytes) {
+                    Thread.currentThread().interrupt();
+                    throw new IOException("你的主机中的软件中止了一个已建立的连接。");
+                }
+                written++;
+            }
+        };
+
+        @Override
+        public ServletOutputStream getOutputStream() {
+            return stream;
+        }
+
+        @Override
+        public boolean isCommitted() {
+            return committed;
+        }
+    }
+
     /** 响应体第一次写入就抛连接重置，等价于浏览器已经关掉连接 */
     private static class AbortingResponse extends MockHttpServletResponse {
         private boolean committed;
@@ -878,6 +998,33 @@ class AiGatewayServiceTest {
         public boolean isCommitted() {
             return committed;
         }
+    }
+
+    @Test
+    void cancelledResponseGateSuppressesFurtherWrites() {
+        service.properties.setEnabled(false);
+        MockHttpServletRequest request = chatRequest();
+        MockHttpServletResponse response = new MockHttpServletResponse();
+        AsyncResponseGate gate = AsyncResponseGate.create();
+        gate.cancel();
+
+        service.proxy("chat", "u1", request, response, gate);
+
+        // 容器已经回收响应：状态码和正文都不能再被中继线程改动
+        assertEquals(200, response.getStatus());
+        assertEquals(0, response.getContentAsByteArray().length);
+    }
+
+    @Test
+    void activeResponseGateStillWritesErrors() {
+        service.properties.setEnabled(false);
+        MockHttpServletRequest request = chatRequest();
+        MockHttpServletResponse response = new MockHttpServletResponse();
+
+        service.proxy("chat", "u1", request, response, AsyncResponseGate.create());
+
+        assertEquals(503, response.getStatus());
+        assertTrue(response.getContentAsByteArray().length > 0);
     }
 
     private KbSearchItem item(String content, double score) {

@@ -115,6 +115,13 @@ public class LoginAuthInterceptor implements HandlerInterceptor {
     @Override
     public boolean preHandle(HttpServletRequest request, HttpServletResponse response, Object handler)
             throws IOException {
+        // 异步派发是「请求已通过鉴权、转发结束后回容器收尾」的那一趟，
+        // 网关长流会走这里。重新鉴权没有意义：此时响应往往已经提交，
+        // 再拒绝只会在日志里留下一条 20102 并试图覆盖已发送的内容。
+        if (request.getDispatcherType() == javax.servlet.DispatcherType.ASYNC) {
+            return true;
+        }
+
         // CORS 预检不带自定义头，也不该被鉴权拦下
         if ("OPTIONS".equalsIgnoreCase(request.getMethod())) {
             return true;
