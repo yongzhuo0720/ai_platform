@@ -125,12 +125,14 @@ if (-not $FrontendOnly) {
         if ($zombies) { Start-Sleep -Seconds 2 }
 
         if (-not $SkipBuild -or -not (Test-Path $jar)) {
-            Write-Host "  打包中（离线依赖，首次较慢）..."
+            Write-Host "  打包中（clean + 离线依赖，首次较慢）..."
             $repo = (Resolve-Path (Join-Path $root "hd_redis\ai-maven\pro")).Path
             $settings = (Resolve-Path (Join-Path $root "hd_redis\ai-maven\conf\settings.xml")).Path
             Push-Location (Join-Path $root "backend\AIProject")
             try {
-                mvn -s $settings "-Dmaven.repo.local=$repo" -o package -DskipTests
+                # 必须 clean：maven-jar-plugin 默认不强制重建，源码时间戳稍有异常时
+                # package 会打出「目标 class 是旧的、外层 jar 还是上一天的」的假成功。
+                mvn -s $settings "-Dmaven.repo.local=$repo" -o clean package -DskipTests
                 if ($LASTEXITCODE -ne 0) { throw "打包失败" }
             } finally {
                 Pop-Location

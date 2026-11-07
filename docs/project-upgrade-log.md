@@ -714,3 +714,74 @@ Phase 5 要求补齐备份与恢复，因此本轮针对真实 PostgreSQL 18.6 �
 - 恢复后的库只做了数据与架构比对，没有启动一个指向该库的后端实例做功能冒烟；
 - `-DumpOut` 留档的文件包含真实业务数据，仓库已忽略 `.tmp/`，但仍需控制
   文件权限与保留周期。
+
+## 2026-11-07（十四）：恢复库启动冒烟、健康检查修复与序列缺陷
+
+### 背景
+
+上一轮恢复演练只比对了行数、架构对象和内容哈希，没有证明「应用真能跑在
+恢复库上」。本轮补上应用启动冒烟，并在过程中发现两个真实缺陷。
+
+### 实现
+
+1. **恢复库启动冒烟（`-BootSmoke`）**：数据比对通过后，用恢复库启动一个
+   临时后端实例（独立端口 8599、独立 Redis db 12），轮询 `/ai/actuator/health`
+   到 `UP`，再调用免登录的 `POST /ai/api/chatShare/get` 读取预置记录，
+   同时校验 `userId`/`lastuser` 已被抹除。结束后停止进程、删除预置数据、
+   销毁演练库；失败时保留日志目录便于排查。
+2. **修复 `/actuator/health` 空指针**：HNSP 的
+   `MultiRequestBodyArgumentResolver.supportsParameter` 会接管 actuator 的
+   `@RequestBody(required=false)` 参数，`resolveArgument` 里直接调用
+   `request.getContentType().startsWith(...)`；GET 健康检查没有 Content-Type，
+   于是抛 NPE，接口返回 HTTP 200 + `resp_code=-1` 而不是 `{"status":"UP"}`。
+   新增 `ActuatorContentTypeFilterConfig`，仅对 `/actuator/*` 在缺失
+   Content-Type 时补 `application/json`，不改变其他请求的语义；配套 3 个单测。
+3. **修复真实数据缺陷：`chatsharebean_iid_seq` 落后于 `max(iid)`**。
+   冒烟写入预置分享时报 `duplicate key value violates unique constraint
+   "chatsharebean_pkey"`。根因是历史数据迁移显式写了 iid，但没有同步序列：
+   源库 `last_value=1`，表内 `max(iid)=7`，任何新建分享都会主键冲突。
+   已执行 `setval('chatsharebean_iid_seq', greatest(last_value, max(iid)), true)`，
+   校准后 `last_value=7`，下一次取值 8。全库仅此一张表使用 `iid` 主键。
+4. **演练脚本加固**：
+   - `Invoke-Psql` 增加 `-v ON_ERROR_STOP=1`。psql 默认遇到 SQL 错误仍退出 0，
+     之前的写入失败会被静默吞掉，只剩一句「分享不存在」，容易误判成读接口问题；
+   - 写入预置数据后立即 `select count(*)` 复核，失败时明确报「预置数据写入失败」；
+   - 新增「序列与主键对齐」检查：扫描所有带 `iid` 列且有同名序列的表，
+     发现 `last_value < max(iid)` 直接判失败，避免同类问题只在写接口才暴露。
+5. **修复 Maven 增量构建的假成功**：`scripts/start.ps1` 原来执行
+   `mvn package -DskipTests`，在源码时间戳异常时会出现「Nothing to compile」，
+   外层 jar 仍是上一次构建的产物（实测 jar 17:00、源码 17:07，嵌套 class
+   哈希与 target 不一致）。改为 `mvn clean package -DskipTests`。
+6. **PowerShell 5.1 踩坑记录**（均已写进脚本注释）：
+   - `docker exec -e PGPASSWORD $var` 不是「设置环境变量」，`-e` 只接受
+     `VAR` 或 `VAR=value` 单个参数；`$var` 会被当成容器名。正确做法是先
+     `$env:PGPASSWORD`，再 `-e PGPASSWORD` 让 docker 继承；
+   - JDBC URL 里的 `$DrillDatabase?currentSchema` 会被 PowerShell 当成
+     「变量名含 ?」，必须写成 `${DrillDatabase}?currentSchema`；
+   - actuator 响应没有 charset 时，`Invoke-WebRequest` 的 `Content` 是
+     `byte[]`，`ConvertFrom-Json` 解析不出字段；改用 `Invoke-RestMethod`。
+
+### 验证（真实 PostgreSQL，非 mock）
+
+| 项目 | 实测 |
+|---|---|
+| 备份 / 恢复 | 552800 字节；`--exit-on-error` 恢复成功 |
+| 逐表行数 | 37 张表 / 13369 行一致 |
+| 架构对象 | 索引 82、约束 74、序列 39，一致 |
+| 关键表内容哈希 | 9 张表 MD5 一致 |
+| 序列审计 | 通过（修复前 `chatsharebean` 序列=1、最大 iid=7；修复后 7/7） |
+| 启动冒烟 | health=UP 30.5 秒（JDK 8、独立端口 8599、Redis db 12） |
+| 读链路 | 免登录分享接口读到预置标题，作者字段为 null |
+| 清理 | 冒烟进程已停、演练库已删、容器内 dump 已删、临时日志已删 |
+| 后端回归 | `scripts/verify.ps1 -SkipE2E`：697 项 / 63 份报告，失败+错误+跳过 0 |
+| 前端门禁 | 类型检查、图标、色值棘轮、单测 26/26、组件测试 30/30、流式、Markdown/XSS、生产构建、体积预算、密钥扫描、RAG 口径自检全部通过 |
+
+### 已知限制与风险
+
+- 冒烟只覆盖「启动 + 免登录读一条分享」，没有覆盖写入、鉴权、网关调用等
+  全链路；启动耗时 30 秒左右，不适合塞进每次提交的默认门禁；
+- 序列审计按 `<表名>_iid_seq` 命名约定匹配，若将来出现自定义序列名会漏检；
+- 源库序列修复是一次性数据操作，不在代码里自动执行；从旧备份恢复的环境
+  仍需手工校准，建议恢复后先跑演练脚本的序列检查；
+- 冒烟实例与主实例共用同一个 PostgreSQL 实例，只隔离了端口与 Redis db；
+- `mvn clean package` 每次启动都会全量编译，构建时间比增量构建长。
