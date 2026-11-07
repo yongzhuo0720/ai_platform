@@ -47,7 +47,8 @@ public class AiGatewayProperties {
      * 文件上传或知识库检索一起拖死。超限直接 429，不排队——
      * 排队只会把 Web 线程也一起占满，连登录接口都受影响。
      * <p>
-     * 这是「单实例」上限；多实例部署时实际并发 = 本值 × 实例数。
+     * 该上限通过 Redis 租约在实例间共享，多实例部署时是全局并发上限；
+     * Redis 不可用时退回单实例信号量，保证本机线程仍受保护。
      */
     private int maxConcurrentPerModule = 32;
 

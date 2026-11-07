@@ -3,6 +3,7 @@ package com.aiproject.ai.service.holde;
 import com.aiproject.ai.permission.holde.MyUserBaseDbHolder;
 import com.aiproject.ai.service.bean.ModelsConfigBean;
 import com.aiproject.ai.service.gateway.ModelConfigChangedEvent;
+import com.aiproject.ai.service.gateway.ModelConfigVersionWatcher;
 import com.aiproject.ai.service.mapper.ModelsConfigBeanMapper;
 import com.heneng.hnsp.common.croe.model.Result;
 import org.junit.jupiter.api.Test;
@@ -43,6 +44,9 @@ class ModelsConfigBeanHolderTest {
     @Mock
     ApplicationEventPublisher eventPublisher;
 
+    @Mock
+    ModelConfigVersionWatcher modelConfigVersionWatcher;
+
     @InjectMocks
     ModelsConfigBeanHolder holder;
 
@@ -61,6 +65,7 @@ class ModelsConfigBeanHolderTest {
         Result<Boolean> result = holder.install(ADMIN, data());
 
         assertTrue(Boolean.TRUE.equals(result.getDatas()));
+        verify(modelConfigVersionWatcher).bumpVersion();
         verify(eventPublisher).publishEvent(any(ModelConfigChangedEvent.class));
     }
 
@@ -73,6 +78,7 @@ class ModelsConfigBeanHolderTest {
         Result<Boolean> result = holder.update(ADMIN, data(), new ModelsConfigBean());
 
         assertTrue(Boolean.TRUE.equals(result.getDatas()));
+        verify(modelConfigVersionWatcher).bumpVersion();
         verify(eventPublisher).publishEvent(any(ModelConfigChangedEvent.class));
     }
 
@@ -84,6 +90,7 @@ class ModelsConfigBeanHolderTest {
         Result<Boolean> result = holder.delete(ADMIN, data());
 
         assertTrue(Boolean.TRUE.equals(result.getDatas()));
+        verify(modelConfigVersionWatcher).bumpVersion();
         verify(eventPublisher).publishEvent(any(ModelConfigChangedEvent.class));
     }
 
@@ -96,6 +103,7 @@ class ModelsConfigBeanHolderTest {
 
         assertFalse(Boolean.TRUE.equals(result.getDatas()));
         verifyNoInteractions(modelsConfigBeanMapper);
+        verifyNoInteractions(modelConfigVersionWatcher);
         verifyNoInteractions(eventPublisher);
     }
 
@@ -106,7 +114,19 @@ class ModelsConfigBeanHolderTest {
         when(modelsConfigBeanMapper.install(any(ModelsConfigBean.class))).thenReturn(0);
 
         assertFalse(Boolean.TRUE.equals(holder.install(ADMIN, data()).getDatas()));
+        verify(modelConfigVersionWatcher, never()).bumpVersion();
         verify(eventPublisher, never()).publishEvent(any(ModelConfigChangedEvent.class));
+    }
+
+    /** 版本号递增失败只影响其他实例的生效速度，不能把已经落库的写操作报成失败 */
+    @Test
+    void versionBumpFailure_shouldNotFailSuccessfulWrite() {
+        when(myUserBaseDbHolder.isAdmin(ADMIN)).thenReturn(true);
+        when(modelsConfigBeanMapper.install(any(ModelsConfigBean.class))).thenReturn(1);
+        doThrow(new RuntimeException("redis down")).when(modelConfigVersionWatcher).bumpVersion();
+
+        assertTrue(Boolean.TRUE.equals(holder.install(ADMIN, data()).getDatas()));
+        verify(eventPublisher).publishEvent(any(ModelConfigChangedEvent.class));
     }
 
     /** 广播失败不能把已经成功的写操作报成失败：监听方只是刷新缓存，属于附属动作 */

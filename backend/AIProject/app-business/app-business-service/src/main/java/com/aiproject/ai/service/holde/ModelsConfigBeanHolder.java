@@ -13,6 +13,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.beans.factory.annotation.Autowired;
 import com.aiproject.ai.service.bean.ModelsConfigBean;
 import com.aiproject.ai.service.gateway.ModelConfigChangedEvent;
+import com.aiproject.ai.service.gateway.ModelConfigVersionWatcher;
 import com.aiproject.ai.service.mapper.ModelsConfigBeanMapper;
 
 
@@ -37,6 +38,10 @@ public  class ModelsConfigBeanHolder  {
     @Autowired
     ApplicationEventPublisher eventPublisher;
 
+    /** 跨实例同步：写成功后先递增 Redis 版本号，其他实例轮询到变化再失效本地快照 */
+    @Autowired
+    ModelConfigVersionWatcher modelConfigVersionWatcher;
+
     /**
      * 模型配置属平台级配置（前端仅在 Admin/ModelsConfigView 维护），写操作限超管。
      */
@@ -51,10 +56,21 @@ public  class ModelsConfigBeanHolder  {
     }
 
     /**
-     * 通知缓存方刷新（RerankResolver / ModelPriceResolver 有 5 分钟 TTL 缓存）。
-     * 写库已经成功，广播失败不能把「成功」报成「失败」，只记日志。
+     * 通知缓存方刷新（ModelGatewayResolver / EmbeddingClient / RerankResolver /
+     * ModelPriceResolver 都有 5 分钟 TTL 的本地快照）。
+     *
+     * <p>先递增 Redis 版本号再发本地事件：本实例立即失效，其他实例由
+     * {@link ModelConfigVersionWatcher} 轮询到版本变化后失效。写库已经成功，
+     * 通知只是附属动作，任何一侧失败都不能把「成功」报成「失败」，只记日志。</p>
      */
     private void publishConfigChanged() {
+        if (modelConfigVersionWatcher != null) {
+            try {
+                modelConfigVersionWatcher.bumpVersion();
+            } catch (Exception e) {
+                log.warn("[ModelsConfig] 配置版本号递增失败: {}", e.getMessage());
+            }
+        }
         try {
             eventPublisher.publishEvent(new ModelConfigChangedEvent());
         } catch (Exception e) {
