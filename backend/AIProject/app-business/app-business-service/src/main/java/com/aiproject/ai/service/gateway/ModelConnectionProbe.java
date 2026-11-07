@@ -21,8 +21,9 @@ import java.nio.charset.StandardCharsets;
 /**
  * 直连模型「连接测试」。
  *
- * <p>只做只读探测：先 GET {@code /models}（不消耗 token），
- * 服务不支持该端点时再退化为一次 {@code max_tokens=1} 的最小对话请求。
+ * <p>只做只读探测：对话模型先 GET {@code /models}（不消耗 token），
+ * 服务不支持该端点时再退化为一次 {@code max_tokens=1} 的最小对话请求；
+ * 向量模型探测 {@code /embeddings}；重排模型探测 {@code /rerank}。
  * 不经过网关主链路，因此不会写用量审计、不影响配额与限流。</p>
  *
  * <p>为什么只接受 iid、不接受浏览器提交的 baseUrl / apiKey：
@@ -36,6 +37,7 @@ public class ModelConnectionProbe {
     private static final int PROBE_TIMEOUT_MS = 5000;
     private static final int MAX_BODY_BYTES = 1024 * 1024;
     private static final String PROTOCOL_OPENAI = "openai";
+    private static final String PROTOCOL_RERANK = "rerank";
 
     @Autowired
     ModelsConfigBeanHolder modelsConfigBeanHolder;
@@ -59,10 +61,65 @@ public class ModelConnectionProbe {
         if (config == null) {
             return Result.failed(null, "模型配置不存在，请刷新后重试");
         }
+        if (PROTOCOL_RERANK.equalsIgnoreCase(config.getProtocol())) {
+            return testRerank(uid, config);
+        }
         if (!PROTOCOL_OPENAI.equalsIgnoreCase(config.getProtocol())) {
-            return Result.failed(null, "该配置未启用 OpenAI 兼容直连，无需测试");
+            return Result.failed(null, "该配置类型暂不支持连接测试");
         }
 
+        String baseUrl = trimUrl(config.getBaseUrl());
+        String apiKey = trimToNull(config.getApiKey());
+        String upstreamModel = trimToNull(config.getUpstreamModel());
+        String embedModel = trimToNull(config.getEmbedModel());
+        // 向量模型没有 chat 模型名，配置的是 embedModel；用向量接口探测才有意义
+        if (upstreamModel == null && embedModel != null) {
+            return testEmbedding(uid, config, baseUrl, apiKey, embedModel);
+        }
+        if (baseUrl == null || apiKey == null || upstreamModel == null) {
+            return Result.failed(null, "服务地址、服务密钥、上游模型名均配置后才能测试");
+        }
+        if (!baseUrl.startsWith("http://") && !baseUrl.startsWith("https://")) {
+            return Result.failed(null, "服务地址必须以 http:// 或 https:// 开头");
+        }
+
+        ModelConnectionTestResult result = probe(baseUrl, apiKey, upstreamModel);
+        return finish(uid, config, upstreamModel, result);
+    }
+
+    private Result<ModelConnectionTestResult> testEmbedding(String uid, ModelsConfigBean config,
+                                                            String baseUrl, String apiKey,
+                                                            String embedModel) {
+        if (baseUrl == null || apiKey == null) {
+            return Result.failed(null, "服务地址与服务密钥配置后才能测试");
+        }
+        if (!baseUrl.startsWith("http://") && !baseUrl.startsWith("https://")) {
+            return Result.failed(null, "服务地址必须以 http:// 或 https:// 开头");
+        }
+        long startedAt = System.currentTimeMillis();
+        String body;
+        try {
+            body = mapper.writeValueAsString(mapper.createObjectNode()
+                    .put("model", embedModel)
+                    .put("input", "ping"));
+        } catch (Exception e) {
+            return Result.failed(null, "连接测试请求构造失败");
+        }
+        HttpReply reply = request("POST", baseUrl + "/embeddings", apiKey, body);
+        if (reply.status == 200) {
+            if (!embeddingReturned(reply.body)) {
+                return finish(uid, config, embedModel, result(ModelConnectionTestResult.STATUS_HTTP_ERROR,
+                        200, false, "向量接口返回的内容不可识别，请检查服务地址是否为 OpenAI 兼容接口",
+                        startedAt));
+            }
+            return finish(uid, config, embedModel, result(ModelConnectionTestResult.STATUS_OK,
+                    200, true, "连接成功（通过向量接口验证），模型「" + embedModel + "」可用", startedAt));
+        }
+        return finish(uid, config, embedModel,
+                postFailure(reply, "向量", startedAt));
+    }
+
+    private Result<ModelConnectionTestResult> testRerank(String uid, ModelsConfigBean config) {
         String baseUrl = trimUrl(config.getBaseUrl());
         String apiKey = trimToNull(config.getApiKey());
         String upstreamModel = trimToNull(config.getUpstreamModel());
@@ -72,16 +129,89 @@ public class ModelConnectionProbe {
         if (!baseUrl.startsWith("http://") && !baseUrl.startsWith("https://")) {
             return Result.failed(null, "服务地址必须以 http:// 或 https:// 开头");
         }
+        long startedAt = System.currentTimeMillis();
+        String body;
+        try {
+            com.fasterxml.jackson.databind.node.ObjectNode payload = mapper.createObjectNode()
+                    .put("model", upstreamModel)
+                    .put("query", "ping");
+            payload.set("documents", mapper.createArrayNode().add("ping"));
+            payload.put("top_n", 1);
+            body = mapper.writeValueAsString(payload);
+        } catch (Exception e) {
+            return Result.failed(null, "连接测试请求构造失败");
+        }
+        HttpReply reply = request("POST", baseUrl + "/rerank", apiKey, body);
+        if (reply.status == 200) {
+            if (!rerankReturned(reply.body)) {
+                return finish(uid, config, upstreamModel, result(ModelConnectionTestResult.STATUS_HTTP_ERROR,
+                        200, false, "重排接口返回的内容不可识别，请检查服务地址与上游模型名", startedAt));
+            }
+            return finish(uid, config, upstreamModel, result(ModelConnectionTestResult.STATUS_OK,
+                    200, true, "连接成功（通过重排接口验证），模型「" + upstreamModel + "」可用", startedAt));
+        }
+        return finish(uid, config, upstreamModel, postFailure(reply, "重排", startedAt));
+    }
 
-        ModelConnectionTestResult result = probe(baseUrl, apiKey, upstreamModel);
+    private Result<ModelConnectionTestResult> finish(String uid, ModelsConfigBean config,
+                                                     String probedModel,
+                                                     ModelConnectionTestResult result) {
         result.setIid(config.getIid());
         result.setModelName(config.getName());
-        result.setUpstreamModel(upstreamModel);
+        result.setUpstreamModel(probedModel);
         result.setCheckedAt(System.currentTimeMillis());
         log.info("[ModelProbe] uid={}, iid={}, model={}, status={}, http={}, latency={}ms",
-                uid, config.getIid(), upstreamModel, result.getStatus(),
+                uid, config.getIid(), probedModel, result.getStatus(),
                 result.getHttpStatus(), result.getLatencyMs());
         return Result.succeed(result, result.getMessage());
+    }
+
+    /** 非 200 响应统一分类，避免对话 / 向量 / 重排三条路径的提示口径漂移 */
+    private ModelConnectionTestResult postFailure(HttpReply reply, String label, long startedAt) {
+        if (reply.networkError) {
+            return result(ModelConnectionTestResult.STATUS_UNREACHABLE, null, false,
+                    "无法连接到模型服务，请检查服务地址与网络", startedAt);
+        }
+        if (reply.status == 401 || reply.status == 403) {
+            return result(ModelConnectionTestResult.STATUS_AUTH_FAILED, reply.status, false,
+                    "鉴权失败（HTTP " + reply.status + "），请检查服务密钥", startedAt);
+        }
+        if (reply.status == 429) {
+            return result(ModelConnectionTestResult.STATUS_RATE_LIMITED, reply.status, false,
+                    "服务可达，但当前被限流（HTTP 429），请稍后重试", startedAt);
+        }
+        if (reply.status == 400 || reply.status == 404) {
+            return result(ModelConnectionTestResult.STATUS_HTTP_ERROR, reply.status, false,
+                    "服务可达，但" + label + "请求被拒绝（HTTP " + reply.status + "），请核对上游模型名",
+                    startedAt);
+        }
+        return result(ModelConnectionTestResult.STATUS_HTTP_ERROR, reply.status, false,
+                "服务返回 HTTP " + reply.status + "，请检查服务地址与模型配置", startedAt);
+    }
+
+    private boolean embeddingReturned(String body) {
+        try {
+            JsonNode data = mapper.readTree(body).path("data");
+            if (!data.isArray() || data.size() == 0) {
+                return false;
+            }
+            JsonNode embedding = data.get(0).path("embedding");
+            return embedding.isArray() && embedding.size() > 0;
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    private boolean rerankReturned(String body) {
+        try {
+            JsonNode results = mapper.readTree(body).path("results");
+            if (!results.isArray() || results.size() == 0) {
+                return false;
+            }
+            return results.get(0).has("index");
+        } catch (Exception e) {
+            return false;
+        }
     }
 
     private ModelConnectionTestResult probe(String baseUrl, String apiKey, String upstreamModel) {

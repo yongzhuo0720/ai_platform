@@ -82,10 +82,10 @@
 
 ### 测试结果
 
-- 后端全量：**592 个用例，0 失败、0 错误、0 跳过**
+- 后端（service + app-start 两模块）：**592 个用例，0 失败、0 错误、0 跳过**
   - `app-business-service`：565
   - `app-start`：27
-  - 基线 585，本轮净增 7 个
+  - 相对上轮 585 净增 7 个；完整 reactor 口径见下一条（含 permission/common）
 - 构建：`mvn -o package` 成功，应用可正常启动。
 - 前端：`assistant.ts` 仅类型清理，构建与类型检查通过。
 
@@ -99,12 +99,59 @@
 
 ### 未解决 / 已知风险
 
-1. **真实 Dify 服务端 E2E 尚未执行**：本地未配置可用 Dify 凭据，本轮流式验收使用慢速 mock 上游；Dify 真实链路仍待有凭据时补验。
+1. 真实 Dify 服务端 E2E：已在下一条补验（chat 与 knowledgeChat 均返回 200 并落审计）。
 2. 客户端中断的那条 POST 在 Tomcat access log 中仍记为 `500`：这是容器异步错误派发的固有表现（应用已按断开收尾），不影响后续请求；如需与业务错误区分，可后续在访问日志层做标记。
 3. 线程池上限（48）是经验值，尚未做高并发压测；队列满时会退化为同步转发，不会报错但会重新占用请求线程。
 
+---
+
+## 2026-11-07（续）：真实环境核心链路复核与模型连接测试补全
+
+### 真实环境复核（本地全栈）
+
+- **Dify 云端对话**（`/aiGateway/chat/chat-messages`，streaming）：HTTP 200，82 个 SSE 事件 / 30,091 字节 / 3.3 秒；审计落库 197 tokens、3331ms。
+- **Dify 知识库问答**（`/aiGateway/knowledgeChat/chat-messages`）：HTTP 200，21 个 SSE 事件 / 12,088 字节 / 2.9 秒；审计 199 tokens、2875ms。
+- **本地知识库检索**（`/kbRag/search`）：真实 SiliconFlow `BAAI/bge-m3` 向量 + `BAAI/bge-reranker-v2-m3` 精排；关闭精排 409ms、开启精排 336ms，返回 `rerankApplied=true`。
+- **模型直连流式**（`/aiGateway/models/7/chat/completions`）：慢速 mock 上游，15 个 SSE 事件 / 1,864 字节 / 9.3 秒，用于验证中继与断连链路，不代表真实模型效果。
+- **Agent 编排**（`/agentBean/run`）：本地 mock 模型上游，状态 `succeeded`、1 轮迭代、96 tokens，步骤 `llm:success` / `finish:success`，审计 `models | agent/run | 200 | 96`。测试用模型/Agent 配置与运行记录已按 runKey 精确清理。
+
+> Dify 与 SiliconFlow 为真实外部服务；直连与 Agent 两项目的是验证服务端编排与计费链路，上游模型用本地 mock，未冒充真实模型联调。
+
+### 缺陷修复：连接测试覆盖向量与重排模型
+
+原实现只支持 OpenAI 对话模型：向量模型（只有 `embedModel`、没有 `upstreamModel`）报「服务地址、服务密钥、上游模型名均配置后才能测试」；重排模型（`protocol=rerank`）直接报「该配置未启用 OpenAI 兼容直连，无需测试」。模型管理页因此无法对这两类模型做健康检查。
+
+现改为：
+
+- `protocol=rerank` → POST `/rerank`（`model/query/documents/top_n`），校验 `results[0].index`；
+- `protocol=openai` 且只有 `embedModel` → POST `/embeddings`（`model/input`），校验 `data[0].embedding`；
+- 非 200 响应统一走 `postFailure`，鉴权失败 / 限流 / 请求被拒 / 不可达分类与对话模型一致；返回体仍不含服务地址与密钥。
+- 新增 5 个单元测试（向量成功、向量 401、重排成功、重排拒绝模型、未知协议），该类共 12 个用例。
+
+真实环境实测（重建并重启后端后）：
+
+- 向量配置 iid=10：`status=ok`、HTTP 200、332ms、提示「通过向量接口验证」；
+- 重排配置 iid=11：`status=ok`、HTTP 200、108ms、提示「通过重排接口验证」。
+
+### 测试结果
+
+- 后端完整 reactor：**675 个用例，0 失败、0 错误、0 跳过**
+  - `app-business-service`：570（本轮 +5）
+  - `app-business-permission`：71
+  - `app-start`：27
+  - `app-common`：7
+- 口径修正：上一条的「592」只统计了 service + app-start 两个模块，完整 reactor 基线应为 670。
+- `mvn -o package` 成功；重启后连接测试与核心链路均正常。
+- 前端本轮无改动。
+
+### 已知问题 / 风险
+
+1. **中文关键词召回偏弱**：`to_tsvector('simple', content)` 对中文按连续字符串切分，`plainto_tsquery('simple', '差旅报销的审批流程是什么')` 实际只能命中连续原文整串，词法路命中率低，检索基本由向量路承担。后续可考虑 PG 中文分词扩展，或应用层分词后再做 FTS。
+2. 客户端中途断开的 POST 在 Tomcat access log 仍记 500（容器异步语义），应用侧已按断开收尾。
+3. 线程池上限 48 未做压测；队列满退化为同步转发。
+4. Windows 下打包偶发「BUILD SUCCESS 但 fat jar 未更新」（运行中的 JVM 占用 jar），删除 `app-start-1.0-SNAPSHOT.jar` 后重新打包可解决；`scripts/start.ps1` 会先清理残留进程，日常启动不受影响。
+
 ### 下一轮计划
 
-- 继续第一阶段剩余项：真实 Dify 服务端 E2E（有凭据后）、AI 对话 / 知识库问答 / 模型直连 / Agent 调用四条主链路的真实环境复核。
-- 进入第二阶段：AI 能力深化（RAG、Agent、模型管理、网关多实例与配额）。
-- 保持每轮结束跑全量测试并更新本日志。
+- 第二阶段：RAG 中文召回改进（分词 / 混合检索权重）、模型管理页展示向量与重排的测试结果、网关配额与多实例细化。
+- 继续以真实环境验证为主，mock 仅用于无法稳定获取的上游。

@@ -168,6 +168,74 @@ class ModelConnectionProbeTest {
         assertEquals(0, stub.modelsHits.get());
     }
 
+    @Test
+    void embeddingConfig_shouldProbeEmbeddingsEndpoint() {
+        when(modelsConfigBeanHolder.findByIid(IID)).thenReturn(embeddingConfig(stub.baseUrl()));
+        stub.embeddingsStatus = 200;
+        stub.embeddingsBody = "{\"data\":[{\"embedding\":[0.1,0.2,0.3]}]}";
+
+        ModelConnectionTestResult data = probe.test(ADMIN, request()).getDatas();
+
+        assertEquals(ModelConnectionTestResult.STATUS_OK, data.getStatus());
+        assertTrue(data.isModelAvailable());
+        assertEquals("bge-m3-test", data.getUpstreamModel());
+        assertTrue(data.getMessage().contains("向量接口"));
+        assertEquals(1, stub.embeddingsHits.get());
+        assertEquals(0, stub.modelsHits.get());
+    }
+
+    @Test
+    void embeddingConfig_shouldReportAuthFailureWithoutLeakingSecret() {
+        when(modelsConfigBeanHolder.findByIid(IID)).thenReturn(embeddingConfig(stub.baseUrl()));
+        stub.embeddingsStatus = 401;
+
+        ModelConnectionTestResult data = probe.test(ADMIN, request()).getDatas();
+
+        assertEquals(ModelConnectionTestResult.STATUS_AUTH_FAILED, data.getStatus());
+        assertFalse(data.isModelAvailable());
+        assertFalse(data.getMessage().contains(SECRET));
+    }
+
+    @Test
+    void rerankConfig_shouldProbeRerankEndpoint() {
+        when(modelsConfigBeanHolder.findByIid(IID)).thenReturn(rerankConfig(stub.baseUrl()));
+        stub.rerankStatus = 200;
+        stub.rerankBody = "{\"results\":[{\"index\":0,\"relevance_score\":0.9}]}";
+
+        ModelConnectionTestResult data = probe.test(ADMIN, request()).getDatas();
+
+        assertEquals(ModelConnectionTestResult.STATUS_OK, data.getStatus());
+        assertTrue(data.isModelAvailable());
+        assertEquals("rerank-test", data.getUpstreamModel());
+        assertTrue(data.getMessage().contains("重排接口"));
+        assertEquals(1, stub.rerankHits.get());
+    }
+
+    @Test
+    void rerankConfig_shouldSurfaceRejectedModel() {
+        when(modelsConfigBeanHolder.findByIid(IID)).thenReturn(rerankConfig(stub.baseUrl()));
+        stub.rerankStatus = 400;
+
+        ModelConnectionTestResult data = probe.test(ADMIN, request()).getDatas();
+
+        assertEquals(ModelConnectionTestResult.STATUS_HTTP_ERROR, data.getStatus());
+        assertEquals(Integer.valueOf(400), data.getHttpStatus());
+        assertTrue(data.getMessage().contains("核对上游模型名"));
+    }
+
+    @Test
+    void unsupportedProtocol_shouldReturnReadableMessage() {
+        ModelsConfigBean config = config(stub.baseUrl());
+        config.setProtocol("some-other-protocol");
+        when(modelsConfigBeanHolder.findByIid(IID)).thenReturn(config);
+
+        Result<ModelConnectionTestResult> result = probe.test(ADMIN, request());
+
+        assertFalse(Integer.valueOf(0).equals(result.getResp_code()));
+        assertTrue(result.getResp_msg().contains("暂不支持连接测试"));
+        assertEquals(0, stub.modelsHits.get());
+    }
+
     private ModelsConfigBean request() {
         ModelsConfigBean bean = new ModelsConfigBean();
         bean.setIid(IID);
@@ -186,15 +254,37 @@ class ModelConnectionProbeTest {
         return bean;
     }
 
+    private ModelsConfigBean embeddingConfig(String baseUrl) {
+        ModelsConfigBean bean = config(baseUrl);
+        bean.setName("测试向量模型");
+        bean.setUpstreamModel(null);
+        bean.setEmbedModel("bge-m3-test");
+        return bean;
+    }
+
+    private ModelsConfigBean rerankConfig(String baseUrl) {
+        ModelsConfigBean bean = config(baseUrl);
+        bean.setName("测试重排模型");
+        bean.setProtocol("rerank");
+        bean.setUpstreamModel("rerank-test");
+        return bean;
+    }
+
     /** 只实现连接测试用到的两个端点；状态码与响应体由每个用例设置 */
     private static class StubServer implements AutoCloseable {
         private final HttpServer server;
         private final AtomicInteger modelsHits = new AtomicInteger();
         private final AtomicInteger chatHits = new AtomicInteger();
+        private final AtomicInteger embeddingsHits = new AtomicInteger();
+        private final AtomicInteger rerankHits = new AtomicInteger();
         private volatile int modelsStatus = 200;
         private volatile String modelsBody = "{\"data\":[]}";
         private volatile int chatStatus = 200;
         private volatile String chatBody = "{}";
+        private volatile int embeddingsStatus = 200;
+        private volatile String embeddingsBody = "{\"data\":[]}";
+        private volatile int rerankStatus = 200;
+        private volatile String rerankBody = "{\"results\":[]}";
 
         private StubServer() throws Exception {
             server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
@@ -205,6 +295,14 @@ class ModelConnectionProbeTest {
             server.createContext("/chat/completions", exchange -> {
                 chatHits.incrementAndGet();
                 respond(exchange, chatStatus, chatBody);
+            });
+            server.createContext("/embeddings", exchange -> {
+                embeddingsHits.incrementAndGet();
+                respond(exchange, embeddingsStatus, embeddingsBody);
+            });
+            server.createContext("/rerank", exchange -> {
+                rerankHits.incrementAndGet();
+                respond(exchange, rerankStatus, rerankBody);
             });
             server.start();
         }
