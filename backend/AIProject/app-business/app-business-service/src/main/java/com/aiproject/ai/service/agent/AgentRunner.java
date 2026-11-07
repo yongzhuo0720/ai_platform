@@ -160,16 +160,8 @@ public class AgentRunner {
                         reply.getCompletionTokens(), reply.getCostCents(),
                         System.currentTimeMillis() - roundStart, null, reply.getRequestId());
 
-                // 预算在「拿到本轮 usage 之后」立即判断：超了就停，
-                // 不要再去执行一批工具、再空转一轮
-                if (promptSum + completionSum >= tokenBudget) {
-                    error = "Token 预算已耗尽";
-                    stepNo++;
-                    recordStep(listener, uid, runKey, stepNo, iteration, "error", null, null, null,
-                            "failed", 0L, 0L, 0L, 0L, truncate(error), null);
-                    break;
-                }
-
+                // 最终答案已经产出，不再有后续动作，预算无需拦截——
+                // 这一轮的 token 已经花掉，判失败只会丢掉用户已付费的完整回答
                 if (reply.getToolCalls().isEmpty()) {
                     answer = reply.getContent() == null ? "" : reply.getContent();
                     status = "succeeded";
@@ -178,6 +170,15 @@ public class AgentRunner {
                     recordStep(listener, uid, runKey, stepNo, iteration, "finish", null, null,
                             truncate(answer), "success", 0L, 0L, 0L, 0L, null,
                             reply.getRequestId());
+                    break;
+                }
+
+                // 预算只约束「还要继续执行工具、再空转一轮」的情况
+                if (promptSum + completionSum >= tokenBudget) {
+                    error = "Token 预算已耗尽";
+                    stepNo++;
+                    recordStep(listener, uid, runKey, stepNo, iteration, "error", null, null, null,
+                            "failed", 0L, 0L, 0L, 0L, truncate(error), null);
                     break;
                 }
 

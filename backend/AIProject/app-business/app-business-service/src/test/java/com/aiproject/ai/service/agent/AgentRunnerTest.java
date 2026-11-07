@@ -193,6 +193,19 @@ class AgentRunnerTest {
     }
 
     @Test
+    void run_shouldKeepFinalAnswerWhenBudgetExhaustedOnLastRound() throws Exception {
+        stubRun(agent(8, 100L), new ArrayList<AgentToolBean>());
+        when(modelClient.call(any(AgentInvocation.class)))
+                .thenReturn(answer("最后一轮答案", 60L, 40L));
+
+        runner.run(UID, KEY, "问题");
+
+        verify(modelClient, times(1)).call(any(AgentInvocation.class));
+        verify(runHolder).finish(eq(UID), anyString(), eq("succeeded"), eq(1),
+                eq(60L), eq(40L), eq(0L), anyLong(), eq("最后一轮答案"), isNull());
+    }
+
+    @Test
     void run_shouldStopWhenTokenBudgetExhausted() throws Exception {
         stubRun(agent(8, 20L), Collections.singletonList(tool()));
         when(modelClient.call(any(AgentInvocation.class)))
