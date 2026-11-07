@@ -253,8 +253,8 @@ npm run typecheck      # TypeScript 类型检查
 npm run check:icons    # 图标注册检查（模板图标必须 import 或全局注册）
 npm run check:styles   # 硬编码色值棘轮检查（只减不增，基线在 scripts/check-styles.baseline.json）
 npm run test            # 单元测试（Vitest），25 个文件 / 294 项
-npm run test:component  # 组件测试（真实渲染），29 个文件 / 294 项
-npm run test:e2e        # 浏览器冒烟（真实 Chromium + 接口 mock），21 项
+npm run test:component  # 组件测试（真实渲染），30 个文件 / 300 项
+npm run test:e2e        # 浏览器冒烟（真实 Chromium + 接口 mock），22 项
 npm run check:streaming # 流式超时/取消回归，14 项
 npm run check:markdown  # Markdown 与 XSS 消毒回归，10 项
 npm run build            # 生产构建
@@ -276,8 +276,8 @@ npm run check:bundle     # 首屏 gzip 体积预算（需先 build）
 | 前端图标注册检查 | 通过（59 个在用图标全部可解析） |
 | 硬编码色值棘轮检查 | 通过（45 个文件 / 1777 处，等于基线；新增即失败，只允许减少） |
 | 前端逻辑单元测试 | 25 个文件 / **294 项通过** |
-| 前端组件测试 | 29 个文件 / **294 项通过**（@vue/test-utils 真实渲染） |
-| 浏览器冒烟（Playwright） | **21 项通过**（真实 Chromium + `page.route` 接口 mock，含 Agent 事件链路、模型可观测后台、文档流水线、目录页三态、登录守卫、SSE、配额、RAG 评估详情、404 兜底） |
+| 前端组件测试 | 30 个文件 / **300 项通过**（@vue/test-utils 真实渲染） |
+| 浏览器冒烟（Playwright） | **22 项通过**（真实 Chromium + `page.route` 接口 mock，含 Agent 事件链路、模型可观测后台、文档流水线、目录页三态、登录守卫、响应式外壳、SSE、配额、RAG 评估详情、404 兜底） |
 | 前端流式回归 | 14 项通过 |
 | 前端 Markdown / XSS 回归 | 10 项通过 |
 | 前端生产构建 | 通过（element-plus 按路由分包） |

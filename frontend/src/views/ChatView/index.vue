@@ -53,7 +53,12 @@ const isMobile = ref(false);
 let mobileCheckTimer: number | null = null;
 
 const checkMobile = () => {
-  isMobile.value = window.innerWidth < 1024;
+  const mobile = window.innerWidth < 1024;
+  // 抽屉在窄屏占满全屏，进入窄屏时收起，避免首屏或缩放后盖住聊天区与全局导航
+  if (mobile && !isMobile.value) {
+    historyCollapsed.value = true;
+  }
+  isMobile.value = mobile;
 };
 
 const handleResize = () => {

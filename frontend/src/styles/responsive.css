@@ -11,8 +11,6 @@
 @media (max-width: 960px) {
   .shell {
     grid-template-columns: 1fr;
-    height: auto;
-    overflow: visible;
   }
 
   .shell-sidebar {
