@@ -130,7 +130,7 @@ class AgentRunnerTest {
         when(modelClient.call(any(AgentInvocation.class)))
                 .thenReturn(toolCall("kb_search", "{\"query\":\"报销\"}", 12L))
                 .thenReturn(answer("按制度第 3 条办理", 20L, 8L));
-        when(toolExecutor.execute(eq(UID), any(AgentToolBean.class), anyString()))
+        when(toolExecutor.execute(eq(UID), any(AgentToolBean.class), anyString(), any()))
                 .thenReturn("制度第 3 条：需要发票");
 
         runner.run(UID, KEY, "怎么报销");
@@ -152,8 +152,25 @@ class AgentRunnerTest {
         }
         assertTrue(hasToolMessage, "第二轮请求必须带上 role=tool 的回灌消息");
         assertTrue(hasAssistantToolCalls, "第二轮请求必须保留上一轮 assistant 的 tool_calls");
+        verify(toolExecutor).execute(eq(UID), any(AgentToolBean.class), anyString(), isNull());
         verify(runHolder).finish(eq(UID), anyString(), eq("succeeded"), eq(2),
                 eq(32L), eq(13L), eq(0L), anyLong(), eq("按制度第 3 条办理"), isNull());
+    }
+
+    @Test
+    void run_shouldPassConfiguredToolTimeoutToExecutor() throws Exception {
+        AgentBean bean = agent(8, 20000L);
+        bean.setToolTimeoutMs(5000L);
+        stubRun(bean, Collections.singletonList(tool()));
+        when(modelClient.call(any(AgentInvocation.class)))
+                .thenReturn(toolCall("kb_search", "{\"query\":\"报销\"}", 1L))
+                .thenReturn(answer("好", 1L, 1L));
+        when(toolExecutor.execute(eq(UID), any(AgentToolBean.class), anyString(), any()))
+                .thenReturn("结果");
+
+        runner.run(UID, KEY, "问题");
+
+        verify(toolExecutor).execute(eq(UID), any(AgentToolBean.class), anyString(), eq(5000L));
     }
 
     @Test
@@ -163,7 +180,7 @@ class AgentRunnerTest {
         java.util.concurrent.atomic.AtomicInteger round = new java.util.concurrent.atomic.AtomicInteger();
         when(modelClient.call(any(AgentInvocation.class))).thenAnswer(invocationOnMock ->
                 toolCall("kb_search", "{\"query\":\"第" + round.incrementAndGet() + "次\"}", 1L));
-        when(toolExecutor.execute(eq(UID), any(AgentToolBean.class), anyString()))
+        when(toolExecutor.execute(eq(UID), any(AgentToolBean.class), anyString(), any()))
                 .thenReturn("结果");
 
         runner.run(UID, KEY, "循环");
@@ -209,7 +226,7 @@ class AgentRunnerTest {
         stubRun(agent(8, 20000L), Collections.singletonList(tool()));
         when(modelClient.call(any(AgentInvocation.class)))
                 .thenReturn(toolCall("kb_search", "{\"query\":\"报销\"}", 1L));
-        when(toolExecutor.execute(eq(UID), any(AgentToolBean.class), anyString()))
+        when(toolExecutor.execute(eq(UID), any(AgentToolBean.class), anyString(), any()))
                 .thenReturn("结果");
 
         runner.run(UID, KEY, "重复");
@@ -227,7 +244,7 @@ class AgentRunnerTest {
         when(modelClient.call(any(AgentInvocation.class)))
                 .thenReturn(toolCall("kb_search", "{\"query\":\"报销\"}", 1L))
                 .thenReturn(answer("换个说法再试", 2L, 1L));
-        when(toolExecutor.execute(eq(UID), any(AgentToolBean.class), anyString()))
+        when(toolExecutor.execute(eq(UID), any(AgentToolBean.class), anyString(), any()))
                 .thenThrow(new AgentCallException("工具参数不合法"));
 
         runner.run(UID, KEY, "问题");

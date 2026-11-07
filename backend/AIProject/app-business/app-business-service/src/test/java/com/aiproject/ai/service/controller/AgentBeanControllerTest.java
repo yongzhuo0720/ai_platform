@@ -329,13 +329,13 @@ class AgentBeanControllerTest {
             reply.getToolCalls().add(call);
         }
         when(modelClient.call(any())).thenReturn(reply);
-        when(toolExecutor.execute(any(), any(), any())).thenReturn("时间");
+        when(toolExecutor.execute(any(), any(), any(), any())).thenReturn("时间");
         TrackingResponse response = new TrackingResponse(failOnFlush);
 
         controller.streamRun(UID, request(), response);
 
         verify(modelClient, times(failOnFlush == 1 ? 0 : 1)).call(any());
-        verify(toolExecutor, times(Math.max(0, failOnFlush - 2))).execute(any(), any(), any());
+        verify(toolExecutor, times(Math.max(0, failOnFlush - 2))).execute(any(), any(), any(), any());
         assertEquals("failed", storedRun.getStatus());
         assertEquals("客户端已断开连接，执行已停止", storedRun.getErrorMessage());
         assertEquals(Long.valueOf(failOnFlush == 1 ? 0 : 15), storedRun.getTotalTokens());

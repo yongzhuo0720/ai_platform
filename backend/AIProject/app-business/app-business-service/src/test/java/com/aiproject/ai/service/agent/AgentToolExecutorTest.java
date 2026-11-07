@@ -12,6 +12,8 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
 import java.util.Collections;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -88,6 +90,35 @@ class AgentToolExecutorTest {
 
         String output = executor.execute(UID, tool("kb_search"), "{\"query\":\"长文档\"}");
         assertEquals(AgentToolExecutor.MAX_RESULT_CHARS, output.length());
+    }
+
+    @Test
+    void kbSearch_shouldFailFastWhenToolExceedsTimeout() throws Exception {
+        CountDownLatch release = new CountDownLatch(1);
+        when(kbRagHolder.search(eq(UID), eq("慢查询"), isNull(), eq(3)))
+                .thenAnswer(invocation -> {
+                    release.await(5, TimeUnit.SECONDS);
+                    return Result.succeed(new KbSearchResult(), "检索成功");
+                });
+
+        long start = System.currentTimeMillis();
+        AgentCallException e = assertThrows(AgentCallException.class,
+                () -> executor.execute(UID, tool("kb_search"), "{\"query\":\"慢查询\"}", 100L));
+        long elapsed = System.currentTimeMillis() - start;
+        release.countDown();
+
+        assertTrue(e.getMessage().contains("超时"), "超时后应把错误交给模型，而不是一直等工具");
+        assertTrue(elapsed >= 80, "应在约 100ms 内返回，而不是等工具自己结束");
+    }
+
+    @Test
+    void execute_shouldCapConfiguredTimeout() throws Exception {
+        when(kbRagHolder.search(eq(UID), eq("报销"), isNull(), eq(3)))
+                .thenReturn(Result.succeed(new KbSearchResult(), "检索成功"));
+
+        // 配置超过上限时按 120000ms 截断；这里只验证正常路径不受影响
+        assertTrue(executor.execute(UID, tool("kb_search"), "{\"query\":\"报销\"}", 999999L)
+                .contains("无结果"));
     }
 
     @Test

@@ -363,3 +363,50 @@ HTTP 工具白名单、单步重试、并发闸门冲突的友好提示，以及
 测试：`AgentRunHolderTest` +3（只碰超时记录且带状态 CAS、CAS 竞争失败不计成功、
 缺 `startedAt`/`runKey` 跳过），`AgentRunRecoverySchedulerTest` +1（锁内按 30 分钟
 阈值调用回收）。
+
+## 12. 2026-11-07 补强：工具超时与 Agent 链路的网关治理
+
+### 12.1 `toolTimeoutMs` 从配置变成真实上限
+
+之前 `AgentBean.toolTimeoutMs` 只有 Bean 字段、建表列和 1~120 秒的校验，
+执行层完全没有读取；工具卡住时只能等依赖自己的超时，运行总超时又只在
+每轮模型调用前检查，管不到单次工具调用。
+
+现在的实现：
+
+- `AgentToolExecutor.execute(uid, tool, args, timeoutMs)`：空或非正数回落
+  `DEFAULT_TIMEOUT_MS = 8000`，超过 `MAX_TIMEOUT_MS = 120000` 按上限截断；
+- 工具提交到 16 线程的守护线程池执行，`SynchronousQueue` 不排队，
+  `Future.get(timeout, MILLISECONDS)` 等结果；
+- 超时 `cancel(true)` 后抛 `AgentCallException("工具执行超时…")`，
+  Runner 把它作为「工具执行失败」回灌给模型，模型可以换参数重试；
+- 工具并发满时同样快速失败，不把请求堆在线程池里。
+
+为什么线程池必须有上限：Java 不能强杀线程，`cancel(true)` 只是发中断信号，
+阻塞在 socket 读上的工具要等自己的读超时才释放；无界线程池会把
+「一个上游卡住」放大成「整台机器线程耗尽」。
+
+### 12.2 模型调用接入并发闸门、熔断与用量补记
+
+`HttpAgentModelClient` 的治理顺序与 `AiGatewayService` 对齐：
+
+```
+check → reserve → 并发闸门 → 熔断 → 上游
+```
+
+- 并发许可按 `models` 模块计数；拿不到就全额释放预扣并直接拒绝；
+- 熔断 key 为 `models|baseUrl`，与直连模型调用共享同一条熔断记录
+  （防的是上游整体不可达，不是单个模型返回业务错误）；
+- 2xx 记成功、5xx 记失败、4xx 中性；连接失败/写请求失败/读超时也记失败；
+- `finally` 里先归还并发许可与熔断许可，再 `settle` 预扣；
+- 未预扣（配额不限或 Redis 降级）时 `settle` 是空操作，按上游真实 usage
+  调 `addTokens` 补记，Agent 的消耗不再漏进「我的用量」。
+
+一个容易忽略的细节：并发/熔断拒绝发生在**上游调用之前**，所以只退预扣、
+不写模型审计；这和 `check`/`reserve` 拒绝时不写审计保持一致，避免把
+「治理拒绝」记成一次模型失败，污染健康面板。
+
+测试：`AgentToolExecutorTest` +2（超时快速失败、超长配置截断），
+`AgentRunnerTest` +1（把 `toolTimeoutMs` 传给执行器），
+`HttpAgentModelClientTest` +4（并发满退预扣、熔断打开归还许可、
+4xx 中性不重置失败计数、已预扣时不重复补记）。

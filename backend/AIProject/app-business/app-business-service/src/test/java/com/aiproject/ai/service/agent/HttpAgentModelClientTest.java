@@ -4,6 +4,8 @@ import com.aiproject.ai.service.bean.AgentBean;
 import com.aiproject.ai.service.bean.AiCallLogBean;
 import com.aiproject.ai.service.gateway.AiGatewayGuard;
 import com.aiproject.ai.service.gateway.AiGatewayProperties;
+import com.aiproject.ai.service.gateway.GatewayCircuitBreaker;
+import com.aiproject.ai.service.gateway.GatewayConcurrencyGuard;
 import com.aiproject.ai.service.gateway.ModelGatewayResolver;
 import com.aiproject.ai.service.gateway.ModelPriceResolver;
 import com.aiproject.ai.service.holde.AiCallLogHolder;
@@ -18,6 +20,7 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
+import org.springframework.test.util.ReflectionTestUtils;
 
 import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
@@ -26,9 +29,11 @@ import java.util.HashMap;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
@@ -52,14 +57,18 @@ class HttpAgentModelClientTest {
     @Mock
     AiGatewayGuard guard;
     @Mock
-    AiGatewayProperties properties;
-    @Mock
     ModelPriceResolver priceResolver;
     @Mock
     AiCallLogHolder callLogHolder;
 
     @InjectMocks
     HttpAgentModelClient client;
+
+    // 并发许可与 Admissions 是 final 类，用真实组件而不是 mock：
+    // 顺带验证「许可确实归还」「失败确实让熔断打开」这类行为
+    private AiGatewayProperties properties;
+    private GatewayConcurrencyGuard concurrencyGuard;
+    private GatewayCircuitBreaker circuitBreaker;
 
     private HttpServer server;
     private volatile String responseBody = "{}";
@@ -79,9 +88,18 @@ class HttpAgentModelClientTest {
 
         when(guard.check(anyString(), anyString())).thenReturn(AiGatewayGuard.Decision.allow());
         when(guard.reserve(anyString(), anyString())).thenReturn(AiGatewayGuard.Reservation.none());
-        when(properties.getConnectTimeoutMs()).thenReturn(10000);
-        when(properties.getReadTimeoutMs()).thenReturn(120000);
         when(priceResolver.resolve(anyString())).thenReturn(null);
+
+        properties = new AiGatewayProperties();
+        properties.setConnectTimeoutMs(10000);
+        properties.setReadTimeoutMs(120000);
+        properties.setMaxConcurrentPerModule(4);
+        concurrencyGuard = new GatewayConcurrencyGuard(properties);
+        circuitBreaker = new GatewayCircuitBreaker();
+        ReflectionTestUtils.setField(circuitBreaker, "properties", properties);
+        client.properties = properties;
+        client.concurrencyGuard = concurrencyGuard;
+        client.circuitBreaker = circuitBreaker;
     }
 
     @AfterEach
@@ -118,6 +136,8 @@ class HttpAgentModelClientTest {
     @Test
     void call_shouldParseToolCallsAndSettleByRealUsage() throws Exception {
         stubModel();
+        // 限 1 个并发许可：如果调用结束后没归还，下面的探测会拿不到
+        properties.setMaxConcurrentPerModule(1);
         responseBody = "{\"choices\":[{\"message\":{\"content\":\"\",\"tool_calls\":["
                 + "{\"id\":\"c1\",\"type\":\"function\",\"function\":{\"name\":\"kb_search\","
                 + "\"arguments\":\"{\\\"query\\\":\\\"报销\\\"}\"}}]},"
@@ -131,6 +151,13 @@ class HttpAgentModelClientTest {
         assertEquals(15L, reply.getTotalTokens());
         assertEquals(0L, reply.getCostCents());
         verify(guard).settle(any(AiGatewayGuard.Reservation.class), eq(15L));
+        // 未预扣时 settlement 是空操作，必须补记真实用量，否则 Agent 消耗不计入额度
+        verify(guard).addTokens(UID, "models", 15L);
+        assertEquals("CLOSED", circuitBreaker.stateOf("models|" + baseUrl()),
+                "200 是上游可达的明确证据，不应影响熔断");
+        GatewayConcurrencyGuard.Lease probe = concurrencyGuard.tryAcquire("models");
+        assertNotNull(probe, "调用结束后并发许可必须归还");
+        probe.release();
 
         ArgumentCaptor<AiCallLogBean> log = ArgumentCaptor.forClass(AiCallLogBean.class);
         verify(callLogHolder).record(log.capture());
@@ -143,6 +170,9 @@ class HttpAgentModelClientTest {
     @Test
     void call_shouldReleaseReservationAndLogFailureOnUpstreamError() {
         stubModel();
+        // 阈值调到 1，用状态机确认 5xx 真的被记为失败
+        properties.setCircuitFailureThreshold(1);
+        properties.setCircuitOpenMs(30000);
         responseStatus = 500;
 
         AgentCallException e = assertThrows(AgentCallException.class,
@@ -150,6 +180,8 @@ class HttpAgentModelClientTest {
 
         assertTrue(e.getMessage().contains("500"));
         verify(guard).settle(any(AiGatewayGuard.Reservation.class), eq(0L));
+        assertEquals("OPEN", circuitBreaker.stateOf("models|" + baseUrl()),
+                "5xx 必须计入熔断失败");
         ArgumentCaptor<AiCallLogBean> log = ArgumentCaptor.forClass(AiCallLogBean.class);
         verify(callLogHolder).record(log.capture());
         assertEquals("failed", log.getValue().getStatus());
@@ -187,6 +219,80 @@ class HttpAgentModelClientTest {
 
         assertTrue(e.getMessage().contains("额度已用完"));
         verify(guard, never()).settle(any(AiGatewayGuard.Reservation.class), org.mockito.ArgumentMatchers.anyLong());
+    }
+
+    @Test
+    void call_shouldRejectWhenConcurrencyIsExhaustedAndReleaseReservation() {
+        stubModel();
+        properties.setMaxConcurrentPerModule(1);
+        GatewayConcurrencyGuard.Lease hold = concurrencyGuard.tryAcquire("models");
+        assertNotNull(hold, "测试前提：占满 models 模块的唯一许可");
+
+        AgentCallException e = assertThrows(AgentCallException.class,
+                () -> client.call(invocation()));
+
+        assertTrue(e.getMessage().contains("请求过多"));
+        verify(guard).settle(any(AiGatewayGuard.Reservation.class), eq(0L));
+        assertEquals("CLOSED", circuitBreaker.stateOf("models|" + baseUrl()),
+                "并发拒绝发生在熔断之前，不应产生上游健康样本");
+        verify(callLogHolder, never()).record(any(AiCallLogBean.class));
+        hold.release();
+    }
+
+    @Test
+    void call_shouldRejectWhenCircuitIsOpenAndReturnLease() {
+        stubModel();
+        properties.setMaxConcurrentPerModule(1);
+        properties.setCircuitFailureThreshold(1);
+        properties.setCircuitOpenMs(60000);
+        circuitBreaker.recordFailure("models|" + baseUrl());
+        assertEquals("OPEN", circuitBreaker.stateOf("models|" + baseUrl()));
+
+        AgentCallException e = assertThrows(AgentCallException.class,
+                () -> client.call(invocation()));
+
+        assertTrue(e.getMessage().contains("60 秒后重试"));
+        verify(guard).settle(any(AiGatewayGuard.Reservation.class), eq(0L));
+        verify(callLogHolder, never()).record(any(AiCallLogBean.class));
+        GatewayConcurrencyGuard.Lease probe = concurrencyGuard.tryAcquire("models");
+        assertNotNull(probe, "熔断拒绝时必须把并发许可还回去");
+        probe.release();
+    }
+
+    @Test
+    void call_shouldTreatClientErrorAsNeutralForCircuit() {
+        stubModel();
+        properties.setCircuitFailureThreshold(2);
+        properties.setCircuitOpenMs(60000);
+        String key = "models|" + baseUrl();
+        circuitBreaker.recordFailure(key); // 已有 1 次失败
+
+        responseStatus = 400;
+        assertThrows(AgentCallException.class, () -> client.call(invocation()));
+        assertEquals("CLOSED", circuitBreaker.stateOf(key));
+
+        // 若 400 被误判为成功，失败计数会被清零，这次 500 只到 1/2，不会熔断
+        responseStatus = 500;
+        assertThrows(AgentCallException.class, () -> client.call(invocation()));
+        assertEquals("OPEN", circuitBreaker.stateOf(key),
+                "400 必须中性：既不累计失败，也不能重置已有失败计数");
+    }
+
+    @Test
+    void call_shouldNotAddTokensWhenReservationIsActive() throws Exception {
+        stubModel();
+        AiGatewayGuard.Reservation active =
+                org.mockito.Mockito.mock(AiGatewayGuard.Reservation.class);
+        when(active.isActive()).thenReturn(true);
+        when(active.isBlocked()).thenReturn(false);
+        when(guard.reserve(anyString(), anyString())).thenReturn(active);
+        responseBody = "{\"choices\":[{\"message\":{\"content\":\"hi\"}}],"
+                + "\"usage\":{\"prompt_tokens\":10,\"completion_tokens\":5,\"total_tokens\":15}}";
+
+        client.call(invocation());
+
+        verify(guard).settle(eq(active), eq(15L));
+        verify(guard, never()).addTokens(anyString(), anyString(), anyLong());
     }
 
     @Test

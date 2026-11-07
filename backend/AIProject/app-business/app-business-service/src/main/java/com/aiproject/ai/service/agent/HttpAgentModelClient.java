@@ -3,6 +3,8 @@ package com.aiproject.ai.service.agent;
 import com.aiproject.ai.service.bean.AiCallLogBean;
 import com.aiproject.ai.service.gateway.AiGatewayGuard;
 import com.aiproject.ai.service.gateway.AiGatewayProperties;
+import com.aiproject.ai.service.gateway.GatewayCircuitBreaker;
+import com.aiproject.ai.service.gateway.GatewayConcurrencyGuard;
 import com.aiproject.ai.service.gateway.ModelGatewayResolver;
 import com.aiproject.ai.service.gateway.ModelPriceResolver;
 import com.aiproject.ai.service.holde.AiCallLogHolder;
@@ -50,6 +52,12 @@ public class HttpAgentModelClient implements AgentModelClient {
     AiGatewayGuard guard;
 
     @Autowired
+    GatewayConcurrencyGuard concurrencyGuard;
+
+    @Autowired
+    GatewayCircuitBreaker circuitBreaker;
+
+    @Autowired
     AiGatewayProperties properties;
 
     @Autowired
@@ -79,6 +87,24 @@ public class HttpAgentModelClient implements AgentModelClient {
         AiGatewayGuard.Reservation reservation = guard.reserve(inv.getUid(), MODULE);
         if (reservation.isBlocked()) {
             throw new AgentCallException(reservation.getBlockedMessage());
+        }
+
+        // 并发闸门与熔断必须和网关主链路同口径，否则 Agent 会成为绕开治理的后门。
+        // 拒绝时还没有产生上游调用，把预扣全额退回即可，不写审计（与 check/reserve 一致）。
+        GatewayConcurrencyGuard.Lease concurrencyLease = concurrencyGuard.tryAcquire(MODULE);
+        if (concurrencyLease == null) {
+            guard.settle(reservation, 0L);
+            throw new AgentCallException("当前 AI 请求过多，请稍后重试");
+        }
+        // 熔断按「模块 + 上游地址」隔离，与 AiGatewayService.circuitKey 保持一致：
+        // 同一个上游挂掉时，Agent 与直连模型调用共享同一条熔断记录。
+        String circuitKey = MODULE + "|" + model.getBaseUrl();
+        GatewayCircuitBreaker.Admission circuitAdmission = circuitBreaker.tryAcquire(circuitKey);
+        if (circuitAdmission == null) {
+            concurrencyLease.release();
+            guard.settle(reservation, 0L);
+            throw new AgentCallException("AI 服务连续失败，已暂停调用，请 "
+                    + circuitBreaker.retryAfterSeconds(circuitKey) + " 秒后重试");
         }
 
         String requestId = UUID.randomUUID().toString();
@@ -112,6 +138,7 @@ public class HttpAgentModelClient implements AgentModelClient {
 
             int status = conn.getResponseCode();
             upstreamStatus = status;
+            recordCircuitHealth(circuitKey, status, circuitAdmission);
             if (status != 200) {
                 // 错误体只进日志，绝不拼进返回给浏览器的 message（可能含内网地址/上游堆栈）
                 log.warn("[Agent] 上游非 200, status={}, body={}",
@@ -130,6 +157,11 @@ public class HttpAgentModelClient implements AgentModelClient {
             auditWritten = true;
             return reply;
         } catch (AgentCallException e) {
+            // 读不到任何状态码（连接失败、写请求体失败）才记一次上游故障；
+            // 已经拿到 4xx/5xx 的由 recordCircuitHealth 按口径处理，避免重复计数。
+            if (upstreamStatus == 0) {
+                circuitBreaker.recordFailure(circuitAdmission);
+            }
             if (!auditWritten) {
                 writeAudit(inv, requestId, model.getUpstreamModel(), startedAt,
                         null, upstreamStatus, e.getMessage());
@@ -138,14 +170,25 @@ public class HttpAgentModelClient implements AgentModelClient {
         } catch (Exception e) {
             log.warn("[Agent] 模型调用失败, uid={}, runKey={}: {}",
                     inv.getUid(), inv.getRunKey(), e.getMessage());
+            if (upstreamStatus == 0) {
+                circuitBreaker.recordFailure(circuitAdmission);
+            }
             if (!auditWritten) {
                 writeAudit(inv, requestId, model.getUpstreamModel(), startedAt,
                         null, upstreamStatus, e.getMessage());
             }
             throw new AgentCallException("模型调用失败，请稍后重试", e);
         } finally {
+            // 先还并发许可再结算：结算要访问 Redis，不该让下一个请求陪着等
+            concurrencyLease.release();
+            circuitAdmission.release();
             // 失败全额释放预扣；成功按上游真实 usage 结算（多退少补）
             guard.settle(reservation, settledTokens);
+            // 未预扣（配额不限或 Redis 降级）时 settle 是空操作，这里补记真实用量，
+            // 否则 Agent 消耗的 Token 不会出现在「我的用量」里
+            if (!reservation.isActive() && settledTokens > 0) {
+                guard.addTokens(inv.getUid(), MODULE, settledTokens);
+            }
             if (conn != null) {
                 conn.disconnect();
             }
@@ -185,6 +228,21 @@ public class HttpAgentModelClient implements AgentModelClient {
         reply.setCompletionTokens(completion);
         reply.setTotalTokens(total);
         return reply;
+    }
+
+    /**
+     * 与 AiGatewayService 同一套口径：5xx 记失败，4xx 中性，其余视为上游可达。
+     * 4xx 不能替半开探针判成功，否则一个参数写错的请求就能把熔断提前恢复。
+     */
+    private void recordCircuitHealth(String key, Integer upstreamStatus,
+                                     GatewayCircuitBreaker.Admission admission) {
+        if (upstreamStatus != null && upstreamStatus >= 500) {
+            circuitBreaker.recordFailure(admission);
+        } else if (upstreamStatus != null && upstreamStatus >= 400) {
+            // 请求本身有问题：既不累加失败，也不替探针签字
+        } else {
+            circuitBreaker.recordSuccess(admission);
+        }
     }
 
     /** 审计日志只记元数据，不记提问与回答正文 */

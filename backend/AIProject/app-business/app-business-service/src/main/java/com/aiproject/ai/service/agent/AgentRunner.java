@@ -201,7 +201,9 @@ public class AgentRunner {
                     String toolError = null;
                     long toolStart = System.currentTimeMillis();
                     try {
-                        result = toolExecutor.execute(uid, tool, call.getArguments());
+                        // 空值由执行器回落到默认值；配置上限在 AgentConfigHolder 已校验
+                        result = toolExecutor.execute(uid, tool, call.getArguments(),
+                                agent.getToolTimeoutMs());
                     } catch (AgentCallException e) {
                         // 工具失败不直接终止：把错误回灌给模型，让它有机会换参数重试
                         result = "工具执行失败：" + e.getMessage();
