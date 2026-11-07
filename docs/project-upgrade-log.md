@@ -806,3 +806,40 @@ Phase 5 要求补齐备份与恢复，因此本轮针对真实 PostgreSQL 18.6 �
 
 **结论**：关系完整性与业务唯一性当前没有发现问题；唯一已知缺口是上述历史
 文档的内部键为空，记录在案，不作为本轮变更。
+
+## 2026-11-07（十六）：补齐「知识库文件」模块的 Dify 配置
+
+### 现象与根因
+
+知识库中心整页提示「知识库文件模块未配置」，列表与文档管理不可用。
+排查确认不是前端缺陷：
+
+- 前端 `isGatewayModuleConfigured('file')` 读取 `/api/aiGatewayStatus/config`，
+  后端 `AiGatewayConfigResolver.resolve("file")` 要求数据库中
+  「知识库文件」这一行同时有 `apiUrl` 与 `apiKey`；
+- `difyconfigbean` 的前两行（问答聊天对话、知识库对话/工作流）已配置，
+  第 3 行由 `DifyConfigDataRegister` 初始化时地址与密钥均为空，因此
+  `configured=false`，页面按设计展示配置引导而不是反复请求上游。
+
+### 处理
+
+- 从本机已存在且被 Git 忽略的 `frontend/.env.local` 取
+  `VITE_DIFY_KB_FILE_URL` / `VITE_DIFY_KB_FILE_KEY`，写入数据库
+  `difyconfigbean` 的「知识库文件」行（仅写库，密钥不进入仓库、不打印）、
+  并刷新 `updatetime`；
+- 写入前校验：地址必须是 `https://api.dify.ai/...`，密钥仅允许
+  `[A-Za-z0-9_-]`、长度 20–128；更新语句断言 `UPDATE 1`，避免误改多行；
+- 该模块需要的是 Dify **Dataset API 密钥**（`dataset-` 开头，32 位），
+  与聊天模块的 `app-` 密钥（28 位）不是同一种，填错会在首次调用时报鉴权失败。
+
+### 验证
+
+| 项目 | 实测 |
+|---|---|
+| 数据库第 3 行 | `https://api.dify.ai/v1`，`hasKey=yes`，`len=32` |
+| 更新影响行数 | 1（`UPDATE 1`） |
+| Dify 直连探测 | `GET /v1/datasets?page=1&limit=1` → HTTP 200（1960 字节） |
+| 是否需要重启 | 不需要；`resolve()` 每次请求实时查库，无进程内缓存 |
+
+浏览器端此前没有保留登录态，未在自动化浏览器里重放页面；页面刷新后会重新
+请求模块状态，`file.configured` 将由数据库实时计算为 `true`，配置引导消失。
