@@ -140,9 +140,10 @@ class AgentRunBeanControllerTest {
     void resume_shouldDelegateToAsyncDispatcherWhenAvailable() throws Exception {
         AiGatewayAsyncDispatcher dispatcher = mock(AiGatewayAsyncDispatcher.class);
         controller.asyncDispatcher = dispatcher;
-        when(dispatcher.dispatch(eq("agent/streamResume"), any(), any()))
+        when(dispatcher.dispatch(eq("agent/streamResume"), any(),
+                eq(AgentBeanController.AGENT_ASYNC_TIMEOUT_MS), any()))
                 .thenAnswer(invocation -> {
-                    AiGatewayAsyncDispatcher.AsyncRelay relay = invocation.getArgument(2);
+                    AiGatewayAsyncDispatcher.AsyncRelay relay = invocation.getArgument(3);
                     relay.run(AsyncResponseGate.create());
                     return new WebAsyncTask<Void>(() -> null);
                 });
@@ -162,9 +163,10 @@ class AgentRunBeanControllerTest {
         AiGatewayAsyncDispatcher dispatcher = mock(AiGatewayAsyncDispatcher.class);
         controller.asyncDispatcher = dispatcher;
         final AsyncResponseGate gate = AsyncResponseGate.create();
-        when(dispatcher.dispatch(eq("agent/streamResume"), any(), any()))
+        when(dispatcher.dispatch(eq("agent/streamResume"), any(),
+                eq(AgentBeanController.AGENT_ASYNC_TIMEOUT_MS), any()))
                 .thenAnswer(invocation -> {
-                    AiGatewayAsyncDispatcher.AsyncRelay relay = invocation.getArgument(2);
+                    AiGatewayAsyncDispatcher.AsyncRelay relay = invocation.getArgument(3);
                     relay.run(gate);
                     return new WebAsyncTask<Void>(() -> null);
                 });

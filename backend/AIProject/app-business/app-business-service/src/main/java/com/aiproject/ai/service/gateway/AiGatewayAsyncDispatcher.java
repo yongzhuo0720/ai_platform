@@ -58,6 +58,16 @@ public class AiGatewayAsyncDispatcher {
      *         表示已在当前线程同步执行完毕，调用方直接返回即可
      */
     public WebAsyncTask<Void> dispatch(String label, HttpServletRequest request, AsyncRelay relay) {
+        return dispatch(label, request, asyncTimeoutMs(), relay);
+    }
+
+    /**
+     * 指定容器级超时的重载，供 Agent 三条链路使用：它们的时长由
+     * AgentRunner 的总预算与工具超时决定，不该被网关的 maxStreamMs 影响。
+     * 管理员把 maxStreamMs 调小做流式治理时，Agent 仍保留自己的收尾余量。
+     */
+    public WebAsyncTask<Void> dispatch(String label, HttpServletRequest request,
+                                       long timeoutMs, AsyncRelay relay) {
         if (!properties.isAsyncDispatchEnabled()) {
             relay.run(AsyncResponseGate.NONE);
             return null;
@@ -75,7 +85,7 @@ public class AiGatewayAsyncDispatcher {
             return null;
         }
 
-        final long timeout = asyncTimeoutMs();
+        final long timeout = timeoutMs;
         final AsyncResponseGate gate = createGate(label, request, timeout);
 
         return new WebAsyncTask<Void>(timeout, executor, new Callable<Void>() {

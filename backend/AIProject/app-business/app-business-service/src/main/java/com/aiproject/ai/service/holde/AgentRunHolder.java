@@ -90,6 +90,17 @@ public class AgentRunHolder {
      * 供执行循环调用：落一条 running 运行记录。
      * 归属由调用方（已校验过 Agent 归属）传入，这里不再重复查库。
      */
+    /**
+     * 同一用户 + 同一 Agent 已有活动运行（部分唯一索引 idx_agentrun_active 拒绝）。
+     * 单独成类是为了让编排器能把它和真正的数据库故障区分开：
+     * 前者该提示用户等待，后者才该提示「读写失败、重试」。
+     */
+    public static class AgentRunConflictException extends RuntimeException {
+        public AgentRunConflictException(String message) {
+            super(message);
+        }
+    }
+
     public void start(String uid, Long agentIid, String question, String runKey) {
         AgentRunBean run = new AgentRunBean();
         run.setRunKey(runKey);
@@ -103,9 +114,47 @@ public class AgentRunHolder {
         run.setCostCents(0L);
         run.setStartedAt(System.currentTimeMillis());
         run.setLastuser(uid);
-        if (runMapper.install(run) != 1) {
-            throw new DataIntegrityViolationException("运行记录创建失败");
+        try {
+            if (runMapper.install(run) != 1) {
+                throw new DataIntegrityViolationException("运行记录创建失败");
+            }
+        } catch (RuntimeException e) {
+            // HNSP 的 SQL 执行层不保证把 PG 23505 映射成 Spring 的
+            // DuplicateKeyException，也不保证把原始 PG 消息带进异常：
+            // 实测只把「重复键违反唯一约束」打进日志，异常本身是泛化的 DAO 异常。
+            // 因此先看消息，再以「库里是否已有活动运行」这个事实兜底。
+            if (isActiveRunConflict(e) || hasActiveRun(uid, agentIid)) {
+                throw new AgentRunConflictException("当前 Agent 已有运行中的任务，请等它结束再发起");
+            }
+            throw e;
         }
+    }
+
+    /** 不依赖框架异常格式：直接确认并发闸门里是否已有该用户该 Agent 的活动运行 */
+    private boolean hasActiveRun(String uid, Long agentIid) {
+        try {
+            AgentRunBean where = new AgentRunBean();
+            where.setAgentIid(agentIid);
+            where.setLastuser(uid);
+            where.setStatus("running");
+            List<AgentRunBean> rows = runMapper.select(null, where);
+            return rows != null && !rows.isEmpty();
+        } catch (RuntimeException ignored) {
+            // 复查本身失败时不能把真实 DB 故障误判成并发冲突
+            return false;
+        }
+    }
+
+    private static boolean isActiveRunConflict(Throwable error) {
+        for (Throwable t = error; t != null && t != t.getCause(); t = t.getCause()) {
+            String message = t.getMessage();
+            if (message != null && (message.contains("idx_agentrun_active")
+                    || message.contains("23505") || message.contains("duplicate key")
+                    || message.contains("重复键") || message.contains("唯一约束"))) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /** 逐步落追踪明细；工具参数与结果已在执行器侧做过截断 */

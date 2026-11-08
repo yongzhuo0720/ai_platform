@@ -66,8 +66,10 @@ public class AgentBeanController {
     @Qualifier("aiGatewayExecutor")
     AsyncTaskExecutor agentExecutor;
 
-    /** 同步接口容器级超时：Agent 总预算 120 秒 + 工具超时/收尾余量 */
-    private static final long RUN_ASYNC_TIMEOUT_MS = 300_000L;
+    /** Agent 三条链路共用：总预算 120 秒 + 工具超时上限 120 秒 + 收尾余量 */
+    static final long AGENT_ASYNC_TIMEOUT_MS = 300_000L;
+
+    private static final long RUN_ASYNC_TIMEOUT_MS = AGENT_ASYNC_TIMEOUT_MS;
 
     @ApiOperation(value = "配置列表", httpMethod = "POST")
     @PostMapping("/list")
@@ -145,6 +147,7 @@ public class AgentBeanController {
             return null;
         }
         return asyncDispatcher.dispatch("agent/streamRun", request,
+                AGENT_ASYNC_TIMEOUT_MS,
                 gate -> streamRunSync(uid, data, response, gate));
     }
 

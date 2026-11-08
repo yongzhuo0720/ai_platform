@@ -24,6 +24,7 @@ import java.util.List;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -34,6 +35,7 @@ import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.isNull;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.inOrder;
@@ -110,6 +112,23 @@ class AgentRunnerTest {
         when(toolHolder.listForRun(UID, 7L)).thenReturn(tools);
         when(runHolder.detail(anyString(), anyString()))
                 .thenReturn(Result.succeed(new AgentRunDetail(), "查询成功"));
+    }
+
+    @Test
+    void run_shouldExplainActiveRunConflictWithoutCallingModel() throws Exception {
+        // 冲突在 start() 就返回，不要 stub 后续才用到的 detail / toolHolder，
+        // 否则 Mockito 严格模式会报 UnnecessaryStubbingException
+        when(configHolder.findByKey(UID, KEY)).thenReturn(agent(8, 20000L));
+        doThrow(new AgentRunHolder.AgentRunConflictException(
+                "当前 Agent 已有运行中的任务，请等它结束再发起"))
+                .when(runHolder).start(eq(UID), any(), anyString(), anyString());
+
+        Result<AgentRunDetail> result = runner.run(UID, KEY, "问题");
+
+        assertNotEquals(0, result.getResp_code());
+        assertTrue(result.getResp_msg().contains("已有运行中的任务"));
+        assertFalse(result.getResp_msg().contains("读写失败"));
+        verify(modelClient, never()).call(any(AgentInvocation.class));
     }
 
     @Test

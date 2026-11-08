@@ -91,6 +91,22 @@ class AiGatewayAsyncDispatcherTest {
     }
 
     @Test
+    void agentDispatch_shouldUseExplicitTimeoutInsteadOfGatewayMaxStream() {
+        MockHttpServletRequest request = new MockHttpServletRequest();
+        request.setAsyncSupported(true);
+        ReflectionTestUtils.setField(dispatcher, "executor", mock(AsyncTaskExecutor.class));
+        properties.setMaxStreamMs(10_000);
+
+        WebAsyncTask<Void> task = dispatcher.dispatch("agent/streamRun", request,
+                300_000L, gate -> { });
+
+        assertNotNull(task);
+        // 管理员把网关流式时长调到 10 秒，Agent 仍保留 300 秒收尾余量
+        assertEquals(300_000L, task.getTimeout().longValue());
+        assertTrue(task.getTimeout() != dispatcher.asyncTimeoutMs());
+    }
+
+    @Test
     void containerErrorClosesGateBeforeResponseIsRecycled() throws Exception {
         MockHttpServletRequest request = new MockHttpServletRequest();
         AsyncResponseGate gate = dispatcher.createGate("chat", request, 1000L);

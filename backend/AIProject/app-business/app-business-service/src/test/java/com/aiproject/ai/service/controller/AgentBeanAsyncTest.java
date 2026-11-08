@@ -184,9 +184,10 @@ class AgentBeanAsyncTest {
         AiGatewayAsyncDispatcher dispatcher = mock(AiGatewayAsyncDispatcher.class);
         controller.asyncDispatcher = dispatcher;
         when(dispatcher.dispatch(eq("agent/streamRun"), any(MockHttpServletRequest.class),
+                eq(AgentBeanController.AGENT_ASYNC_TIMEOUT_MS),
                 any(AiGatewayAsyncDispatcher.AsyncRelay.class)))
                 .thenAnswer(invocation -> {
-                    AiGatewayAsyncDispatcher.AsyncRelay relay = invocation.getArgument(2);
+                    AiGatewayAsyncDispatcher.AsyncRelay relay = invocation.getArgument(3);
                     relay.run(AsyncResponseGate.create());
                     return new WebAsyncTask<Void>(() -> null);
                 });
@@ -196,7 +197,8 @@ class AgentBeanAsyncTest {
                 new MockHttpServletRequest(), response);
 
         assertNotNull(task, "生产环境应交给中继线程池执行");
-        verify(dispatcher).dispatch(eq("agent/streamRun"), any(), any());
+        verify(dispatcher).dispatch(eq("agent/streamRun"), any(),
+                eq(AgentBeanController.AGENT_ASYNC_TIMEOUT_MS), any());
         assertTrue(response.getContentAsString().contains("event: agent_start"));
     }
 
@@ -206,9 +208,10 @@ class AgentBeanAsyncTest {
         controller.asyncDispatcher = dispatcher;
         final AsyncResponseGate gate = AsyncResponseGate.create();
         when(dispatcher.dispatch(eq("agent/streamRun"), any(MockHttpServletRequest.class),
+                eq(AgentBeanController.AGENT_ASYNC_TIMEOUT_MS),
                 any(AiGatewayAsyncDispatcher.AsyncRelay.class)))
                 .thenAnswer(invocation -> {
-                    AiGatewayAsyncDispatcher.AsyncRelay relay = invocation.getArgument(2);
+                    AiGatewayAsyncDispatcher.AsyncRelay relay = invocation.getArgument(3);
                     relay.run(gate);
                     return new WebAsyncTask<Void>(() -> null);
                 });

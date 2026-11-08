@@ -16,6 +16,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.dao.DataAccessException;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.dao.DuplicateKeyException;
 
 import java.util.ArrayList;
@@ -54,6 +55,46 @@ class AgentRunHolderTest {
         s.setStepNo(no);
         s.setStepType("tool");
         return s;
+    }
+
+    @Test
+    void start_shouldTranslateActiveRunConflictIntoActionableMessage() {
+        when(runMapper.install(any(AgentRunBean.class))).thenThrow(
+                new DataIntegrityViolationException(
+                        "ERROR: duplicate key value violates unique constraint \"idx_agentrun_active\""));
+
+        AgentRunHolder.AgentRunConflictException e = assertThrows(
+                AgentRunHolder.AgentRunConflictException.class,
+                () -> holder.start(UID, 2L, "问题", "run-1"));
+
+        assertTrue(e.getMessage().contains("已有运行中的任务"));
+    }
+
+    @Test
+    void start_shouldDetectConflictFromDatabaseWhenExceptionMessageIsGeneric() {
+        // 框架只打日志、异常消息是泛化文案时，仍要靠「库里已有活动运行」判定
+        when(runMapper.install(any(AgentRunBean.class)))
+                .thenThrow(new DataIntegrityViolationException("数据操作异常"));
+        AgentRunBean active = new AgentRunBean();
+        active.setStatus("running");
+        when(runMapper.select(any(), any(AgentRunBean.class)))
+                .thenReturn(Collections.singletonList(active));
+
+        AgentRunHolder.AgentRunConflictException e = assertThrows(
+                AgentRunHolder.AgentRunConflictException.class,
+                () -> holder.start(UID, 2L, "问题", "run-1"));
+
+        assertTrue(e.getMessage().contains("已有运行中的任务"));
+    }
+
+    @Test
+    void start_shouldNotMisreportRealDatabaseFailureAsConflict() {
+        org.springframework.dao.DataAccessResourceFailureException dbDown =
+                new org.springframework.dao.DataAccessResourceFailureException("connection refused");
+        when(runMapper.install(any(AgentRunBean.class))).thenThrow(dbDown);
+
+        assertSame(dbDown, assertThrows(DataAccessException.class,
+                () -> holder.start(UID, 2L, "问题", "run-1")));
     }
 
     @Test

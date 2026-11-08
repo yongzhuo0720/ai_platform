@@ -103,7 +103,12 @@ public class AgentRunner {
 
         String runKey = UUID.randomUUID().toString().replace("-", "");
         long startedAt = System.currentTimeMillis();
-        runHolder.start(uid, agent.getIid(), question.trim(), runKey);
+        try {
+            runHolder.start(uid, agent.getIid(), question.trim(), runKey);
+        } catch (AgentRunHolder.AgentRunConflictException e) {
+            // 并发闸门按设计拒绝；明确告诉用户等，避免误报成数据库故障让他反复重试
+            return Result.failed(null, e.getMessage());
+        }
 
         int stepNo = 0;
         int iterations = 0;

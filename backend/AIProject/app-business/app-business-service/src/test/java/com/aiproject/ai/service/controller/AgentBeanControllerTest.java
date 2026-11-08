@@ -228,7 +228,11 @@ class AgentBeanControllerTest {
         controller.streamRun(UID, request(), response);
 
         assertEquals(Collections.singletonList("agent_error"), events(response));
-        assertEquals("运行记录发生并发冲突，请重试", data(response.frames.get(0)).path("message").asText());
+        String message = data(response.frames.get(0)).path("message").asText();
+        // 并发闸门现在给出可操作的提示（与前端 E2E 预期一致），
+        // 且仍然不能把底层 DB 原文带到浏览器
+        assertEquals("当前 Agent 已有运行中的任务，请等它结束再发起", message);
+        assertFalse(message.contains("private-db-message"));
         verifyNoInteractions(modelClient, toolExecutor);
     }
 

@@ -83,6 +83,7 @@ public class AgentRunBeanController {
             return null;
         }
         return asyncDispatcher.dispatch("agent/streamResume", request,
+                AgentBeanController.AGENT_ASYNC_TIMEOUT_MS,
                 gate -> streamResumeSync(uid, data, lastEventIdHeader, response, gate));
     }
 
