@@ -16,6 +16,13 @@ public class ModelReply {
 
     private String content = "";
 
+    /**
+     * 部分推理模型把思考过程放在 reasoning_content / reasoning，只在 content
+     * 里放最终结论。这里单独保留，用于区分「模型只给了推理、没给答案」与
+     * 「上游完全空回复」——两者的排查方向完全不同，不能共用一句提示。
+     */
+    private String reasoningContent = "";
+
     private List<ToolCall> toolCalls = new ArrayList<ToolCall>();
 
     private String finishReason;

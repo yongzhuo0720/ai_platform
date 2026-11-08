@@ -911,3 +911,59 @@ Phase 5 要求补齐备份与恢复，因此本轮针对真实 PostgreSQL 18.6 �
 - 真实对话模型（含 `tool_calls` 能力）的上游联调仍待可用密钥，本轮前后端验证均使用
   本地 mock 上游或已落库步骤，未冒充真实模型效果。
 
+---
+
+## 2026-11-08（十八）：推理模型空回复的可解释诊断 + 验证补强
+
+### 背景
+
+第六轮把「空内容且无工具调用」改为明确失败，但留下一条已知限制：只返回
+`reasoning_content` 而没有 `content` 的模型会被判为空回复，用户只看到
+「模型未返回内容，请重试或更换模型」——这会把**模型/提示词不匹配**误导成
+**偶发故障**，让用户反复重试、继续烧 Token。网关侧 `AiGatewayUsageParser` 早已
+识别 `reasoning_content` 作为「模型已产出 token」，Agent 链路口径不一致。
+
+### 已完成
+
+- `ModelReply` 新增 `reasoningContent`；`HttpAgentModelClient.parse` 同时识别
+  `reasoning_content` 与 `reasoning` 两种字段名，与网关口径对齐；
+- `AgentRunner` 区分两类空回复：只有推理 → 提示「请在提示词中明确要求输出结论，
+  或更换直接输出 content 的模型」；两者皆空 → 保持原提示；
+- 把推理内容**截断写进 error 步骤的 `toolResult`**，时间线里能直接看到
+  「模型想了但没给结论」，而不是只有一句失败文案。复用已有字段，未加 DDL；
+- 补 3 组单测：两种字段名的解析、两类空回复的文案与步骤内容区分、
+  **同轮混合 `kb_search` + `builtin` 两种工具且其中一个失败**时两个结果都要
+  回灌的部分成功语义（补上第八轮记的验收空白）。
+
+### 变更文件
+
+`ModelReply.java`、`HttpAgentModelClient.java`、`AgentRunner.java`、
+`AgentRunnerTest.java`、`HttpAgentModelClientTest.java`、`README.md`、
+`docs/项目说明-通俗版.md`。**前端未改**。
+
+### 验证
+
+| 项目 | 实测 |
+|---|---|
+| 后端 `mvn -o test` | **705 项 / 64 份报告，0 失败 / 0 错误 / 0 跳过**（service 597 + permission 71 + app-start 30 + app-common 7；本轮 +3 项） |
+| 前端 | 本轮未改动，沿用 11-07 基线：逻辑 26 文件 / 303 项、组件 30 文件 / 300 项、E2E 23 项 |
+
+### 评估后本轮不做（附理由，避免误读为遗漏）
+
+- **Agent 运行异步化**：这是剩余清单里价值最高的架构缺口（一次运行仍占住 Web 线程）。
+  但复用 `AiGatewayAsyncDispatcher` 需要改 `/streamRun` 的返回签名、接入
+  `AsyncResponseGate` / 心跳 / 容器取消回调，并重写 `AgentBeanControllerTest` 里
+  一批同步路径断言。夜里硬上会变成「无异步路径测试覆盖的大块状态机改动」——
+  正是本日志多次记下的失败模式。建议单独一轮：**先写异步路径测试，再迁移**。
+- **多用户并发争抢配额压测**：刻意不写多线程 mock 单测（mock Redis 的并发用例
+  容易 flaky，反而污染门禁）。应在真实 Redis 环境用一次性脚本联调，与第十一轮同口径。
+- **刷新到全新设备后自动续播**：需要在多个 composable 间协调 Agent 列表加载时机，
+  改动面与收益不匹配；当前续播依赖本次页面记住 `runKey`，已够覆盖网络抖动。
+
+### 已知限制
+
+- 推理内容复用 `toolResult` 展示，没有做成独立可折叠字段（避免加 DDL 与前端改版）；
+- 真实推理模型的 `tool_calls` 上游联调仍待可用密钥；
+- 其余遗留（Agent 同步占线程、`Last-Event-ID` 跨设备同步、每密钥配额细分、
+  SSO Token 字段加密、PITR）照旧，见前几轮与 `README.md`「已知限制」。
+

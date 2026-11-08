@@ -18,6 +18,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.dao.DataAccessException;
 
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
@@ -217,6 +218,76 @@ class AgentRunnerTest {
                 eq(10L), eq(0L), eq(0L), anyLong(), eq(""), error.capture());
         assertTrue(error.getValue().contains("未返回内容"));
         verify(modelClient, times(1)).call(any(AgentInvocation.class));
+    }
+
+    @Test
+    void run_shouldExplainReasoningOnlyReplyDistinctlyFromBlankReply() throws Exception {
+        stubRun(agent(8, 20000L), new ArrayList<AgentToolBean>());
+        ModelReply reply = answer("", 10L, 5L);
+        reply.setReasoningContent("让我先分析一下这个问题……");
+        when(modelClient.call(any(AgentInvocation.class))).thenReturn(reply);
+
+        runner.run(UID, KEY, "问题");
+
+        ArgumentCaptor<String> error = ArgumentCaptor.forClass(String.class);
+        verify(runHolder).finish(eq(UID), anyString(), eq("failed"), eq(1),
+                anyLong(), anyLong(), anyLong(), anyLong(), eq(""), error.capture());
+        assertTrue(error.getValue().contains("推理内容"));
+        assertTrue(error.getValue().contains("结论"), "应给出可操作的排查方向，而不是让用户盲目重试");
+        // 推理内容要留在错误步骤里，用户能在时间线上看到模型实际产出了什么
+        ArgumentCaptor<String> stepResult = ArgumentCaptor.forClass(String.class);
+        verify(runHolder).addStep(eq(UID), anyString(), anyInt(), anyInt(), eq("error"),
+                isNull(), isNull(), stepResult.capture(), eq("failed"),
+                anyLong(), anyLong(), anyLong(), anyLong(), any(), isNull());
+        assertTrue(stepResult.getValue().contains("先分析一下这个问题"));
+        verify(modelClient, times(1)).call(any(AgentInvocation.class));
+    }
+
+    @Test
+    void run_shouldReplayMixedToolTypesWithPartialFailure() throws Exception {
+        AgentToolBean clock = new AgentToolBean();
+        clock.setAgentIid(7L);
+        clock.setName("clock");
+        clock.setToolType("builtin");
+        clock.setJsonSchema("{\"type\":\"object\",\"properties\":{}}");
+        stubRun(agent(8, 20000L), Arrays.asList(tool(), clock));
+
+        ModelReply.ToolCall kb = new ModelReply.ToolCall();
+        kb.setId("c1");
+        kb.setName("kb_search");
+        kb.setArguments("{\"query\":\"报销\"}");
+        ModelReply.ToolCall builtin = new ModelReply.ToolCall();
+        builtin.setId("c2");
+        builtin.setName("clock");
+        builtin.setArguments("{}");
+        ModelReply first = answer("", 10L, 5L);
+        first.setFinishReason("tool_calls");
+        first.getToolCalls().add(kb);
+        first.getToolCalls().add(builtin);
+
+        when(modelClient.call(any(AgentInvocation.class)))
+                .thenReturn(first).thenReturn(answer("最终回答", 20L, 8L));
+        when(toolExecutor.execute(eq(UID), any(AgentToolBean.class),
+                eq("{\"query\":\"报销\"}"), any())).thenReturn("制度第3条");
+        when(toolExecutor.execute(eq(UID), any(AgentToolBean.class), eq("{}"), any()))
+                .thenThrow(new AgentCallException("工具执行超时"));
+
+        runner.run(UID, KEY, "问题");
+
+        ArgumentCaptor<AgentInvocation> invocations = ArgumentCaptor.forClass(AgentInvocation.class);
+        verify(modelClient, times(2)).call(invocations.capture());
+        List<Map<String, Object>> messages = invocations.getAllValues().get(1).getMessages();
+        List<String> toolResults = new ArrayList<String>();
+        for (Map<String, Object> message : messages) {
+            if ("tool".equals(message.get("role"))) {
+                toolResults.add(String.valueOf(message.get("content")));
+            }
+        }
+        assertEquals(2, toolResults.size(), "同轮两个工具都要回灌，失败的那个也要给模型纠错机会");
+        assertTrue(toolResults.contains("制度第3条"));
+        assertTrue(toolResults.stream().anyMatch(text -> text.contains("工具执行失败")));
+        verify(runHolder).finish(eq(UID), anyString(), eq("succeeded"), eq(2),
+                anyLong(), anyLong(), anyLong(), anyLong(), eq("最终回答"), isNull());
     }
 
     @Test

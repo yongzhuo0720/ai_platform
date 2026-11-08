@@ -203,6 +203,13 @@ public class HttpAgentModelClient implements AgentModelClient {
 
         ModelReply reply = new ModelReply();
         reply.setContent(message.path("content").asText(""));
+        JsonNode reasoning = message.get("reasoning_content");
+        if (reasoning == null || reasoning.isNull()) {
+            reasoning = message.get("reasoning");
+        }
+        if (reasoning != null && !reasoning.isNull()) {
+            reply.setReasoningContent(reasoning.asText(""));
+        }
         reply.setFinishReason(choice.path("finish_reason").asText(""));
         reply.setModelName(modelName);
         reply.setRequestId(requestId);

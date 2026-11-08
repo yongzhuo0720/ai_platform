@@ -296,6 +296,24 @@ class HttpAgentModelClientTest {
     }
 
     @Test
+    void call_shouldExposeReasoningContentWhenModelOmitsFinalAnswer() throws Exception {
+        stubModel();
+        responseBody = "{\"choices\":[{\"message\":{\"content\":\"\","
+                + "\"reasoning_content\":\"先分析再作答\"},\"finish_reason\":\"stop\"}],"
+                + "\"usage\":{\"prompt_tokens\":10,\"completion_tokens\":20,\"total_tokens\":30}}";
+        ModelReply first = client.call(invocation());
+        assertEquals("", first.getContent());
+        assertEquals("先分析再作答", first.getReasoningContent());
+
+        // 部分上游用 reasoning 而不是 reasoning_content，同样要能识别
+        responseBody = "{\"choices\":[{\"message\":{\"content\":null,\"reasoning\":\"思考中\"},"
+                + "\"finish_reason\":\"stop\"}],\"usage\":{\"total_tokens\":5}}";
+        ModelReply second = client.call(invocation());
+        assertEquals("", second.getContent());
+        assertEquals("思考中", second.getReasoningContent());
+    }
+
+    @Test
     void call_shouldRejectWhenModelIsNotConfigured() {
         when(modelGatewayResolver.resolve(eq(1L))).thenReturn(null);
 

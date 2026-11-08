@@ -167,10 +167,24 @@ public class AgentRunner {
                     // 空回复不能算成功：用户拿到的是「运行成功 + 空白答案」，
                     // 既无法判断是模型拒绝、内容过滤还是上游异常
                     if (content.trim().isEmpty()) {
-                        error = "模型未返回内容，请重试或更换模型";
+                        String reasoning = reply.getReasoningContent() == null
+                                ? "" : reply.getReasoningContent();
+                        if (!reasoning.trim().isEmpty()) {
+                            // 推理模型只吐了思考过程没给结论：提示换模型或改提示词，
+                            // 而不是笼统地说「未返回内容」让用户盲目重试
+                            error = "模型只返回了推理内容，未给出最终答案；请在提示词中明确要求输出结论，或更换直接输出 content 的模型";
+                            log.info("[Agent] 仅收到推理内容, uid={}, runKey={}, chars={}",
+                                    uid, runKey, reasoning.length());
+                        } else {
+                            error = "模型未返回内容，请重试或更换模型";
+                        }
                         stepNo++;
+                        // 把推理内容截断留在错误步骤里，用户能在时间线上看到
+                        // 「模型想了但没给结论」，而不是只看到一句笼统的失败提示
+                        String reasoningHint = reasoning.trim().isEmpty() ? null
+                                : "模型只输出了推理内容（未给出结论）：" + truncate(reasoning);
                         recordStep(listener, uid, runKey, stepNo, iteration, "error", null, null,
-                                null, "failed", 0L, 0L, 0L, 0L, truncate(error), null);
+                                reasoningHint, "failed", 0L, 0L, 0L, 0L, truncate(error), null);
                         break;
                     }
                     answer = content;
