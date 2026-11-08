@@ -14,6 +14,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.springframework.core.MethodParameter;
+import org.springframework.core.task.AsyncTaskExecutor;
 import org.springframework.scheduling.concurrent.ConcurrentTaskExecutor;
 import org.springframework.mock.web.MockHttpServletRequest;
 import org.springframework.mock.web.MockHttpServletResponse;
@@ -36,6 +37,7 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 import static org.springframework.test.web.servlet.setup.MockMvcBuilders.standaloneSetup;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
@@ -92,6 +94,38 @@ class AgentBeanAsyncTest {
                     listener.onStart("run-async");
                     return Result.succeed(detail("succeeded"), "查询成功");
                 });
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void runAsync_shouldReturnDetailThroughBoundedExecutor() throws Exception {
+        AsyncTaskExecutor executor = mock(AsyncTaskExecutor.class);
+        controller.agentExecutor = executor;
+        when(runner.run(eq(UID), any(), any()))
+                .thenReturn(Result.succeed(detail("succeeded"), "查询成功"));
+
+        WebAsyncTask<Result<AgentRunDetail>> task = controller.runAsync(UID, request());
+
+        assertNotNull(task);
+        // getCallable() 返回 Callable<?>，用 Object 中转后再还原泛型
+        Object raw = task.getCallable().call();
+        Result<AgentRunDetail> result = (Result<AgentRunDetail>) raw;
+        assertEquals(0, result.getResp_code());
+        assertEquals("run-async", result.getDatas().getRun().getRunKey());
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void runAsync_shouldStillWorkWhenExecutorIsNotInjected() throws Exception {
+        when(runner.run(eq(UID), any(), any()))
+                .thenReturn(Result.succeed(detail("failed"), "查询成功"));
+
+        WebAsyncTask<Result<AgentRunDetail>> task = controller.runAsync(UID, request());
+
+        assertNotNull(task, "测试环境没注入线程池时由 MVC 默认执行器兜底");
+        Object raw = task.getCallable().call();
+        Result<AgentRunDetail> result = (Result<AgentRunDetail>) raw;
+        assertEquals("failed", result.getDatas().getRun().getStatus());
     }
 
     @Test

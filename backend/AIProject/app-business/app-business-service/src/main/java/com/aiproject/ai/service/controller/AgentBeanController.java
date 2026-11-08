@@ -17,6 +17,8 @@ import io.swagger.annotations.Api;
 import io.swagger.annotations.ApiOperation;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.core.task.AsyncTaskExecutor;
 import org.springframework.dao.DataAccessException;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -31,6 +33,7 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.util.Collections;
 import java.util.List;
+import java.util.concurrent.Callable;
 
 /**
  * Agent 配置接口。
@@ -57,6 +60,14 @@ public class AgentBeanController {
      */
     @Autowired(required = false)
     AiGatewayAsyncDispatcher asyncDispatcher;
+
+    /** 同步运行接口复用同一个有界中继线程池，避免每次调用新建线程 */
+    @Autowired(required = false)
+    @Qualifier("aiGatewayExecutor")
+    AsyncTaskExecutor agentExecutor;
+
+    /** 同步接口容器级超时：Agent 总预算 120 秒 + 工具超时/收尾余量 */
+    private static final long RUN_ASYNC_TIMEOUT_MS = 300_000L;
 
     @ApiOperation(value = "配置列表", httpMethod = "POST")
     @PostMapping("/list")
@@ -85,10 +96,25 @@ public class AgentBeanController {
         return agentConfigHolder.delete(uid, data == null ? null : data.getIid());
     }
 
-    @ApiOperation(value = "运行 Agent", httpMethod = "POST", notes = "同步执行工具调用循环，返回运行详情")
+    /**
+     * 同步运行入口（外部脚本 / 非 SSE 场景）。返回类型仍是「一次 HTTP 请求 = 一个结果」，
+     * 但整段执行循环交给有界中继线程池，不再占住 Tomcat 请求线程。
+     */
+    @ApiOperation(value = "运行 Agent", httpMethod = "POST", notes = "同步返回运行详情，服务端异步执行")
     @PostMapping("/run")
-    public Result<AgentRunDetail> run(@LoginUserId String uid,
-                                      @RequestBody(required = false) AgentRunRequest data) {
+    public WebAsyncTask<Result<AgentRunDetail>> runAsync(@LoginUserId String uid,
+                                                         @RequestBody(required = false) AgentRunRequest data) {
+        Callable<Result<AgentRunDetail>> task = () -> run(uid, data);
+        if (agentExecutor == null) {
+            // 未注入线程池（测试直接 new Controller）：由 Spring MVC 默认执行器兜底
+            return new WebAsyncTask<>(RUN_ASYNC_TIMEOUT_MS, task);
+        }
+        return new WebAsyncTask<>(RUN_ASYNC_TIMEOUT_MS, agentExecutor, task);
+    }
+
+    /** 包内可见的同步实现：既有单元测试直接调用，保持三参数契约不变 */
+    Result<AgentRunDetail> run(@LoginUserId String uid,
+                               @RequestBody(required = false) AgentRunRequest data) {
         // 与 /streamRun 保持同一套异常分级：唯一索引冲突要给人能懂的提示，
         // 数据库异常不能把原始 SQL / 堆栈通过 resp_msg 带回浏览器。
         try {

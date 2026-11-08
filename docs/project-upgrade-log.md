@@ -1025,3 +1025,66 @@ README 与通俗版都把「Agent 运行仍同步占用 Web 线程」列为已�
   `WebAsyncTask` 生命周期，但真实 Tomcat 线程池下的并发表现、长时间运行与
   客户端强杀仍建议下一轮起一次本地全栈验证。
 
+---
+
+## 2026-11-08（二十）：`/run` 异步化 + 全栈真实启动复核
+
+### 背景
+
+第十九轮把 `/streamRun` 迁到异步后，仍剩 `/run`（外部脚本用的同步接口）占
+Tomcat 请求线程；同时该轮把「未做全栈真实启动复核」列为已知限制。本轮一次补齐。
+
+### 已完成
+
+- **`/run` 改为 `WebAsyncTask<Result<AgentRunDetail>>`**：显式复用
+  `@Qualifier("aiGatewayExecutor")` 的有界线程池（容器级超时 300 秒，覆盖
+  Agent 120 秒总预算 + 工具超时 + 收尾）；HTTP 语义仍是「一次请求 = 一个结果」，
+  调用方无需改动。未注入线程池时由 Spring MVC 默认执行器兜底。
+  与 `/streamRun` 同一手法：保留包内同步 `run(uid, data)` 供既有测试直接调用，
+  `runAsync` 才是带 `@PostMapping` 的入口，既有断言零改动。
+- 新增 2 项单测：带线程池与不带线程池两种路径都能返回正确的运行详情。
+
+### 全栈真实启动复核（真实 PostgreSQL + Redis + fat jar，非 mock）
+
+用 `scripts/start.ps1 -BackendOnly -JavaHome ...` 重新 `mvn -o clean package`
+（43 秒 BUILD SUCCESS，避免旧 jar 假成功），后端最终在 8507 完整启动：
+
+| 检查项 | 实测 |
+|---|---|
+| 打包 | `mvn -o clean package -DskipTests` **BUILD SUCCESS**，7 模块全绿 |
+| 启动 | `Tomcat started on port(s): 8507 (http) with context path '/ai'`，`Started AppStartApplication`；日志中**无** `Ambiguous mapping` / `Error creating bean` / `APPLICATION FAILED` |
+| 健康检查 | `GET /ai/actuator/health` → **HTTP 200 `{"status":"UP"}`** |
+| `/api/agentBean/streamRun` | **HTTP 200**，`resp_code=20102 请先登录`（不是 404 → 新的 4 参数映射已注册，鉴权生效） |
+| `/api/agentBean/run` | **HTTP 200**，`resp_code=20102 请先登录`（`runAsync` 映射已注册） |
+| `/api/agentRunBean/streamResume` | **HTTP 200**，`resp_code=20102 请先登录`（续播映射正常） |
+| 清理 | 后端与 PG 进程已停、陈旧 `postmaster.pid` 已清、临时日志已删；Redis 是原本就在运行的实例，未动 |
+
+**环境踩坑（供下次复核复用）**：
+1. 启动脚本用 `Start-Process` 拉起的 java/postgres 会随后台任务结束被回收，
+   表现为脚本报告「端口已就绪」但随后 `netstat` 查不到监听。改为把
+   `java -jar` 与 `postgres.exe -D ...` 各自作为**受控后台任务**启动，才能稳定驻留并精确停止。
+2. 会话里有 `HTTP_PROXY=http://127.0.0.1:49676`，直接 curl 本地端口会被代理接管返回 502；
+   必须 `curl --noproxy '*'`（星号要加引号，否则被 shell glob 展开成文件名、
+   请求会跑偏到外部站点）。
+3. PG 被强杀会留 `postmaster.pid`，下次启动会拒绝；项目脚本与本轮都按
+   「PID 不存在则删除」处理。
+
+### 验证
+
+| 项目 | 实测 |
+|---|---|
+| 后端 `mvn -o test` | **713 项，0 失败 / 0 错误 / 0 跳过**（service 605 + permission 71 + app-start 30 + app-common 7；本轮 +2 项） |
+| 前端 | 本轮未改，沿用基线：逻辑 26 文件 / 303 项、组件 30 文件 / 300 项、E2E 23 项 |
+| 全栈 | 见上表，真实 jar + 真实 PG/Redis |
+
+### 已知限制
+
+- **未登录态只验证了路由与鉴权，没有真实跑一次 Agent 运行**：需要本地库种子账号
+  与可用模型密钥，且不该在复核里留下运行记录/计费；建议按第十一轮的方式用一次性
+  脚本单独联调。
+- **`/streamResume`（只读续播，单次最长 30 秒）仍同步占请求线程**，
+  后续可与 `/run` 同法迁移。
+- 容器异步超时仍复用网关 `maxStreamMs`；管理员把它调到 120 秒以下会让长运行被提前结束。
+- 真实多实例 / 跨机器网络分区、多用户并发争抢配额压测、SSO Token 字段加密、
+  备份 PITR 等照旧，见前几轮与 `README.md`「已知限制」。
+
