@@ -1082,9 +1082,76 @@ Tomcat 请求线程；同时该轮把「未做全栈真实启动复核」列为�
 - **未登录态只验证了路由与鉴权，没有真实跑一次 Agent 运行**：需要本地库种子账号
   与可用模型密钥，且不该在复核里留下运行记录/计费；建议按第十一轮的方式用一次性
   脚本单独联调。
-- **`/streamResume`（只读续播，单次最长 30 秒）仍同步占请求线程**，
-  后续可与 `/run` 同法迁移。
+- `/streamResume` 当时仍同步占请求线程，已在**第二十一轮**按同法迁移。
 - 容器异步超时仍复用网关 `maxStreamMs`；管理员把它调到 120 秒以下会让长运行被提前结束。
 - 真实多实例 / 跨机器网络分区、多用户并发争抢配额压测、SSO Token 字段加密、
   备份 PITR 等照旧，见前几轮与 `README.md`「已知限制」。
+
+---
+
+## 2026-11-08（二十一）：续播异步化 + 登录后真实 Agent 三链路联调
+
+### 背景
+
+第二十轮把 `/run` 异步化后，只剩 `/streamResume`（只读续播，短轮询最多 30 秒）
+占 Web 线程；同时该轮把「未登录态只验证路由，没有真实跑一次 Agent」列为空白。
+本轮一次补齐，Agent 三条执行链路全部迁到中继线程池。
+
+### 已完成
+
+- `/streamResume` 改为返回 `WebAsyncTask<Void>`，可选注入
+  `AiGatewayAsyncDispatcher`、为 null 时同步回退；`SseListener` 绑定
+  `AsyncResponseGate`，容器取消后拒绝写帧、轮询条件 `!isDisconnected()`
+  立即退出（不会空转到 30 秒）。帧格式、请求体、`Last-Event-ID` 头完全不变。
+  同样保留四参数包内同步重载供既有测试，零改动。
+- 新增 2 项单测：异步委托返回 `WebAsyncTask`、门闸取消后 `detail()` 只查一次
+  （验证提前停机）。后端 `mvn -o test` **715 项全绿**。
+
+### 登录后真实 Agent 三链路联调（真实 PG + Redis + 本地 mock 上游）
+
+按第四/第十一轮的既有做法：`/ai/uaccess/logintest` 取本地演示账号登录态，
+创建临时模型（指向 `127.0.0.1:18091` 的 OpenAI 兼容 mock）与临时 Agent，
+跑完即删。**模型侧是本地 mock，不冒充真实模型联调。**
+
+| 链路 | 实测 |
+|---|---|
+| 登录 | `resp_code=0`，拿到 36 字节 token |
+| `/run`（异步 WebAsyncTask） | `status=succeeded`，`iterations=1`，`totalTokens=96`，答案非空，步骤 `llm:success → finish:success`；169ms |
+| `/streamRun`（异步 SSE） | `Content-Type: text/event-stream`，帧序列 `agent_start → agent_step → agent_step → agent_done`，**带 `id:`**；27ms |
+| `/streamResume`（异步只读续播） | 按 `lastEventId=0` 补发 `agent_step → agent_step → agent_done`，**不发 `agent_start`**（符合设计）、**无 `agent_error`**、带 `id:`；16ms |
+
+**清理（复核后归零）**：临时 Agent（`agentKey=71744bf6…`）与模型（iid=15）
+按 ASCII 键查均为 0 行；按两个 runKey 删除步骤 4 / 运行 2 / 审计 2 行，
+残留 `0|0|0`；本次审计合计 192 tokens，Redis 今日计数 `ai:gateway:tokens:…:20261108`
+从 192 `DECRBY` 回 0（回滚前正好是本次用量）；后端、PG、mock 上游进程全停，
+陈旧 `postmaster.pid` 与本轮临时脚本已删，Redis 原实例未动。
+
+**环境补充**：
+- 历史 `.tmp/qa-token-admin.txt` 里的 QA token 已过期（`20102 请先登录`），
+  改用 `/ai/uaccess/logintest` 现场登录，未创建或修改任何账号。
+- `application-dev.properties` 的用户名/口令是 `${VAR:default}` 占位符，
+  psql 连接前要取冒号后的默认值；`redis321/redis-cli.exe` 是 3.2 版，
+  **不支持 `--no-auth-warning`**。
+- Git Bash 下 psql 的中文 `LIKE` 模式会报 UTF8 编码错误，复核残留请改用
+  ASCII 的 `agentKey` / `iid`。
+- 临时验证脚本放在 `.tmp/`（gitignored），用完即删。
+
+### 验证
+
+| 项目 | 实测 |
+|---|---|
+| 后端 `mvn -o test` | **715 项，0 失败 / 0 错误 / 0 跳过**（service 607 + permission 71 + app-start 30 + app-common 7；本轮 +2 项） |
+| 打包 | `mvn -o clean package -DskipTests` BUILD SUCCESS（39 秒） |
+| 前端 | 本轮未改，沿用基线：逻辑 26 文件 / 303 项、组件 30 文件 / 300 项、E2E 23 项 |
+| 全栈 | 上表三链路均真实通过，数据库与 Redis 计数均回滚至联调前 |
+
+### 已知限制
+
+- **真实对话模型（含 `tool_calls` 能力）的上游联调仍未做**：本地没有可用密钥，
+  本轮模型侧是 mock；配置到位后重跑同一脚本、只替换 `baseUrl/apiKey/upstreamModel` 即可。
+- 三条链路的异步容器路径已在本轮全栈验证，但**未做高并发压测**；线程池上限 48
+  是经验值，队列满时退化为同步转发。
+- 容器异步超时复用网关 `maxStreamMs`（默认 600 秒）；调到 120 秒以下会让长运行被提前结束。
+- 其余遗留（跨设备运行进度同步、每密钥配额细分、SSO Token 字段加密、备份 PITR、
+  真实多实例/跨机器分区）照旧，见前几轮与 `README.md`「已知限制」。
 

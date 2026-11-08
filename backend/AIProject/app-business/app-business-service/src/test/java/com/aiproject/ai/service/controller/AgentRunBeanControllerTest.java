@@ -4,6 +4,8 @@ import com.aiproject.ai.service.agent.dto.AgentResumeRequest;
 import com.aiproject.ai.service.agent.dto.AgentRunDetail;
 import com.aiproject.ai.service.bean.AgentRunBean;
 import com.aiproject.ai.service.bean.AgentStepBean;
+import com.aiproject.ai.service.gateway.AiGatewayAsyncDispatcher;
+import com.aiproject.ai.service.gateway.AsyncResponseGate;
 import com.aiproject.ai.service.holde.AgentRunHolder;
 import com.heneng.hnsp.common.croe.model.Result;
 import org.junit.jupiter.api.Test;
@@ -11,14 +13,20 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.mock.web.MockHttpServletRequest;
 import org.springframework.mock.web.MockHttpServletResponse;
+import org.springframework.web.context.request.async.WebAsyncTask;
 
 import java.util.Arrays;
 import java.util.Collections;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -126,6 +134,50 @@ class AgentRunBeanControllerTest {
         MockHttpServletResponse invalid = new MockHttpServletResponse();
         controller.streamResume(UID, request(KEY, -1L), null, invalid);
         assertTrue(invalid.getContentAsString().contains("事件序号不合法"));
+    }
+
+    @Test
+    void resume_shouldDelegateToAsyncDispatcherWhenAvailable() throws Exception {
+        AiGatewayAsyncDispatcher dispatcher = mock(AiGatewayAsyncDispatcher.class);
+        controller.asyncDispatcher = dispatcher;
+        when(dispatcher.dispatch(eq("agent/streamResume"), any(), any()))
+                .thenAnswer(invocation -> {
+                    AiGatewayAsyncDispatcher.AsyncRelay relay = invocation.getArgument(2);
+                    relay.run(AsyncResponseGate.create());
+                    return new WebAsyncTask<Void>(() -> null);
+                });
+        when(holder.detail(UID, KEY))
+                .thenReturn(Result.succeed(detail("succeeded", step(1), step(2)), "查询成功"));
+        MockHttpServletResponse resp = new MockHttpServletResponse();
+
+        WebAsyncTask<Void> task = controller.streamResume(UID, request(KEY, 1L), null,
+                new MockHttpServletRequest(), resp);
+
+        assertNotNull(task, "生产环境应把 30 秒轮询交给中继线程池");
+        assertTrue(resp.getContentAsString().contains("event: agent_done"));
+    }
+
+    @Test
+    void resume_shouldStopPollingImmediatelyWhenClientDisconnects() throws Exception {
+        AiGatewayAsyncDispatcher dispatcher = mock(AiGatewayAsyncDispatcher.class);
+        controller.asyncDispatcher = dispatcher;
+        final AsyncResponseGate gate = AsyncResponseGate.create();
+        when(dispatcher.dispatch(eq("agent/streamResume"), any(), any()))
+                .thenAnswer(invocation -> {
+                    AiGatewayAsyncDispatcher.AsyncRelay relay = invocation.getArgument(2);
+                    relay.run(gate);
+                    return new WebAsyncTask<Void>(() -> null);
+                });
+        when(holder.detail(UID, KEY)).thenAnswer(invocation -> {
+            gate.cancel();
+            return Result.succeed(detail("running", step(1)), "查询成功");
+        });
+        MockHttpServletResponse resp = new MockHttpServletResponse();
+
+        controller.streamResume(UID, request(KEY, 0L), null,
+                new MockHttpServletRequest(), resp);
+
+        verify(holder, times(1)).detail(UID, KEY);
     }
 
     @Test

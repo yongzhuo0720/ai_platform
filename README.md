@@ -271,7 +271,7 @@ npm run check:bundle     # 首屏 gzip 体积预算（需先 build）
 
 | 项目 | 结果 |
 |---|---|
-| 后端单元测试 | **713 项，0 失败 / 0 错误 / 0 跳过**（`mvn -o test`，JDK 8 Dragonwell 8；app-common 7、permission 71、service 605、app-start 30） |
+| 后端单元测试 | **715 项，0 失败 / 0 错误 / 0 跳过**（`mvn -o test`，JDK 8 Dragonwell 8；app-common 7、permission 71、service 607、app-start 30） |
 | 前端 TypeScript 检查 | 通过 |
 | 前端图标注册检查 | 通过（59 个在用图标全部可解析） |
 | 硬编码色值棘轮检查 | 通过（45 个文件 / 1777 处，等于基线；新增即失败，只允许减少） |
@@ -507,7 +507,7 @@ npm run check:bundle     # 首屏 gzip 体积预算（需先 build）
 - **AI 能力依赖外部服务**：Dify 与直连模型各自依赖对应上游；本地 RAG 的向量化仍需可用的向量模型接口。
 - **网关需先配置上游**：Dify 需在数据库 `difyconfigbean`（后台「Dify 配置管理」）或服务端 `DIFY_*` 环境变量配置；直连模型需在「模型配置」里配齐地址与密钥。未配置时对应模块返回 503。前端已不读取任何 `VITE_DIFY_*_KEY`，密钥不存在于浏览器侧。
 - **流式治理的边界**：Token 统计依赖上游返回 usage（Dify 聊天在 `message_end`，工作流在 `data.total_tokens`）；上游不返回时只统计调用次数与耗时，配额无法按 Token 精确扣减。
-- **Agent 主链路已全异步，只剩只读续播占线程**：`/streamRun`（浏览器实时流）交给 `aiGatewayExecutor` 并通过 `AsyncResponseGate` 保证容器回收响应后不再写入；`/run`（外部脚本的同步接口）改为返回 `WebAsyncTask`，复用同一个有界线程池，HTTP 语义仍是「一次请求 = 一个结果」。两处的 Tomcat 请求线程都在提交后立即归还，客户端断开能提前终止运行（不再继续消耗额度）。仍同步的是 `/streamResume`（只读续播，单次最长 30 秒），高并发下受容器线程数约束。分发器不可用或过滤器链不支持异步时自动退回同步。僵死 `running` 记录由每 5 分钟一次的回收任务兜底（30 分钟阈值 + 状态 CAS）。
+- **Agent 三条执行链路已全异步**：`/streamRun`（浏览器实时流）、`/run`（外部脚本同步接口）、`/streamResume`（断线续播）都交给有界中继线程池，Tomcat 请求线程在提交后立即归还。`/run` 对调用方仍是「一次请求 = 一个结果」，`/streamResume` 的 30 秒短轮询也不再占 Web 线程。`AsyncResponseGate` 保证容器回收响应后不再写入，客户端断开能提前终止运行（不再继续消耗额度）。分发器不可用或过滤器链不支持异步时自动退回同步，此时没有容器级取消、断连靠 SSE 写失败感知。僵死 `running` 记录由每 5 分钟一次的回收任务兜底（30 分钟阈值 + 状态 CAS）。
 - **验证边界**：自动测试不等于真实上游与数据库验收；网关与模型协议测试使用本机临时 HTTP 服务，数据库写入使用 Mapper mock，未连接真实 Dify / 向量服务 / 生产数据库。其余待改进项见本次检查记录。
 - **依赖版本需锁定**：私有框架 `hnsp-public-common-croe` 把 `mybatis` 声明为 `<version>LATEST</version>`。2026-10-29 实测当天 16:55 构建正常、16:57 拉到 `mybatis 3.6.0`（Java 11 编译）后 JDK 8 直接编译失败。已在根 `pom.xml` 用 `dependencyManagement` 锁定 `3.5.19`（离线仓库中最高的 Java 8 兼容版本）。**不要移除这个锁定。**
 - **SSO** 依赖外部 OpenID 服务（默认关闭），本地请使用账号密码登录。

@@ -4,6 +4,8 @@ import com.aiproject.ai.service.agent.dto.AgentResumeRequest;
 import com.aiproject.ai.service.agent.dto.AgentRunDetail;
 import com.aiproject.ai.service.bean.AgentRunBean;
 import com.aiproject.ai.service.bean.AgentStepBean;
+import com.aiproject.ai.service.gateway.AiGatewayAsyncDispatcher;
+import com.aiproject.ai.service.gateway.AsyncResponseGate;
 import com.aiproject.ai.service.holde.AgentConfigHolder;
 import com.aiproject.ai.service.holde.AgentRunHolder;
 import com.heneng.hnsp.common.croe.model.Result;
@@ -18,7 +20,9 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.context.request.async.WebAsyncTask;
 
+import javax.servlet.http.HttpServletRequest;
 import javax.servlet.http.HttpServletResponse;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
@@ -44,6 +48,10 @@ public class AgentRunBeanController {
     @Autowired
     AgentRunHolder agentRunHolder;
 
+    /** 可选注入：为 null 时同步回退，既有单测零改动；生产环境复用网关中继线程池 */
+    @Autowired(required = false)
+    AiGatewayAsyncDispatcher asyncDispatcher;
+
     @ApiOperation(value = "运行列表", httpMethod = "POST", notes = "agentIid 可选")
     @PostMapping("/list")
     public Result<List<AgentRunBean>> list(@LoginUserId String uid,
@@ -61,18 +69,37 @@ public class AgentRunBeanController {
     /**
      * 断线续播：按 Last-Event-ID 补发缺失步骤，运行未结束时短轮询等待，
      * 到达终态后发 agent_done。全程不触发 AgentRunner，因此不会重复执行或计费。
+     * 短轮询最多占 30 秒，交给中继线程池后不再占住 Tomcat 请求线程。
      */
     @ApiOperation(value = "事件续播", httpMethod = "POST", notes = "只读已落库步骤，支持 Last-Event-ID 头")
     @PostMapping(value = "/streamResume", produces = "text/event-stream")
-    public void streamResume(@LoginUserId String uid,
-                             @RequestBody(required = false) AgentResumeRequest data,
-                             @RequestHeader(value = "Last-Event-ID", required = false) String lastEventIdHeader,
-                             HttpServletResponse response) {
+    public WebAsyncTask<Void> streamResume(@LoginUserId String uid,
+                                           @RequestBody(required = false) AgentResumeRequest data,
+                                           @RequestHeader(value = "Last-Event-ID", required = false) String lastEventIdHeader,
+                                           HttpServletRequest request,
+                                           HttpServletResponse response) {
+        if (asyncDispatcher == null) {
+            streamResumeSync(uid, data, lastEventIdHeader, response, AsyncResponseGate.NONE);
+            return null;
+        }
+        return asyncDispatcher.dispatch("agent/streamResume", request,
+                gate -> streamResumeSync(uid, data, lastEventIdHeader, response, gate));
+    }
+
+    /** 包内可见的同步重载：既有单元测试直接调用，保持四参数契约不变 */
+    void streamResume(String uid, AgentResumeRequest data, String lastEventIdHeader,
+                      HttpServletResponse response) {
+        streamResumeSync(uid, data, lastEventIdHeader, response, AsyncResponseGate.NONE);
+    }
+
+    private void streamResumeSync(String uid, AgentResumeRequest data, String lastEventIdHeader,
+                                  HttpServletResponse response, AsyncResponseGate gate) {
         response.setCharacterEncoding(StandardCharsets.UTF_8.name());
         response.setContentType("text/event-stream;charset=UTF-8");
         response.setHeader("Cache-Control", "no-cache");
         response.setHeader("X-Accel-Buffering", "no");
-        AgentBeanController.SseListener listener = new AgentBeanController.SseListener(response);
+        AgentBeanController.SseListener listener =
+                new AgentBeanController.SseListener(response, gate);
 
         String runKey = data == null ? null : data.getRunKey();
         if (AgentConfigHolder.blank(uid) || AgentConfigHolder.blank(runKey)) {
