@@ -964,6 +964,64 @@ Phase 5 要求补齐备份与恢复，因此本轮针对真实 PostgreSQL 18.6 �
 
 - 推理内容复用 `toolResult` 展示，没有做成独立可折叠字段（避免加 DDL 与前端改版）；
 - 真实推理模型的 `tool_calls` 上游联调仍待可用密钥；
-- 其余遗留（Agent 同步占线程、`Last-Event-ID` 跨设备同步、每密钥配额细分、
-  SSO Token 字段加密、PITR）照旧，见前几轮与 `README.md`「已知限制」。
+- 其余遗留（`/run` 与 `/streamResume` 仍同步、`Last-Event-ID` 跨设备同步、
+  每密钥配额细分、SSO Token 字段加密、PITR）照旧，见前几轮与 `README.md`「已知限制」。
+
+---
+
+## 2026-11-08（十九）：Agent 流式运行异步化 + 断连提前停机
+
+### 背景
+
+README 与通俗版都把「Agent 运行仍同步占用 Web 线程」列为已知限制：
+一次运行从第一轮模型调用到结束都在 Tomcat 请求线程里完成（总预算 2 分钟），
+高并发下会把登录、后台等无关接口一起拖住。网关已在 11-07 把转发迁到
+`AiGatewayAsyncDispatcher` + `AsyncResponseGate`，Agent 链路没跟上。
+
+第十八轮评估后决定**单独一轮、先写异步路径测试再迁移**，本轮执行。
+
+### 设计
+
+- `AgentBeanController` 可选注入 `AiGatewayAsyncDispatcher`
+  （`@Autowired(required=false)`）：**为 null 时走同步回退**，行为与改造前一致，
+  既有 11 处同步单测与 MockMvc 用例零改动；生产环境由 Spring 注入网关现成的
+  `aiGatewayExecutor`，不新建线程池。
+- `/streamRun` 改为返回 `WebAsyncTask<Void>`，请求线程只提交任务；
+  三段同步回退（配置关闭、无线程池、过滤器链不支持异步）由分发器统一处理。
+- `SseListener` 持有 `AsyncResponseGate`：所有帧写入走 `runIfActive`，
+  容器 `cancel()` 之后一律拒绝，不再把字节写进被下一个请求复用的连接；
+  `isDisconnected()` 合并 `gate.isCancelled()`，`AgentRunner.checkConnected`
+  因此能在客户端断开后**立即终止循环，不再继续调用模型、消耗额度**。
+- SSE 帧格式（`event` / `id` / `data`）与续播接口完全不变；续播用的
+  单参数构造仍绑定 `AsyncResponseGate.NONE`。
+- 保留了三参数的包内同步重载供既有测试直接调用，避免为了迁移重写一批断言。
+
+### 变更文件
+
+`AgentBeanController.java`（可选注入 + 异步入口 + 门闸感知的 SseListener）、
+新建 `AgentBeanAsyncTest.java`（6 项）、`README.md`、
+`docs/项目说明-通俗版.md`（数字与「已知限制」表述）。**前端未改**。
+
+### 验证（先写测试再迁移）
+
+| 项目 | 实测 |
+|---|---|
+| 后端 `mvn -o test` | **711 项 / 65 份报告，0 失败 / 0 错误 / 0 跳过**（service 603 + permission 71 + app-start 30 + app-common 7；本轮 +6 项） |
+| 新增异步测试 | 同步回退、异步委托返回 `WebAsyncTask`、真实分发器走完 Spring MVC `asyncStarted → asyncDispatch` 全链路、runner 拿到可感知取消的 listener、门闸取消后拒绝写入、同步门闸恒放行 |
+| 既有回归 | `AgentBeanControllerTest` 11 处 `controller.streamRun(...)` 同步调用与 MockMvc `/streamRun` 映射用例全部通过 |
+| 前端 | 本轮未改，沿用 11-07 基线：逻辑 26 文件 / 303 项、组件 30 文件 / 300 项、E2E 23 项 |
+
+### 已知限制
+
+- **`/run`（同步接口）与 `/streamResume`（只读续播，单次最长 30 秒）仍同步占请求线程**。
+  `AiGatewayAsyncDispatcher` 的 `AsyncRelay` 是 void，无法直接承载带返回值的
+  `Callable<Result<...>>`；要迁移需扩展分发器或另建返回值处理，留待下一轮。
+- 容器异步超时复用网关配置 `maxStreamMs`（默认 600 秒）+ 读/连超时 + 60 秒余量，
+  远大于 Agent 的 120 秒总预算；**若管理员把 `maxStreamMs` 调到 120 秒以下**，
+  长运行可能被容器提前结束，需要为 Agent 单独设超时。
+- `asyncDispatchEnabled=false` 时全链路退回同步，此时没有容器级取消，
+  断连仍靠 SSE 写失败感知（与改造前一致）。
+- 未做全栈真实启动复核（当前 8507 未监听）：MockMvc 已覆盖 Spring MVC 的
+  `WebAsyncTask` 生命周期，但真实 Tomcat 线程池下的并发表现、长时间运行与
+  客户端强杀仍建议下一轮起一次本地全栈验证。
 
