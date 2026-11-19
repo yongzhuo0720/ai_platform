@@ -1,5 +1,6 @@
 package com.aiproject.ai.permission.holde;
 
+import com.aiproject.ai.permission.utils.AdminGuard;
 import com.aiproject.ai.permission.bean.LableChildBean;
 import com.aiproject.ai.permission.mapper.LableChildBeanMapper;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -50,13 +51,8 @@ public class LableBeanHolder {
      * 空条件 delete 会删掉所有标签组并级联清空所有绑定，空条件 update 会改全表。</p>
      */
     private Result<Boolean> checkAdmin(String uid) {
-        if (uid == null || uid.trim().isEmpty()) {
-            return Result.failed(false, "请先登录");
-        }
-        if (!myUserBaseDbHolder.isAdmin(uid)) {
-            return Result.failed(false, "仅管理员可维护标签组");
-        }
-        return null;
+        // 统一超管校验（P2-4）；文案通过 resource 参数保持原样
+        return AdminGuard.requireAdmin(uid, myUserBaseDbHolder, "标签组");
     }
 
     /** 标签组的业务主键是 iid，删除必须精确到行。 */

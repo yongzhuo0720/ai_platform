@@ -5,6 +5,7 @@ import type {
   RetrievalModel,
   RetrievalResult,
   DifyDatasetListResponse,
+  DifyDatasetRaw,
 } from '@/types/knowledge';
 import {
   getKnowledgeFileConfig,
@@ -276,7 +277,7 @@ export const datasetApi = {
   },
 };
 
-function transformDataset(data: any): KnowledgeBase {
+function transformDataset(data: DifyDatasetRaw): KnowledgeBase {
   return {
     id: data.id,
     name: data.name,

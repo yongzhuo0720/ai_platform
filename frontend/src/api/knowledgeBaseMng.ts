@@ -1,19 +1,19 @@
 import axios from './axios';
 
 export const knowledgeBaseMngApi = {
-  query: async (params: any) => {
+  query: async (params: Record<string, unknown>) => {
     return axios.post(`/ai/api/knowledgeBaseBean/query`, params);
   },
-  update: async (params: any) => {
+  update: async (params: Record<string, unknown>) => {
     return axios.post(`/ai/api/knowledgeBaseBean/update`, params);
   },
-  create: async (params: any) => {
+  create: async (params: Record<string, unknown>) => {
     return axios.post(`/ai/api/knowledgeBaseBean/create`, params);
   },
-  delete: async (params: any) => {
+  delete: async (params: Record<string, unknown>) => {
     return axios.post(`/ai/api/knowledgeBaseBean/delete`, params);
   },
-  filterVisible: async (params: any) => {
+  filterVisible: async (params: Record<string, unknown>) => {
     return axios.post(`/ai/api/knowledgeBaseBean/filterVisible`, params);
   },
   queryAll: async () => {

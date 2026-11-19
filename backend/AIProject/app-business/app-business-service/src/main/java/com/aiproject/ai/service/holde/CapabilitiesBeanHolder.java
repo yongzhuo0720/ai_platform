@@ -1,5 +1,6 @@
 package com.aiproject.ai.service.holde;
 
+import com.aiproject.ai.permission.utils.AdminGuard;
 import java.util.List;
 
 import blxt.qjava.utils.check.CheckUtils;
@@ -45,13 +46,8 @@ public class CapabilitiesBeanHolder {
      * 就能清空整个能力广场 —— 典型的「仅前端鉴权」。
      */
     private Result<Boolean> checkAdmin(String uid) {
-        if (uid == null) {
-            return Result.failed(false, "请先登录");
-        }
-        if (!myUserBaseDbHolder.isAdmin(uid)) {
-            return Result.failed(false, "仅管理员可维护能力广场");
-        }
-        return null;
+        // 统一超管校验（P2-4）；文案通过 resource 参数保持原样
+        return AdminGuard.requireAdmin(uid, myUserBaseDbHolder, "能力广场");
     }
 
     /**

@@ -1,5 +1,6 @@
 package com.aiproject.ai.permission.holde;
 
+import com.aiproject.ai.permission.utils.AdminGuard;
 import blxt.qjava.utils.check.CheckUtils;
 import com.aiproject.ai.common.utils.ListToTreeUtil;
 import com.aiproject.ai.common.utils.SqlSortGuard;
@@ -50,13 +51,8 @@ public class UnitBeanHolder {
      * 返回 null 表示校验通过，非 null 表示被拒绝（与 ModelsConfigBeanHolder 一致）。</p>
      */
     private Result<Boolean> checkAdmin(String uid) {
-        if (uid == null || uid.trim().isEmpty()) {
-            return Result.failed(false, "请先登录");
-        }
-        if (!myUserBaseDbHolder.isAdmin(uid)) {
-            return Result.failed(false, "仅管理员可维护部门");
-        }
-        return null;
+        // 统一超管校验（P2-4）；文案通过 resource 参数保持原样
+        return AdminGuard.requireAdmin(uid, myUserBaseDbHolder, "部门");
     }
 
     /**

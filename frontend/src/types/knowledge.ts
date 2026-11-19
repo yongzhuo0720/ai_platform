@@ -332,3 +332,94 @@ export interface TagUnbindingParams {
   target_id: string;
   tag_id: string;
 }
+
+/**
+ * Dify / 上游返回的原始对象形状（2026-11-19 P2-6 类型收敛）。
+ *
+ * 这三个接口描述 transform* 函数实际读取的外部字段。字段全部可选，
+ * 因为外部 API 在不同版本/配置下可能缺省；索引签名兜底未列出的扩展字段。
+ * 目的：让"上游改了字段名"这类漂移在编译期暴露，而不是静默变成 undefined。
+ */
+export interface DifyChunkRaw {
+  id: string;
+  content: string;
+  answer?: string;
+  keywords?: string[];
+  position?: number;
+  document_id?: string;
+  word_count?: number;
+  tokens?: number;
+  index_node_id?: string;
+  index_node_hash?: string;
+  hit_count?: number;
+  enabled?: boolean;
+  disabled_at?: number;
+  disabled_by?: string;
+  status?: string;
+  created_by?: string;
+  created_at?: number;
+  indexing_at?: number;
+  completed_at?: number;
+  error?: string;
+  stopped_at?: number;
+  summary?: string;
+  document?: KnowledgeBaseChunk['document'];
+  segment_id?: string;
+}
+
+export interface DifyDatasetRaw {
+  id: string;
+  name: string;
+  description?: string;
+  cover_image?: string;
+  icon?: string;
+  tags?: string[];
+  word_count?: number;
+  updated_at?: number;
+  is_featured?: boolean;
+  is_recommended?: boolean;
+  provider?: string;
+  permission?: KnowledgeBase['permission'];
+  indexing_technique?: KnowledgeBase['indexing_technique'];
+  indexing_status?: KnowledgeBase['indexing_status'];
+  document_count?: number;
+  app_count?: number;
+  created_by?: string;
+  created_at?: number;
+  updated_by?: string;
+  embedding_model?: string;
+  embedding_model_provider?: string;
+  embedding_available?: boolean;
+  retrieval_model?: KnowledgeBase['retrieval_model'];
+  retrieval_model_dict?: KnowledgeBase['retrieval_model_dict'];
+  doc_form?: string;
+}
+
+export interface DifyDocumentRaw {
+  id: string;
+  name: string;
+  data_source_type?: string;
+  content?: string;
+  position?: number;
+  data_source_info?: KnowledgeBaseDocument['data_source_info'];
+  dataset_process_rule_id?: string;
+  created_from?: string;
+  created_by?: string;
+  created_at?: number;
+  tokens?: number;
+  indexing_status?: KnowledgeBaseDocument['indexing_status'];
+  error?: string;
+  enabled?: boolean;
+  disabled_at?: number;
+  disabled_by?: string;
+  archived?: boolean;
+  display_status?: string;
+  hit_count?: number;
+  doc_form?: string;
+  dataset_process_rule?: KnowledgeBaseDocument['dataset_process_rule'];
+  document_process_rule?: KnowledgeBaseDocument['document_process_rule'];
+  indexing_latency?: number;
+  segment_count?: number;
+  average_segment_length?: number;
+  doc_language?: string;
+}

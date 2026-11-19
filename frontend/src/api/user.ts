@@ -17,19 +17,19 @@ export const userApi = {
    * 传任何非空值都会被当成「该应用下不存在这个账号」，返回
    * 「用户不存在或密码错误」。留空即可正常登录。</p>
    */
-  logintest: async (params: any) => {
+  logintest: async (params: Record<string, unknown>) => {
     return axios.post(`/ai/uaccess/logintest`, { keepUser: false, ...params });
   },
-  getUserList: async (params: any) => {
+  getUserList: async (params: Record<string, unknown>) => {
     return axios.post(`/ai/myuser/query`, params);
   },
-  update: async (params: any) => {
+  update: async (params: Record<string, unknown>) => {
     return axios.post(`/ai/myuser/update`, params);
   },
-  create: async (params: any) => {
+  create: async (params: Record<string, unknown>) => {
     return axios.post(`/ai/myuser/create`, params);
   },
-  delete: async (params: any) => {
+  delete: async (params: Record<string, unknown>) => {
     return axios.post(`/ai/myuser/delete`, params);
   },
 

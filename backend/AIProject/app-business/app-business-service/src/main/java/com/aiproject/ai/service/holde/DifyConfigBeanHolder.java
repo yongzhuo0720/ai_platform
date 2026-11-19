@@ -1,5 +1,6 @@
 package com.aiproject.ai.service.holde;
 
+import com.aiproject.ai.permission.utils.AdminGuard;
 import com.aiproject.ai.permission.holde.MyUserBaseDbHolder;
 import com.heneng.hnsp.common.croe.model.Result;
 import com.heneng.hnsp.common.db.utils.PageRequest;
@@ -29,13 +30,8 @@ public class DifyConfigBeanHolder {
      * 或替换 apiKey。这里收紧为仅超管可写。
      */
     private Result<Boolean> checkAdmin(String uid) {
-        if (uid == null) {
-            return Result.failed(false, "请先登录");
-        }
-        if (!myUserBaseDbHolder.isAdmin(uid)) {
-            return Result.failed(false, "仅管理员可维护 Dify 配置");
-        }
-        return null;
+        // 统一超管校验（P2-4）；文案通过 resource 参数保持原样
+        return AdminGuard.requireAdmin(uid, myUserBaseDbHolder, "Dify 配置");
     }
 
     public Result<Boolean> install(String uid, DifyConfigBean data) {

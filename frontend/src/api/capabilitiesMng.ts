@@ -4,16 +4,16 @@ import axios from './axios';
 
 
 export const capabilitiesMngApi = {
-  query: async (params: any) => {
+  query: async (params: Record<string, unknown>) => {
     return axios.post(`/ai/api/capabilitiesBean/query`, params);
   },
-  update: async (params: any) => {
+  update: async (params: Record<string, unknown>) => {
     return axios.post(`/ai/api/capabilitiesBean/update`, params);
   },
-  create: async (params: any) => {
+  create: async (params: Record<string, unknown>) => {
     return axios.post(`/ai/api/capabilitiesBean/create`, params);
   },
-  delete: async (params: any) => {
+  delete: async (params: Record<string, unknown>) => {
     return axios.post(`/ai/api/capabilitiesBean/delete`, params);
   },
   // 单点登录：获取跳转地址（需要 SSO 的能力点击"查看"时调用）

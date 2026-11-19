@@ -1,5 +1,6 @@
 package com.aiproject.ai.service.holde;
 
+import com.aiproject.ai.permission.utils.AdminGuard;
 import java.util.List;
 import com.aiproject.ai.common.utils.SqlSortGuard;
 import com.heneng.hnsp.common.db.utils.PageRequest;
@@ -46,13 +47,8 @@ public  class ModelsConfigBeanHolder  {
      * 模型配置属平台级配置（前端仅在 Admin/ModelsConfigView 维护），写操作限超管。
      */
     private Result<Boolean> checkAdmin(String uid) {
-        if (uid == null) {
-            return Result.failed(false, "请先登录");
-        }
-        if (!myUserBaseDbHolder.isAdmin(uid)) {
-            return Result.failed(false, "仅管理员可维护模型配置");
-        }
-        return null;
+        // 统一超管校验（P2-4）；文案通过 resource 参数保持原样
+        return AdminGuard.requireAdmin(uid, myUserBaseDbHolder, "模型配置");
     }
 
     /**

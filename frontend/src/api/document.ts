@@ -3,6 +3,7 @@ import type {
   DifyDocumentResponse,
   DifyDocumentListResponse,
   DifyIndexingStatusResponse,
+  DifyDocumentRaw,
 } from '@/types/knowledge';
 import { ElMessage } from 'element-plus';
 import { getKnowledgeFileConfig, gatewayRequestHeaders } from '@/stores/difyConfig'
@@ -351,7 +352,7 @@ export const documentApi = {
  * 与 documentApi.downloadDocument 行为一致，但仅返回签名 URL 不触发下载。
  * 用于在 Vue 组件中按需获取下载链接进行预览。
  */
-function transformDocument(data: any): KnowledgeBaseDocument {
+function transformDocument(data: DifyDocumentRaw): KnowledgeBaseDocument {
   return {
     id: data.id,
     name: data.name,

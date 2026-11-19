@@ -1,5 +1,6 @@
 package com.aiproject.ai.permission.holde;
 
+import com.aiproject.ai.permission.utils.AdminGuard;
 import com.aiproject.ai.permission.bean.LableBean;
 import org.springframework.beans.factory.annotation.Autowired;
 
@@ -108,14 +109,8 @@ public class LableChildBeanHolder {
      * 返回 null 表示校验通过，非 null 表示被拒绝（与 ModelsConfigBeanHolder 一致）。
      */
     private Result<Boolean> checkAdmin(String uid) {
-        Result<Boolean> login = checkLogin(uid);
-        if (login != null) {
-            return login;
-        }
-        if (!myUserBaseDbHolder.isAdmin(uid)) {
-            return Result.failed(false, "仅管理员可维护标签绑定");
-        }
-        return null;
+        // 统一超管校验（P2-4）；原 checkLogin 的判空已合并进 AdminGuard，文案保持原样
+        return AdminGuard.requireAdmin(uid, myUserBaseDbHolder, "标签绑定");
     }
 
     /**

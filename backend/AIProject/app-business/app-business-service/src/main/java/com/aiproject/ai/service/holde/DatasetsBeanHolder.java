@@ -1,5 +1,6 @@
 package com.aiproject.ai.service.holde;
 
+import com.aiproject.ai.permission.utils.AdminGuard;
 import java.io.File;
 import java.util.ArrayList;
 import java.util.List;
@@ -44,13 +45,8 @@ public  class DatasetsBeanHolder  {
      * 任意登录用户直接 POST /api/datasetsBean/delete 就能删掉整张目录 —— 典型的「仅前端鉴权」。
      */
     private Result<Boolean> checkAdmin(String uid) {
-        if (uid == null) {
-            return Result.failed(false, "请先登录");
-        }
-        if (!myUserBaseDbHolder.isAdmin(uid)) {
-            return Result.failed(false, "仅管理员可维护数据集仓库");
-        }
-        return null;
+        // 统一超管校验（P2-4）；文案通过 resource 参数保持原样
+        return AdminGuard.requireAdmin(uid, myUserBaseDbHolder, "数据集仓库");
     }
 
             /**

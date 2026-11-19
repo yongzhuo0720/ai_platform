@@ -1,5 +1,6 @@
 package com.aiproject.ai.service.holde;
 
+import com.aiproject.ai.permission.utils.AdminGuard;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
@@ -52,13 +53,8 @@ public class ModelsBeanHolder {
      * 注意：addDownloads（记录下载次数）是普通用户的正常行为，不在此列，保持开放。
      */
     private Result<Boolean> checkAdmin(String uid) {
-        if (uid == null) {
-            return Result.failed(false, "请先登录");
-        }
-        if (!myUserBaseDbHolder.isAdmin(uid)) {
-            return Result.failed(false, "仅管理员可维护模型仓库");
-        }
-        return null;
+        // 统一超管校验（P2-4）；文案通过 resource 参数保持原样
+        return AdminGuard.requireAdmin(uid, myUserBaseDbHolder, "模型仓库");
     }
 
     /**

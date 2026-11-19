@@ -14,11 +14,11 @@ export interface ModelConnectionTestResult {
 }
 
 export const modelsConfigApi = {
-  getList: (params: any) => axios.post('/ai/api/modelsConfigBean/query', params),
-  getPageList: (params: any) => axios.post('/ai/api/modelsConfigBean/queryPage', params),
-  create: (params: any) => axios.post('/ai/api/modelsConfigBean/create', params),
-  update: (params: any) => axios.post('/ai/api/modelsConfigBean/update', params),
-  delete: (params: any) => axios.post('/ai/api/modelsConfigBean/delete', params),
+  getList: (params: Record<string, unknown>) => axios.post('/ai/api/modelsConfigBean/query', params),
+  getPageList: (params: Record<string, unknown>) => axios.post('/ai/api/modelsConfigBean/queryPage', params),
+  create: (params: Record<string, unknown>) => axios.post('/ai/api/modelsConfigBean/create', params),
+  update: (params: Record<string, unknown>) => axios.post('/ai/api/modelsConfigBean/update', params),
+  delete: (params: Record<string, unknown>) => axios.post('/ai/api/modelsConfigBean/delete', params),
   testConnection: (params: { data: { iid: number } }) =>
     axios.post('/ai/api/modelsConfigBean/testConnection', params),
 }

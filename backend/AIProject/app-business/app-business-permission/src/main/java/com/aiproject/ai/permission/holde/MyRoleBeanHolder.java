@@ -1,5 +1,6 @@
 package com.aiproject.ai.permission.holde;
 
+import com.aiproject.ai.permission.utils.AdminGuard;
 import com.aiproject.ai.common.utils.SqlSortGuard;
 import com.aiproject.ai.permission.bean.MyRoleBean;
 import com.aiproject.ai.permission.bean.MyUserBaseDb;
@@ -55,13 +56,8 @@ public class MyRoleBeanHolder {
      * @return null 表示校验通过；非 null 表示校验失败，可直接作为返回值
      */
     private Result<Boolean> checkAdmin(String uid) {
-        if (uid == null) {
-            return Result.failed(false, "请先登录");
-        }
-        if (!myUserBaseDbHolder.isAdmin(uid)) {
-            return Result.failed(false, "仅管理员可维护角色");
-        }
-        return null;
+        // 统一超管校验（P2-4）；文案通过 resource 参数保持原样
+        return AdminGuard.requireAdmin(uid, myUserBaseDbHolder, "角色");
     }
 
     /**

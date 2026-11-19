@@ -4,6 +4,7 @@ import type {
   UpdateChunkParams,
   DifyChunksResponse,
   DifyChildChunksResponse,
+  DifyChunkRaw,
 } from '@/types/knowledge';
 import { getKnowledgeFileConfig, gatewayRequestHeaders } from '@/stores/difyConfig'
 
@@ -166,7 +167,7 @@ export const chunkApi = {
     }
     const result = await response.json();
     return {
-      data: result.data.map((chunk: any) => transformChunk(chunk)),
+      data: result.data.map((chunk: DifyChunkRaw) => transformChunk(chunk)),
       total: result.total,
       total_pages: result.total_pages,
       page: result.page,
@@ -240,7 +241,7 @@ export const chunkApi = {
   },
 };
 
-function transformChunk(data: any): KnowledgeBaseChunk {
+function transformChunk(data: DifyChunkRaw): KnowledgeBaseChunk {
   return {
     id: data.id,
     content: data.content,
