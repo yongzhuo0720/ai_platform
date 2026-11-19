@@ -62,6 +62,18 @@ public class AiUserQuotaHolder {
         if (data.getDailyTokenQuota() == null || data.getDailyTokenQuota() < 0) {
             return Result.failed(false, "配额必须大于或等于 0");
         }
+        // 成本预算校验（单位分，null/0=不限）：负数无意义，直接拒绝
+        if (data.getDailyCostBudgetCents() != null && data.getDailyCostBudgetCents() < 0) {
+            return Result.failed(false, "成本预算必须大于或等于 0");
+        }
+        // 告警阈值夹到 1-100，避免填 0 或 1000 导致告警永不触发/永远触发。
+        // 用 CostBudgetEvaluator 的默认 80 作为 null 时的兜底（判定层也会再兜一次）。
+        Integer pct = data.getAlertThresholdPct();
+        if (pct != null) {
+            if (pct < 1 || pct > 100) {
+                return Result.failed(false, "告警阈值必须在 1-100 之间");
+            }
+        }
         String userId = data.getUserId().trim();
         data.setUserId(userId);
         data.setLastuser(adminUid);

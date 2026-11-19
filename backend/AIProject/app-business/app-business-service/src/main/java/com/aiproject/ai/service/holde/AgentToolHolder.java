@@ -106,7 +106,15 @@ public class AgentToolHolder {
             if (toolMapper.install(data) <= 0) {
                 return Result.failed(null, "保存工具失败，请稍后重试");
             }
-            return Result.succeed(data, "创建成功");
+            // install 不回填 bigserial 主键：直接返回 data 会让 iid 为 null，
+            // 调用方拿到后无法删除/更新这个工具。按 agentIid+name+归属查回带真实 iid 的行。
+            AgentToolBean lookup = new AgentToolBean();
+            lookup.setAgentIid(data.getAgentIid());
+            lookup.setName(data.getName());
+            lookup.setLastuser(uid);
+            List<AgentToolBean> rows = toolMapper.select(null, lookup);
+            AgentToolBean saved = (rows == null || rows.isEmpty()) ? null : rows.get(rows.size() - 1);
+            return Result.succeed(saved != null ? saved : data, "创建成功");
         }
 
         // 更新：条件带 iid + 归属，且先确认这行工具确实属于本人

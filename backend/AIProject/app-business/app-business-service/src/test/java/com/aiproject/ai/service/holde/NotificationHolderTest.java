@@ -83,6 +83,28 @@ class NotificationHolderTest {
         assertFalse(holder.push(UID, notice("k1", "标题", "正文")));
     }
 
+    /**
+     * 同一逻辑事件重复推送必须幂等：靠 eventKey 唯一索引冲突吞掉重复写入。
+     * 验证「第二次 push 因为唯一键冲突失败 → 不触发溢出裁剪 → 不误报成功」，
+     * 这是 doc:100:ready 这类完成通知不会重复弹给用户的保证。
+     */
+    @Test
+    void push_sameEventKeyTwice_shouldStayIdempotent() {
+        when(notificationMapper.install(any(NotificationBean.class)))
+                .thenReturn(1)                                    // 第一次写入成功
+                .thenThrow(new RuntimeException("duplicate key")); // 第二次撞唯一键
+
+        boolean first = holder.push(UID, notice("doc:100:ready", "完成", "正文"));
+        boolean second = holder.push(UID, notice("doc:100:ready", "完成", "正文"));
+
+        assertTrue(first, "首次推送应成功");
+        assertFalse(second, "同 eventKey 重复推送应被幂等吞掉，不返回成功");
+        verify(notificationMapper, org.mockito.Mockito.times(2))
+                .install(any(NotificationBean.class));
+        verify(notificationMapper, org.mockito.Mockito.times(1))
+                .count(any(NotificationBean.class)); // 只有首次走到溢出裁剪
+    }
+
     @Test
     void push_shouldTrimOldestNotificationsWhenOverRetentionLimit() {
         when(notificationMapper.install(any(NotificationBean.class))).thenReturn(1);

@@ -1,0 +1,59 @@
+# NexusAI 多实例 nginx 配置示例（精准升级 · 2026-11-18）
+#
+# 用途：配合根目录 docker-compose.yml，把多个 app 副本聚成一个 upstream。
+# 用法：替换部署手册里的 nginx.conf，挂载到容器的 /etc/nginx/nginx.conf。
+# 关键点：SSO 回调地址 sso.callback-url 必须指向本 nginx 统一入口（8083），
+#         不能指向某个 app 实例的 8507，否则多实例下回调会打到错误副本。
+
+user  nginx;
+worker_processes  auto;
+
+events {
+    worker_connections  1024;
+}
+
+http {
+    include       /etc/nginx/mime.types;
+    default_type  application/octet-stream;
+    sendfile      on;
+    keepalive_timeout  65;
+
+    # Docker Compose 内置 DNS：服务名 app 会解析到所有副本的 IP（轮询）。
+    # 需要会话粘滞时可在 up 前评估：本项目登录态在共享 Redis，无需 sticky。
+    upstream app_backend {
+        server app:8507 max_fails=3 fail_timeout=10s;
+        # 手动指定固定多实例时也可写死：
+        # server app-start-1:8507;
+        # server app-start-2:8507;
+        keepalive 32;
+    }
+
+    server {
+        listen 8083;
+        server_name _;
+
+        # 前端静态产物（部署手册里放到 /home/server/nginx/web）
+        root /home/web;
+        index index.html;
+
+        location / {
+            try_files $uri $uri/ /index.html;
+        }
+
+        # 平台接口统一反代到后端集群
+        location /ai/ {
+            proxy_pass http://app_backend;
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto $scheme;
+
+            # SSE 流式（聊天 / Agent 事件）：必须关闭缓冲，否则逐字效果变一次性返回
+            proxy_buffering off;
+            proxy_cache off;
+            proxy_read_timeout 3600s;
+            proxy_http_version 1.1;
+            proxy_set_header Connection "";
+        }
+    }
+}

@@ -10,6 +10,10 @@ public class AiQuotaView {
     private Long dailyTokenQuota;
     private long effectiveQuota;
     private long usedToday;
+    /** 每日成本预算（分），null/0=不限制 */
+    private Long dailyCostBudgetCents;
+    /** 告警阈值百分比 */
+    private Integer alertThresholdPct;
     private String remark;
     private boolean custom;
 }

@@ -88,6 +88,18 @@
             <artifactId>spring-boot-starter-test</artifactId>
             <scope>test</scope>
         </dependency>
+
+        <!-- 生产可观测（2026-11-19）：对标 LiteLLM/New-API 的 Prometheus 指标端点。
+             actuator 提供 /actuator/prometheus；registry 把 Micrometer 指标转成 Prometheus 格式。
+             版本跟随 Spring Boot 2.6.8 的 BOM(1.8.6)，桥接包已放入离线仓库，仍可 -o 构建。 -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-actuator</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>io.micrometer</groupId>
+            <artifactId>micrometer-registry-prometheus</artifactId>
+        </dependency>
     </dependencies>
     <build>
         <pluginManagement>

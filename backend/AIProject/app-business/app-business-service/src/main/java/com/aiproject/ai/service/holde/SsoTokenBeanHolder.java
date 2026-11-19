@@ -5,6 +5,7 @@ import cn.hutool.json.JSONObject;
 import com.aiproject.ai.service.bean.SsoTokenBean;
 import com.aiproject.ai.service.config.SsoProperties;
 import com.aiproject.ai.service.mapper.SsoTokenBeanMapper;
+import com.aiproject.ai.service.util.TokenCryptoUtil;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.heneng.hnsp.common.croe.model.Result;
 import com.heneng.hnsp.common.db.utils.PageRequest;
@@ -42,6 +43,10 @@ public class SsoTokenBeanHolder {
 
     @Autowired
     private SsoProperties ssoProperties;
+
+    /** SSO Token 字段级加密（可插拔：未配置密钥时为明文模式，兼容存量） */
+    @Autowired
+    private TokenCryptoUtil tokenCryptoUtil;
 
     private final OkHttpClient httpClient = new OkHttpClient();
     private final ObjectMapper objectMapper = new ObjectMapper();
@@ -134,6 +139,59 @@ public class SsoTokenBeanHolder {
     }
 
     /**
+     * 存量明文 Token 的一次性迁移骨架（手动触发，不在启动流程自动执行）。
+     *
+     * <p>正常路径已通过「queryByUid 解密 + saveOrUpdate 加密」实现读时迁移；
+     * 但那些再也不会登录的僵尸记录不会被读到。这个方法供运维在配置好密钥后
+     * 主动跑一遍：分页扫描 ssotokenbean，把仍是明文的 access_token / refresh_token
+     * 就地加密回写。幂等——已是 ENC: 前缀的记录跳过；未启用加密时直接返回 0。</p>
+     *
+     * @param pageSize 每页条数
+     * @return 本次实际加密回写的记录数
+     */
+    public int migratePlaintextTokens(int pageSize) {
+        if (!tokenCryptoUtil.isEnabled()) {
+            log.warn("SSO Token 加密未启用，跳过存量迁移");
+            return 0;
+        }
+        int pageNum = 1;
+        int migrated = 0;
+        while (true) {
+            List<SsoTokenBean> page = ssoTokenBeanMapper.select(
+                    new PageRequest(pageNum, pageSize), new SsoTokenBean());
+            if (page == null || page.isEmpty()) {
+                break;
+            }
+            for (SsoTokenBean row : page) {
+                String access = row.getAccess_token();
+                String refresh = row.getRefresh_token();
+                boolean accessPlain = access != null && !access.isEmpty() && !access.startsWith("ENC:");
+                boolean refreshPlain = refresh != null && !refresh.isEmpty() && !refresh.startsWith("ENC:");
+                if (!accessPlain && !refreshPlain) {
+                    continue;
+                }
+                SsoTokenBean data = new SsoTokenBean();
+                if (accessPlain) {
+                    data.setAccess_token(tokenCryptoUtil.encrypt(access));
+                }
+                if (refreshPlain) {
+                    data.setRefresh_token(tokenCryptoUtil.encrypt(refresh));
+                }
+                SsoTokenBean where = new SsoTokenBean();
+                where.setIid(row.getIid());
+                ssoTokenBeanMapper.update(data, where);
+                migrated++;
+            }
+            if (page.size() < pageSize) {
+                break;
+            }
+            pageNum++;
+        }
+        log.info("SSO Token 存量迁移完成，本次加密回写 {} 条", migrated);
+        return migrated;
+    }
+
+    /**
      * 功能描述: 分页查询.
      *
      * @param data        数据
@@ -156,7 +214,19 @@ public class SsoTokenBeanHolder {
     public SsoTokenBean queryByUid(String uid) {
         SsoTokenBean probe = new SsoTokenBean();
         probe.setUid(uid);
-        return query(probe);
+        SsoTokenBean record = query(probe);
+        if (record == null) {
+            return null;
+        }
+        // 读出即解密：存量明文原样返回，密文还原为明文。
+        // 这样 hasValidSession / getValidAccessToken / refreshAccessToken 拿到的都是明文，
+        // 上层登录链路零改动；密文由 saveOrUpdate 在下次写入时生成（读时迁移）。
+        if (!tokenCryptoUtil.isEnabled()) {
+            return record;
+        }
+        record.setAccess_token(tokenCryptoUtil.decrypt(record.getAccess_token()));
+        record.setRefresh_token(tokenCryptoUtil.decrypt(record.getRefresh_token()));
+        return record;
     }
 
     /**
@@ -185,22 +255,22 @@ public class SsoTokenBeanHolder {
                     ? existing.getRefresh_token() : refreshToken;
 
             SsoTokenBean data = new SsoTokenBean();
-            data.setAccess_token(accessToken);
-            data.setRefresh_token(effectiveRefresh);
+            data.setAccess_token(tokenCryptoUtil.encrypt(accessToken));
+            data.setRefresh_token(tokenCryptoUtil.encrypt(effectiveRefresh));
             data.setExpires_at(expiresAt);
 
             SsoTokenBean where = new SsoTokenBean();
             where.setIid(existing.getIid());
             ssoTokenBeanMapper.update(data, where);
-            log.info("SSO Token 已更新, uid={}", uid);
+            log.info("SSO Token 已更新, uid={}, 加密={}", uid, tokenCryptoUtil.isEnabled());
         } else {
             SsoTokenBean data = new SsoTokenBean();
             data.setUid(uid);
-            data.setAccess_token(accessToken);
-            data.setRefresh_token(refreshToken);
+            data.setAccess_token(tokenCryptoUtil.encrypt(accessToken));
+            data.setRefresh_token(tokenCryptoUtil.encrypt(refreshToken));
             data.setExpires_at(expiresAt);
             ssoTokenBeanMapper.install(data);
-            log.info("SSO Token 已新增, uid={}", uid);
+            log.info("SSO Token 已新增, uid={}, 加密={}", uid, tokenCryptoUtil.isEnabled());
         }
     }
 

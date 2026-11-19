@@ -541,6 +541,8 @@ public class AiGatewayAdminHolder {
             view.setDailyTokenQuota(item.getDailyTokenQuota());
             view.setEffectiveQuota(quotaHolder.effectiveQuota(item.getUserId()));
             view.setUsedToday(guard.usedTokens(item.getUserId()));
+            view.setDailyCostBudgetCents(item.getDailyCostBudgetCents());
+            view.setAlertThresholdPct(item.getAlertThresholdPct());
             view.setRemark(item.getRemark());
             view.setCustom(true);
             overview.getItems().add(view);

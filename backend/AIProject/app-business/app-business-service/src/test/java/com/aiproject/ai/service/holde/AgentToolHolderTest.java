@@ -108,6 +108,31 @@ class AgentToolHolderTest {
         assertEquals("[]", data.getRoleiids());
     }
 
+    /**
+     * 回归：install 不回填 iid，新建工具后必须查回带真实 iid 的记录返回，
+     * 否则调用方拿到 iid=null 无法删除/更新这个工具（清理也会漏掉）。
+     */
+    @Test
+    void save_shouldReturnCreatedToolWithGeneratedIid() {
+        stubOwnedAgent();
+        when(toolMapper.install(any(AgentToolBean.class))).thenReturn(1);
+        when(toolMapper.select(org.mockito.ArgumentMatchers.<com.heneng.hnsp.common.db.utils.PageRequest>isNull(),
+                any(AgentToolBean.class)))
+                .thenAnswer(invocation -> {
+                    AgentToolBean saved = new AgentToolBean();
+                    saved.setIid(456L);
+                    saved.setName("kb_search");
+                    saved.setAgentIid(7L);
+                    return Collections.singletonList(saved);
+                });
+
+        Result<AgentToolBean> result = holder.save(UID, request());
+
+        assertNotNull(result.getDatas());
+        assertEquals(Long.valueOf(456L), result.getDatas().getIid(),
+                "新建工具返回的对象必须带数据库生成的 iid");
+    }
+
     @Test
     void save_shouldScopeUpdateByOwner() {
         stubOwnedAgent();

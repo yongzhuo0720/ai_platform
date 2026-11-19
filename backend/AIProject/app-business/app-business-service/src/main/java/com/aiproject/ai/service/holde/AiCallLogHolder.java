@@ -1,6 +1,7 @@
 package com.aiproject.ai.service.holde;
 
 import com.aiproject.ai.service.bean.AiCallLogBean;
+import com.aiproject.ai.service.gateway.GatewayMetrics;
 import com.aiproject.ai.service.mapper.AiCallLogBeanMapper;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -39,6 +40,10 @@ public class AiCallLogHolder {
     @Autowired
     AiCallLogBeanMapper<AiCallLogBean> callLogBeanMapper;
 
+    /** Prometheus 业务指标（可观测性故障不能影响记账主流程，内部有 null 保护） */
+    @Autowired(required = false)
+    GatewayMetrics gatewayMetrics;
+
     private final ExecutorService writer = Executors.newSingleThreadExecutor(new ThreadFactory() {
         @Override
         public Thread newThread(Runnable runnable) {
@@ -51,6 +56,24 @@ public class AiCallLogHolder {
     public void record(final AiCallLogBean entry) {
         if (entry == null) {
             return;
+        }
+        // Prometheus 指标：在调用线程内更新（异步 writer 线程不适合碰 MeterRegistry 竞争）。
+        // 独立 try-catch：指标故障绝不能影响审计落库或 AI 请求收尾。
+        try {
+            if (gatewayMetrics != null) {
+                String status = entry.getStatus();
+                gatewayMetrics.record(
+                        entry.getModule(), entry.getModelName(), status,
+                        entry.getCostCents() != null,
+                        entry.getLatencyMs() == null ? 0L : entry.getLatencyMs(),
+                        entry.getTotalTokens() == null ? 0L : entry.getTotalTokens(),
+                        entry.getCostCents() == null ? 0L : entry.getCostCents());
+                if ("failed".equals(status) || "blocked".equals(status) || "aborted".equals(status)) {
+                    gatewayMetrics.recordFailure(entry.getModule(), entry.getModelName(), status);
+                }
+            }
+        } catch (Exception metricsError) {
+            log.warn("[AiGateway] 更新监控指标失败（不影响记账）: {}", metricsError.getMessage());
         }
         entry.setCreatetime(new Timestamp(System.currentTimeMillis()));
         if (entry.getEnable() == null) {

@@ -175,12 +175,22 @@
         <section class="gw-panel">
           <header>
             <h3>模型细分</h3>
-            <span>按模型聚合的调用量与耗时</span>
+            <span>按模型聚合的调用量与耗时 · 评测分为只读派生指标</span>
           </header>
+          <div class="score-formula">
+            评测分 = 100 ×（
+            {{ scoreWeights.success }} × 成功率 +
+            {{ scoreWeights.latency }} × 延迟 +
+            {{ scoreWeights.cost }} × 成本
+            ）· 延迟/成本按本区间横向归一（越低越好），可手算复核；未定价模型的成本权重并入成功率与延迟。
+          </div>
           <div class="model-list">
             <div v-for="item in state.summary?.models ?? []" :key="item.model" class="module-item">
               <div class="module-row">
                 <span class="table-cell-mono">{{ item.model }}</span>
+                <span class="model-score-chip" :title="'成功率 ' + (modelScoreByName[item.model]?.parts.success * 100).toFixed(1) + ' / 延迟 ' + (modelScoreByName[item.model]?.parts.latency * 100).toFixed(1) + (modelScoreByName[item.model]?.parts.cost != null ? ' / 成本 ' + (modelScoreByName[item.model]!.parts.cost! * 100).toFixed(1) : ' / 成本未定价')">
+                  评测分 {{ modelScoreByName[item.model]?.score ?? '-' }}
+                </span>
                 <span>
                   {{ item.calls }} 次 · {{ formatTokens(item.tokens) }} tokens
                   · 成功率 {{ (item.successRate ?? 0).toFixed(1) }}%
@@ -550,6 +560,14 @@
             <el-table-column label="今日已用" width="130" align="center">
               <template #default="scope">{{ formatTokens(scope.row.usedToday) }}</template>
             </el-table-column>
+            <el-table-column label="成本预算" width="150" align="center">
+              <template #default="scope">
+                <span class="table-cell-strong">{{ budgetText(scope.row.dailyCostBudgetCents) }}</span>
+                <span v-if="scope.row.dailyCostBudgetCents > 0" class="gw-form-tip">
+                  {{ scope.row.alertThresholdPct ?? 80 }}% 提醒
+                </span>
+              </template>
+            </el-table-column>
             <el-table-column label="使用率" min-width="180">
               <template #default="scope">
                 <el-progress
@@ -631,6 +649,27 @@
           />
           <span class="gw-form-tip">单位 tokens，0 表示该用户不限制</span>
         </el-form-item>
+        <el-form-item label="成本预算">
+          <el-input-number
+            v-model="state.quotaForm.dailyCostBudgetCents"
+            :min="0"
+            :step="100"
+            controls-position="right"
+            style="width: 100%"
+          />
+          <span class="gw-form-tip">单位「分」，0 = 不设预算（如 100 分 = 1 元/日）</span>
+        </el-form-item>
+        <el-form-item label="告警阈值">
+          <el-input-number
+            v-model="state.quotaForm.alertThresholdPct"
+            :min="1"
+            :max="100"
+            :step="10"
+            controls-position="right"
+            style="width: 100%"
+          />
+          <span class="gw-form-tip">成本达到预算的这个比例时发提醒，默认 80%</span>
+        </el-form-item>
         <el-form-item label="备注">
           <el-input
             v-model="state.quotaForm.remark"
@@ -656,6 +695,8 @@ import { useIndex } from './index'
 
 const {
   state,
+  modelScoreByName,
+  scoreWeights,
   loadSummary,
   retryOverview,
   loadHealth,
@@ -680,6 +721,7 @@ const {
   formatTokens,
   formatDuration,
   formatCost,
+  budgetText,
   generateWeeklyReport,
   formatTime,
   trendHeight,

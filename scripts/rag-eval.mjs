@@ -284,6 +284,31 @@ class ApiClient {
     return json?.datas ?? []
   }
 
+  /**
+   * 等待本次上传的文档全部处理到 ready（异步流水线：queued→chunking→embedding→ready）。
+   * 文档处理现为异步，上传只返回 queued；若不等 ready 就检索，会拿到空结果。
+   * 返回 ready 的文档列表，超时或 failed 时抛错，避免静默产出假分数。
+   */
+  async waitForDocsReady(names, timeoutMs = 180000) {
+    const deadline = Date.now() + timeoutMs
+    while (Date.now() < deadline) {
+      const docs = await this.listDocs()
+      const mine = docs.filter((d) => names.includes(d.name))
+      if (mine.length >= names.length) {
+        const failed = mine.filter((d) => d.status === 'failed')
+        if (failed.length) {
+          throw new Error(`文档处理失败：${failed.map((d) => d.name + '(' + (d.errorMsg || '') + ')').join(', ')}`)
+        }
+        const ready = mine.filter((d) => d.status === 'ready' && (d.chunkCount ?? 0) > 0)
+        if (ready.length === names.length) return ready
+      }
+      await new Promise((r) => setTimeout(r, 1500))
+    }
+    const docs = await this.listDocs()
+    const mine = docs.filter((d) => names.includes(d.name))
+    throw new Error(`等待文档就绪超时；当前状态：${mine.map((d) => d.name + '=' + d.status + '/' + (d.chunkCount ?? 0)).join(', ')}`)
+  }
+
   async deleteDoc(iid) {
     return this.post('/ai/api/kbRag/deleteDoc', { data: { iid } })
   }
@@ -488,16 +513,31 @@ async function main() {
   const uploaded = []
   if (args.seed) {
     console.log(`\n上传语料（知识库「${args.kbName}」）...`)
-    for (const doc of corpus) {
+    // 文档处理已改为异步流水线，且后端限制同时最多 3 篇 processing。
+    // 因此分批上传（每批 3 篇），每批等全部 ready 后再传下一批，
+    // 既避开并发上限，也保证检索时向量已就绪——否则会拿到空结果/假分数。
+    const BATCH = 3
+    for (let start = 0; start < corpus.length; start += BATCH) {
+      const batch = corpus.slice(start, start + BATCH)
+      const batchNames = []
+      for (const doc of batch) {
+        try {
+          const json = await client.uploadDoc(doc.name, args.kbName, doc.content)
+          const iid = json?.datas?.iid
+          uploaded.push({ iid, name: doc.name })
+          batchNames.push(doc.name)
+          console.log(`  ↑ ${doc.name} 已受理（iid=${iid ?? '?'}，异步处理中）`)
+        } catch (e) {
+          console.error(`  ✗ ${doc.name}：${e.message}`)
+          console.error('    上传失败通常意味着向量模型未配置，请先在「模型配置」里启用 OpenAI 直连并填写 embedModel')
+          process.exit(1)
+        }
+      }
       try {
-        const json = await client.uploadDoc(doc.name, args.kbName, doc.content)
-        const iid = json?.datas?.iid
-        const chunks = json?.datas?.chunkCount
-        uploaded.push({ iid, name: doc.name })
-        console.log(`  ✓ ${doc.name} 分块 ${chunks ?? '?'} 个`)
+        const ready = await client.waitForDocsReady(batchNames)
+        ready.forEach((d) => console.log(`  ✓ ${d.name} 就绪，分块 ${d.chunkCount} 个`))
       } catch (e) {
-        console.error(`  ✗ ${doc.name}：${e.message}`)
-        console.error('    上传失败通常意味着向量模型未配置，请先在「模型配置」里启用 OpenAI 直连并填写 embedModel')
+        console.error(`  ✗ 等待文档就绪失败：${e.message}`)
         process.exit(1)
       }
     }

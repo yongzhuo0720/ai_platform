@@ -14,6 +14,7 @@ import { modelsConfigApi, type ModelConnectionTestResult } from '@/api/modelsCon
 import { weeklyReportApi, type WeeklyReport } from '@/api/weeklyReport'
 import { debug } from '@/utils/debug'
 import { isConfirmCancelled } from '@/utils/confirm'
+import { scoreModels, SCORE_WEIGHTS, type ScoreBreakdown } from './modelScore'
 
 const MODULE_LABELS: Record<string, string> = {
   chat: '问答聊天',
@@ -81,6 +82,9 @@ export function useIndex() {
     quotaForm: {
       userId: '',
       dailyTokenQuota: 100000,
+      // 成本预算（单位分）：0 = 不限制；阈值默认 80%
+      dailyCostBudgetCents: 0,
+      alertThresholdPct: 80,
       remark: '',
       scope: 'user' as 'user' | 'unit',
     unitGid: '',
@@ -107,6 +111,30 @@ export function useIndex() {
   const userMax = computed(() =>
     Math.max(1, ...(state.summary?.topUsers ?? []).map((item) => item.calls))
   )
+
+  /**
+   * 按模型评测分：只读派生指标，消费 summary().models 已落库的聚合数据。
+   * 不新增接口、不改网关主链路；归一化在同一区间内横向可比，可手算复核。
+   * 未定价模型的成本维度置空、权重并入另两项（见 modelScore.ts）。
+   */
+  const modelScores = computed<ScoreBreakdown[]>(() =>
+    scoreModels(
+      (state.summary?.models ?? []).map((item) => ({
+        successRate: item.successRate ?? 0,
+        p95LatencyMs: item.p95LatencyMs ?? item.avgLatencyMs ?? 0,
+        costMilliCents: item.priced ? (item.costCents ?? 0) : null,
+      }))
+    )
+  )
+  /** 模型名 -> 评分明细，供模板按行取用 */
+  const modelScoreByName = computed<Record<string, ScoreBreakdown>>(() => {
+    const result: Record<string, ScoreBreakdown> = {}
+    ;(state.summary?.models ?? []).forEach((item, index) => {
+      result[item.model] = modelScores.value[index]
+    })
+    return result
+  })
+  const scoreWeights = SCORE_WEIGHTS
 
   onMounted(() => {
     loadConfig()
@@ -384,6 +412,8 @@ export function useIndex() {
     state.quotaForm.userId = row?.userId ?? ''
     state.quotaForm.dailyTokenQuota =
       row?.dailyTokenQuota ?? state.quotas?.defaultDailyTokenQuota ?? 200000
+    state.quotaForm.dailyCostBudgetCents = row?.dailyCostBudgetCents ?? 0
+    state.quotaForm.alertThresholdPct = row?.alertThresholdPct ?? 80
     state.quotaForm.remark = row?.remark ?? ''
     state.quotaDialogVisible = true
     loadUsers()
@@ -403,6 +433,8 @@ export function useIndex() {
       const { data: res } = await aiGatewayAdminApi.saveQuota({
         userId,
         dailyTokenQuota: Math.max(0, Number(state.quotaForm.dailyTokenQuota) || 0),
+        dailyCostBudgetCents: Math.max(0, Number(state.quotaForm.dailyCostBudgetCents) || 0),
+        alertThresholdPct: Math.min(100, Math.max(1, Number(state.quotaForm.alertThresholdPct) || 80)),
         remark: state.quotaForm.remark.trim(),
       })
       if (res.resp_code === 0) {
@@ -526,6 +558,12 @@ export function useIndex() {
     return `¥${yuan.toFixed(2)}`
   }
 
+  /** 成本预算字段单位是「分」（审计日志 costCents 是毫分），展示成元要 ÷100 */
+  function budgetText(cents: number | null | undefined): string {
+    if (!cents || cents <= 0) return '不限制'
+    return `¥${(Number(cents) / 100).toFixed(2)}`
+  }
+
   function formatTime(value: number | string | null | undefined): string {
     if (value === null || value === undefined || value === '') return '-'
     if (typeof value === 'number') {
@@ -586,6 +624,8 @@ export function useIndex() {
   return {
     state,
     trendMax,
+    modelScoreByName,
+    scoreWeights,
     loadConfig,
     loadSummary,
     retryOverview,
@@ -605,6 +645,7 @@ export function useIndex() {
     formatTokens,
     formatDuration,
     formatCost,
+    budgetText,
     loadReports,
     generateWeeklyReport,
     loadHealth,

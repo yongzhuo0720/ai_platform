@@ -106,7 +106,11 @@ public class AgentConfigHolder {
         if (configMapper.install(data) <= 0) {
             return Result.failed(null, "创建 Agent 失败，请稍后重试");
         }
-        return Result.succeed(data, "创建成功");
+        // install 不回填 bigserial 自增主键：直接返回 data 会让 iid 为 null，
+        // 前端/调用方拿到后无法立即用这个 iid 建工具（agentToolBean/save 要求 agentIid）。
+        // 按 agentKey 查回带真实 iid 的完整记录再返回。查不到时退回 data，不阻断创建成功语义。
+        AgentBean saved = findByKey(uid, data.getAgentKey());
+        return Result.succeed(saved != null ? saved : data, "创建成功");
     }
 
     public Result<Boolean> update(String uid, AgentBean data) {

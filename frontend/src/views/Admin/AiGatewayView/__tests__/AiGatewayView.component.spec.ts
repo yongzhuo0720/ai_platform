@@ -129,6 +129,8 @@ const quotas = {
       dailyTokenQuota: null,
       effectiveQuota: 500000,
       usedToday: 400000,
+      dailyCostBudgetCents: 500,
+      alertThresholdPct: 70,
       remark: null,
       custom: false,
     },
@@ -502,6 +504,8 @@ describe("AiGatewayView", () => {
     expect(aiGatewayAdminApi.saveQuota).toHaveBeenCalledWith({
       userId: "unit:1001",
       dailyTokenQuota: 500000,
+      dailyCostBudgetCents: 0,
+      alertThresholdPct: 80,
       remark: "",
     });
     expect(success).toHaveBeenCalledWith("配额已保存");
@@ -544,6 +548,42 @@ describe("AiGatewayView", () => {
     await anotherDelete!.trigger("click");
     await flushPromises();
     expect(aiGatewayAdminApi.deleteQuota).toHaveBeenCalledTimes(1);
+  });
+
+  it("成本预算：列表展示预算与阈值，编辑时回填并原样提交", async () => {
+    const { success } = createMessageSpies();
+    const wrapper = mountView();
+    await flushPromises();
+    await clickTab(wrapper, "配额管理");
+
+    // 表格展示：500 分 = ¥5.00，阈值 70%
+    const rows = wrapper.findAll("#pane-quotas .el-table__row");
+    expect(rows[0].text()).toContain("¥5.00");
+    expect(rows[0].text()).toContain("70% 提醒");
+
+    // 编辑 u1：成本预算与阈值回填
+    const editButton = rows[0].findAll("button").find((b) => b.text().includes("编辑"));
+    await editButton!.trigger("click");
+    await nextTick();
+    const dialog = wrapper.find(".el-dialog");
+    const numberInputs = dialog.findAll(".el-input-number input");
+    // 顺序：每日配额、成本预算、告警阈值
+    expect((numberInputs[1].element as HTMLInputElement).value).toBe("500");
+    expect((numberInputs[2].element as HTMLInputElement).value).toBe("70");
+
+    const saveButton = dialog
+      .findAll(".el-dialog__footer button")
+      .find((b) => b.text().includes("保存"));
+    await saveButton!.trigger("click");
+    await flushPromises();
+    expect(aiGatewayAdminApi.saveQuota).toHaveBeenCalledWith({
+      userId: "u1",
+      dailyTokenQuota: 500000,
+      dailyCostBudgetCents: 500,
+      alertThresholdPct: 70,
+      remark: "",
+    });
+    expect(success).toHaveBeenCalledWith("配额已保存");
   });
 
   it("模型健康：切换时加载一次，展示配置完整性、模块状态与今日统计", async () => {

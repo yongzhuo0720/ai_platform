@@ -1,0 +1,100 @@
+# NexusAI 多实例编排（精准升级 · 2026-11-18）
+#
+# 与 docs/部署手册.md 里的手动 docker run 一一对应，但不改动原单实例流程：
+# - 默认 1 个 app 副本 = 原单实例行为，直接 `docker compose up -d` 即可；
+# - 横向扩容用 `docker compose up -d --scale app=3`，无需改代码；
+# - app 是无状态的：登录会话在共享 Redis、SSO Token 与账单在共享 PostgreSQL、
+#   配置来自共享挂载卷，所以多副本天然可水平扩展。
+#
+# 前置条件：
+# 1. 已按部署手册准备好 config 目录（/home/app/ai/config，含 application-properties）
+#    和前端 dist（/home/server/nginx/web）。
+# 2. 密码/密钥通过 .env 文件注入（见同目录 .env.example），绝不写进本文件。
+# 3. 多实例前确认「定时任务多实例互斥」已启用（见子阶段 7B 学习文档），
+#    否则周报聚合等 @Scheduled 任务会在每个副本各跑一次。
+#
+# 用法：
+#   docker compose --env-file .env up -d
+#   docker compose --env-file .env up -d --scale app=3
+#   docker compose ps        # 看健康状态
+#   docker compose logs -f app
+
+services:
+  postgres:
+    image: postgres:12.5
+    container_name: nx-postgres
+    restart: always
+    environment:
+      POSTGRES_PASSWORD: ${PG_PASSWORD:?请在 .env 设置 PG_PASSWORD}
+      TZ: PRC
+    ports:
+      - "5432:5432"
+    volumes:
+      - /home/server/postgres/data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+  redis:
+    image: redis:6.2
+    container_name: nx-redis
+    restart: always
+    command: redis-server /etc/redis/redis.conf
+    ports:
+      - "6379:6379"
+    volumes:
+      - /home/server/redis/data:/data
+      - /home/server/redis/conf/redis.conf:/etc/redis/redis.conf:ro
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  # 后端应用：默认 1 副本；--scale app=N 扩容。
+  # 不固定 container_name，否则多副本会名字冲突。
+  # 不向宿主暴露 8507：统一由 nginx 反代，避免绕过网关限流直连某个实例。
+  app:
+    image: app-start:latest
+    restart: always
+    expose:
+      - "8507"
+    volumes:
+      - /home/app/ai/config:/home/app/ai/config:ro
+      - /home/app/ai/Logs:/home/app/ai/Logs
+    environment:
+      TZ: Asia/Shanghai
+      # 生产务必注入：SSO Token 字段级加密密钥（16/24/32 字节）；留空则为明文模式
+      SSO_TOKEN_KEY: ${SSO_TOKEN_KEY:-}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      # 健康端点来自 application.yml 仅暴露 health/info；context-path 为 /ai
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8507/ai/actuator/health | grep -q UP || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 60s
+
+  nginx:
+    image: nginx:1.25
+    container_name: nx-nginx
+    restart: always
+    ports:
+      - "8083:8083"
+    volumes:
+      - /home/server/nginx/conf/nginx.conf:/etc/nginx/nginx.conf:ro
+      - /home/server/nginx/web:/home/web:ro
+    depends_on:
+      - app
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8083/ || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 3

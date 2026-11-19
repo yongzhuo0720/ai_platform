@@ -26,6 +26,25 @@ public class AiUserQuotaBean extends DbEntityBase {
     @ApiModelProperty("每日Token配额，0=不限制")
     Long dailyTokenQuota;
 
+    /**
+     * 每日成本预算，单位「分」（不是毫分！）。
+     * <p>审计日志里的 costCents 是毫分（1 分 = 1000 毫分），
+     * 预算用「分」是为了让管理员填直观数字（如 100 分 = 1 元）。
+     * 告警时把当日累计毫分 ÷ 1000 换成分再与预算比较。
+     * null 或 0 表示不设成本预算（只按 token 配额限流）。</p>
+     */
+    @SqlColumn()
+    @ApiModelProperty("每日成本预算（分），null或0=不限制")
+    Long dailyCostBudgetCents;
+
+    /**
+     * 告警阈值百分比：当日成本达到预算的这个比例时发 warning 通知。
+     * 默认 80，取 1-100；100 表示只在超预算时才告警。
+     */
+    @SqlColumn()
+    @ApiModelProperty("告警阈值百分比，默认80")
+    Integer alertThresholdPct;
+
     @SqlColumn()
     @ApiModelProperty("备注")
     String remark;

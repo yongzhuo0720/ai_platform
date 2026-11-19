@@ -70,6 +70,32 @@ class AgentConfigHolderTest {
         assertEquals("only_me", data.getPermissionType());
     }
 
+    /**
+     * 回归：install 不回填 bigserial 主键，create 必须按 agentKey 查回带真实 iid 的记录返回。
+     * 否则调用方拿到 iid=null 的对象，无法立即用它建工具（agentToolBean/save 要求 agentIid）。
+     */
+    @Test
+    void create_shouldReturnSavedRecordWithGeneratedIid() {
+        when(configMapper.install(any(AgentBean.class))).thenReturn(1);
+        // 模拟数据库按 agentKey 查回的行（带真实 iid）
+        when(configMapper.select(org.mockito.ArgumentMatchers.<PageRequest>isNull(), any(AgentBean.class)))
+                .thenAnswer(invocation -> {
+                    AgentBean where = invocation.getArgument(1);
+                    AgentBean saved = new AgentBean();
+                    saved.setIid(123L);
+                    saved.setAgentKey(where.getAgentKey());
+                    saved.setLastuser(where.getLastuser());
+                    return Collections.singletonList(saved);
+                });
+
+        Result<AgentBean> result = holder.create(UID, request("报销助手"));
+
+        assertNotNull(result.getDatas());
+        assertEquals(Long.valueOf(123L), result.getDatas().getIid(),
+                "create 返回的对象必须带数据库生成的真实 iid");
+        assertNotNull(result.getDatas().getAgentKey());
+    }
+
     @Test
     void create_shouldRejectBlankName() {
         Result<AgentBean> result = holder.create(UID, request("  "));

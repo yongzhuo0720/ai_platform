@@ -34,6 +34,38 @@ AI 请求默认统一收口到业务后端，浏览器不再持有 Dify API Key�
 
 **取舍**：换来凭据不出服务端、可计量可治理；代价是多一跳网关延迟与 SSE 代理复杂度，且 Dify 超时与断流需要在网关侧兜底。
 
+### Prometheus 可观测（对标 LiteLLM / New-API）
+
+Actuator 暴露 `/actuator/prometheus`（只读指标，不含密钥/堆内存），并强制关闭
+`env`/`heapdump`/`threaddump` 三个高危端点。除 JVM / HTTP 通用指标外，网关在审计落库
+收口处（`AiCallLogHolder.record`）通过 `GatewayMetrics` 输出业务指标，全部带
+`application` tag（多实例可区分）：
+
+| 指标 | 维度 tag | 用途 |
+|---|---|---|
+| `aiproject_gateway_calls_total` | module / model / status | 按模型/模块的调用量与成功率 |
+| `aiproject_gateway_tokens_*` | module / model | 每次调用 token 分布 |
+| `aiproject_gateway_cost_millicents_total` | module / model / priced | 成本累计（毫分），`priced` 区分"未定价"与真免费 |
+| `aiproject_gateway_latency_milliseconds_*` | module / status | 延迟分布，可配 P95 告警 |
+| `aiproject_gateway_failures_total` | module / model / status | 失败/拦截数，可配 5 分钟失败率告警 |
+
+指标更新包在独立 try-catch 里，且 `MeterRegistry` 不可用时全退化成 no-op——
+**可观测性故障不会拖垮记账与 AI 请求**（这是借鉴成熟网关的 fail-safe 原则）。
+桥接包已放入离线依赖仓库，`mvn -o` 离线构建照常通过。
+
+### 成本预算与超支告警（对标 LiteLLM 的 budget）
+
+在「AI 调用治理」的配额配置里，除每日 Token 配额外还能设**每日成本预算（单位分）**
+与**告警阈值百分比（默认 80）**。一个每天 02:00 的定时任务（`CostBudgetAlertScheduler`）
+扫描昨日按用户汇总的成本（复用审计日志的 `costCents` 毫分口径），达到阈值发 warning
+站内通知、超预算发 error 通知：
+
+- **单位换算**：日志记毫分、预算配分，比较前 ÷1000——单测专门钉住"别把 100000 毫分当成 1000 倍超支"；
+- **幂等**：`eventKey = cost-budget:{uid}:{date}:{level}`，靠通知中心唯一索引，同一天同级告警只发一条；
+- **fail-safe**：单用户处理异常不影响其他用户，多实例用 `ScheduledTaskGuard` 互斥。
+
+预算字段随现有 `saveQuota` 接口存取，配额列表页回显；未设预算（null/0）时不告警。
+
 ### 数据归属：Dify 知识库与本地 RAG
 
 Dify 托管知识库通过 `knowledgebasebean.kbId` 引用上游数据集；这一路的原文、分块与向量保存在 Dify。
@@ -252,7 +284,7 @@ cd frontend
 npm run typecheck      # TypeScript 类型检查
 npm run check:icons    # 图标注册检查（模板图标必须 import 或全局注册）
 npm run check:styles   # 硬编码色值棘轮检查（只减不增，基线在 scripts/check-styles.baseline.json）
-npm run test            # 单元测试（Vitest），26 个文件 / 303 项
+npm run test            # 单元测试（Vitest），27 个文件 / 309 项
 npm run test:component  # 组件测试（真实渲染），30 个文件 / 300 项
 npm run test:e2e        # 浏览器冒烟（真实 Chromium + 接口 mock），23 项
 npm run check:streaming # 流式超时/取消回归，14 项
@@ -261,21 +293,74 @@ npm run build            # 生产构建
 npm run check:bundle     # 首屏 gzip 体积预算（需先 build）
 ```
 
-本地一键验证使用 `scripts/verify.ps1 -JavaHome '<你的 JDK 8 路径>'`（13 步，含后端；
+本地一键验证使用 `scripts/verify.ps1 -JavaHome '<你的 JDK 8 路径>'`（含后端、前端门禁、
+RAG 自检、演示脚本自检等步骤；
 跑完会打印 `后端单测汇总：N 项 / M 份报告`，一份报告都没生成就直接判失败——这是为了
 堵住「测试被静默跳过但 BUILD SUCCESS」这类最危险的绿色。前端同理：`npm run test` /
 `npm run test:component` 先扫磁盘上的 spec 文件，再与 Vitest 实际执行的文件对账，
-少了、多了或一项没跑都直接失败，不再靠人肉发现漏跑。日志统一 UTF-8，可直接重定向存档。
+少了、多了或一项没跑都直接失败，不再靠人肉发现漏跑。演示脚本自检（`check-demo-scripts.mjs`）
+会对 `scripts/*.mjs` 做语法校验、硬编码密钥扫描、必备脚本齐全检查——保护面试现场要跑的
+演示能力不被改坏或写死 key。日志统一 UTF-8，可直接重定向存档。
 
-### 当前测试结果（2026-11-07 实测）
+### 全功能演示（一条命令走遍所有模块）
+
+`scripts/demo-all-features.mjs` 以 admin 登录，逐个调用 8 大类、覆盖 15+ 模块共 31 个接口
+（网关治理 / 模型配置 / 知识库 RAG / 评估 / Agent / 平台治理 / 资源仓库 / 会话密钥 SSO），
+打印每个接口的真实返回摘要与耗时，最后汇总成功/失败数。以只读接口为主，不污染数据。
+
+```bash
+# 前提：后端 8507 + PostgreSQL 已启动，admin/123456 可用
+node scripts/demo-all-features.mjs
+# 自定义：QA_ACCOUNT / QA_PASSWORD / API_BASE 环境变量
+```
+
+空库时依赖前置数据的接口（如 Agent 工具列表需要 agentIid）会标注 SKIP 而非判失败。
+这是面试现场"我的项目各模块都能跑"的快速证据。
+
+更深的 `scripts/demo-deep.mjs` 会**用真实数据跑完整业务链路**：建临时评估数据集 →
+跑一轮 RAG 评估（真实 embedding + 检索，出 Recall/MRR/NDCG）→ 建临时 Agent + kb_search
+工具 → 跑一次真实模型工具调用（出执行轨迹与答案），跑完自动清理全部临时数据。
+
+```bash
+DS_KEY=sk-xxx node scripts/demo-deep.mjs   # 前置：库里已配向量模型、评估语料有文档
+```
+
+### 真实模型链路验证（可重复，非 mock）
+
+`scripts/verify-live-model.mjs` 用真实的 OpenAI 兼容模型端到端验证网关与 RAG 链路，
+不是 mock。它验证的东西单测覆盖不到：真实鉴权、上游转发、按 token 计费、
+请求 ID 贯穿，以及 RAG 的向量化 → 混合检索 → 知识库注入 → 生成全流程。
+
+**安全设计**：API Key 只从环境变量读取，不写进脚本/日志/仓库；脚本自建 `QA-` 前缀的
+临时模型配置与临时知识库，跑完无论成功失败都自动清理，不碰任何已有配置。
+
+```bash
+# 前提：后端 8507 + PostgreSQL 已启动（见 scripts/start.ps1）
+
+# ① 聊天直连：验证网关转发/鉴权/路由/计费
+DS_KEY=sk-xxx DS_MODEL=deepseek-flash DS_BASE=https://api.deepseek.com \
+  node scripts/verify-live-model.mjs chat
+
+# ② RAG 全链路：额外需要一家 embedding 服务（DeepSeek 无 /embeddings 端点）
+DS_KEY=sk-xxx DS_MODEL=deepseek-flash DS_BASE=https://api.deepseek.com \
+SF_KEY=sk-xxx SF_EMBED=BAAI/bge-m3 SF_BASE=https://api.siliconflow.cn/v1 \
+  node scripts/verify-live-model.mjs rag
+```
+
+Windows PowerShell 用 `$env:DS_KEY='sk-xxx'` 逐个设置后再 `node scripts/...`。
+也可设 `QA_TOKEN` 复用已有 token 免登录。
+鉴权失败、响应无 token 用量、RAG 回答不含语料关键词、prompt_tokens 异常偏低
+（说明知识库片段没注入）都会判失败，避免"假绿"。
+
+### 当前测试结果（2026-11-19 实测）
 
 | 项目 | 结果 |
 |---|---|
-| 后端单元测试 | **720 项，0 失败 / 0 错误 / 0 跳过**（`mvn -o test`，JDK 8 Dragonwell 8；app-common 7、permission 71、service 612、app-start 30） |
+| 后端单元测试 | **757 项，0 失败 / 0 错误 / 0 跳过**（`mvn -o test`，JDK 8 Dragonwell 8；app-common 7、permission 71、service 649、app-start 30） |
 | 前端 TypeScript 检查 | 通过 |
 | 前端图标注册检查 | 通过（59 个在用图标全部可解析） |
 | 硬编码色值棘轮检查 | 通过（45 个文件 / 1777 处，等于基线；新增即失败，只允许减少） |
-| 前端逻辑单元测试 | 26 个文件 / **303 项通过**（含文件对账） |
+| 前端逻辑单元测试 | 27 个文件 / **309 项通过**（含文件对账） |
 | 前端组件测试 | 30 个文件 / **300 项通过**（@vue/test-utils 真实渲染，含文件对账） |
 | 浏览器冒烟（Playwright） | **23 项通过**（真实 Chromium + `page.route` 接口 mock，含 Agent 事件链路、断流续播、模型可观测后台、文档流水线、目录页三态、登录守卫、响应式外壳、SSE、配额、RAG 评估详情、404 兜底） |
 | 前端流式回归 | 14 项通过 |

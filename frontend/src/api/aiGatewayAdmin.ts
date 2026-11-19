@@ -119,6 +119,10 @@ export interface AiQuotaView {
   dailyTokenQuota: number | null
   effectiveQuota: number
   usedToday: number
+  /** 每日成本预算（分），null/0 = 不限制 */
+  dailyCostBudgetCents: number | null
+  /** 告警阈值百分比 */
+  alertThresholdPct: number | null
   remark: string | null
   custom: boolean
 }
@@ -168,8 +172,13 @@ export const aiGatewayAdminApi = {
   exportLogs: (params: AiGatewayLogQuery = {}) =>
     axios.post('/ai/api/aiGatewayAdmin/exportLogs', { query: params }),
   getQuotas: () => axios.post('/ai/api/aiGatewayAdmin/quotas'),
-  saveQuota: (params: { userId: string; dailyTokenQuota: number; remark: string }) =>
-    axios.post('/ai/api/aiGatewayAdmin/saveQuota', { data: params }),
+  saveQuota: (params: {
+    userId: string
+    dailyTokenQuota: number
+    dailyCostBudgetCents: number
+    alertThresholdPct: number
+    remark: string
+  }) => axios.post('/ai/api/aiGatewayAdmin/saveQuota', { data: params }),
   deleteQuota: (params: { userId: string }) =>
     axios.post('/ai/api/aiGatewayAdmin/deleteQuota', { data: params }),
   getUsers: () => axios.post('/ai/api/aiGatewayAdmin/users'),

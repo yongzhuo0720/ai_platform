@@ -67,6 +67,31 @@ class ModelPriceResolverTest {
         assertEquals(101L, price.costCents(508L, 0L));
     }
 
+    /**
+     * 毫分口径锚定：1 分 = 1000 毫分。
+     * 审查报告记录过「价格解析记分、周报记毫分」的 1000 倍口径 bug。
+     * 这里用「100 万 token × 1 分/百万 = 1 分 = 1000 毫分」把换算关系钉死，
+     * 任何人把 UNIT 从 1000 误改成 1，这条会立刻失败。
+     */
+    @Test
+    void costCents_shouldAnchorMilliCentUnit() {
+        ModelPriceResolver.Price oneCentPerMillion = new ModelPriceResolver.Price(1L, 0L);
+        assertEquals(1_000L, oneCentPerMillion.costCents(1_000_000L, 0L),
+                "100 万 token × 1 分/百万 = 1 分 = 1000 毫分");
+        // 反过来：1000 毫分 ÷ 1000 才是「分」，前端展示不能再除一次
+        assertEquals(1L, oneCentPerMillion.costCents(1_000_000L, 0L) / 1_000L);
+    }
+
+    /** 成本必须随 token 单调递增——单价固定时更多 token 一定更贵 */
+    @Test
+    void costCents_shouldBeMonotonicInTokens() {
+        ModelPriceResolver.Price price = new ModelPriceResolver.Price(200L, 800L);
+        long small = price.costCents(100L, 100L);
+        long large = price.costCents(10_000L, 10_000L);
+        assertTrue(large > small, "单价固定时 token 越多成本必须越高");
+        assertTrue(price.costCents(0L, 0L) == 0L, "零 token 零成本");
+    }
+
     /** 单价为空 = 未配置，不算钱也不能当成免费 */
     @Test
     void price_shouldBeUnconfiguredWhenBothNull() {

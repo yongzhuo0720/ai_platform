@@ -17,7 +17,12 @@ export default defineConfig({
           // element-plus 不整体固定成单一 vendor chunk：
           // 它横跨聊天页与后台管理页，固定后会连管理台才用的 Table/DatePicker
           // 一起塞进首屏预加载。交给 Rollup 按路由动态 import 切分。
-          'highlight': ['highlight.js'],
+          // highlight 必须指向 lib/core 这个按需入口，绝不能写裸包 'highlight.js'：
+          // 裸包是 registerAllLanguages 的全量入口，会把 190+ 种语言（约 900KB）
+          // 强行打进产物；而 src/utils/markdown.ts 本就只 import core + 需要的
+          // 23 种语言并逐个 registerLanguage。这里对齐按需入口，语言模块随
+          // markdown.ts 自然分包，既避免全量体积又不破坏高亮效果。
+          'highlight': ['highlight.js/lib/core'],
           'vendor-vue': ['vue', 'vue-router', 'pinia'],
         },
       },

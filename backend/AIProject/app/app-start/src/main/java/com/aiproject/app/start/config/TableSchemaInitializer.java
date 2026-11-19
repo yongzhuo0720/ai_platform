@@ -201,6 +201,10 @@ public class TableSchemaInitializer implements ApplicationListener<ApplicationRe
         execute("CREATE INDEX IF NOT EXISTS idx_aicalllog_user_time ON aicalllogbean (\"userId\", \"createtime\")");
         execute("CREATE INDEX IF NOT EXISTS idx_aicalllog_module_time ON aicalllogbean (\"module\", \"createtime\")");
         execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_aiuserquota_user ON aiuserquotabean (\"userId\")");
+        // 每日成本预算（2026-11-19）：配额表由框架建，这里幂等加列。
+        // 预算单位是「分」，审计日志 costCents 是毫分，告警时换算比较。
+        execute("ALTER TABLE aiuserquotabean ADD COLUMN IF NOT EXISTS \"dailyCostBudgetCents\" int8");
+        execute("ALTER TABLE aiuserquotabean ADD COLUMN IF NOT EXISTS \"alertThresholdPct\" int4");
     }
 
     /**

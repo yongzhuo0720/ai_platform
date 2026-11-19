@@ -260,6 +260,14 @@ Step "RAG 评估集自检" {
     if ($LASTEXITCODE -ne 0) { throw "rag-eval --self-check 退出码 $LASTEXITCODE" }
 }
 
+# ---------- 演示/验证脚本自检 ----------
+# 离线跑：所有 scripts/*.mjs 语法校验 + 硬编码密钥扫描 + 必备脚本齐全检查。
+# 保护面试现场要跑的 demo-all-features / demo-deep / verify-live-model 不被改坏或写死 key。
+Step "演示脚本自检" {
+    node "$root/scripts/check-demo-scripts.mjs"
+    if ($LASTEXITCODE -ne 0) { throw "check-demo-scripts 退出码 $LASTEXITCODE" }
+}
+
 # ---------- 汇总 ----------
 Write-Host ""
 if ($failed.Count -eq 0) {

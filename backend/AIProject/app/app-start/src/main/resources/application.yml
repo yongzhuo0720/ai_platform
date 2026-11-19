@@ -29,11 +29,13 @@ hnsp:
 # 现仅保留健康检查，并强制关闭三个高危端点（即使将来有人改回 "*" 也不生效）。
 # 注意：原配置里的 "security: false" 是 Spring Boot 1.x 的写法，2.x 已移除该属性，
 # 也就是说它从来没起过保护作用——真正起作用的是下面这两段。
+# 2026-11-19：在白名单里加入 prometheus（只读指标，不含密钥/堆内存）用于生产可观测；
+# 三个高危端点仍强制关闭，include 不放开 "*" 的原则不变。
 management:
   endpoints:
     web:
       exposure:
-        include: "health,info"
+        include: "health,info,prometheus"
   endpoint:
     env:
       enabled: false
@@ -44,6 +46,10 @@ management:
   health:
     # 不对外展示数据源、Redis 等组件的连接细节
     show-details: never
+  metrics:
+    tags:
+      # 所有指标带应用名，多实例聚合时可区分（对标 LiteLLM 的 per-key/per-team 维度思路）
+      application: ${spring.application.name:aiproject}
 
 
 # spring配置
