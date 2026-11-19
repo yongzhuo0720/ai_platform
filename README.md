@@ -53,6 +53,11 @@ Actuator 暴露 `/actuator/prometheus`（只读指标，不含密钥/堆内存�
 **可观测性故障不会拖垮记账与 AI 请求**（这是借鉴成熟网关的 fail-safe 原则）。
 桥接包已放入离线依赖仓库，`mvn -o` 离线构建照常通过。
 
+**访问边界**（2026-11-19 安全加固）：`/actuator/**` 不属于任何登录拦截器的前缀，
+因此不能从公网入口访问。`docs/nginx-multinode.conf.example` 已用 `location ^~ /actuator/ { return 403; }`
+显式拒绝；docker-compose 中 app 服务用 `expose` 而非 `ports`，8507 只在容器网络内可见。
+Prometheus 应部署在内网，直连 `app:8507` 抓取，而不是走 nginx 公网入口。
+
 ### 成本预算与超支告警（对标 LiteLLM 的 budget）
 
 在「AI 调用治理」的配额配置里，除每日 Token 配额外还能设**每日成本预算（单位分）**
@@ -356,7 +361,7 @@ Windows PowerShell 用 `$env:DS_KEY='sk-xxx'` 逐个设置后再 `node scripts/.
 
 | 项目 | 结果 |
 |---|---|
-| 后端单元测试 | **757 项，0 失败 / 0 错误 / 0 跳过**（`mvn -o test`，JDK 8 Dragonwell 8；app-common 7、permission 71、service 649、app-start 30） |
+| 后端单元测试 | **777 项，0 失败 / 0 错误 / 0 跳过**（`mvn -o test`，JDK 8 Dragonwell 8；app-common 7、permission 71、service 665、app-start 34） |
 | 前端 TypeScript 检查 | 通过 |
 | 前端图标注册检查 | 通过（59 个在用图标全部可解析） |
 | 硬编码色值棘轮检查 | 通过（45 个文件 / 1777 处，等于基线；新增即失败，只允许减少） |

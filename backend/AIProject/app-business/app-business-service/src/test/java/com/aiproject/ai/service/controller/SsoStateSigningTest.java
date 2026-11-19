@@ -6,20 +6,25 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.data.redis.core.StringRedisTemplate;
+import org.springframework.data.redis.core.ValueOperations;
 
-import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertNull;
-import static org.mockito.Mockito.when;
+import java.time.Duration;
+
+import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.ArgumentMatchers.*;
+import static org.mockito.Mockito.*;
 
 /**
- * SSO state 签名 / 验签的单元测试。
+ * SSO state 签名 / 验签 / 一次性 nonce 的单元测试。
  *
- * 背景（对应 docs/code-review/2026-10-17/04-backend.md 高危 #5）：
- * 修复前 state 就是裸 uid，回调时原样当 uid 用。攻击者拿自己的授权 code 配上
- * 受害者的 uid 请求一次回调，就能把令牌写到受害者账号上（Token 错绑 / 会话固定）。
- *
- * 现在 state = {uid}.{HmacSHA256(uid, clientSecret)}，回调时验签。
- * 这几个用例就是模拟攻击者的几种打法，验证都拦得住。
+ * <p>演进（对应升级问题 P2-3）：</p>
+ * <ul>
+ *   <li>最初 state = 裸 uid，可任意伪造 → HMAC 签名防伪造；</li>
+ *   <li>{uid}.{HMAC(uid)} 确定性、永不过期，截获可无限重放 →
+ *       2026-11-19 加时间戳（10min 窗口）+ 随机 nonce（Redis 一次性消费）。</li>
+ * </ul>
+ * 本测试覆盖：签名防伪造、防篡改、时间窗口、nonce 唯一性、格式恶意输入、Redis fail-closed。
  */
 @ExtendWith(MockitoExtension.class)
 class SsoStateSigningTest {
@@ -27,74 +32,131 @@ class SsoStateSigningTest {
     @Mock
     SsoProperties ssoProperties;
 
+    @Mock
+    StringRedisTemplate stringRedisTemplate;
+
+    @Mock
+    ValueOperations<String, String> valueOperations;
+
     @InjectMocks
     SsoTokenBeanController controller;
 
-    /** 统一注入签名密钥，模拟真实部署里的 clientSecret */
     private void givenSecret() {
         when(ssoProperties.getClientSecret()).thenReturn("test-client-secret");
+    }
+
+    /** 让 buildSignedState 里的 Redis set 不抛异常（仅签发 state 的用例需要） */
+    private void givenRedisWorks() {
+        when(stringRedisTemplate.opsForValue()).thenReturn(valueOperations);
+        doNothing().when(valueOperations).set(anyString(), anyString(), any(Duration.class));
     }
 
     /** 正常流程：签发的 state 能解析回原来的 uid */
     @Test
     void signedState_shouldRoundTrip() {
         givenSecret();
+        givenRedisWorks();
         String state = controller.buildSignedState("u1001");
+        assertEquals(4, state.split("\\.").length, "state 应含 uid/时间戳/nonce/签名四段");
         assertEquals("u1001", controller.parseUidFromState(state));
     }
 
-    /**
-     * 攻击者知道目标 uid，但没有 clientSecret，签不出正确签名。
-     * 这是最主要的一条攻击路径。
-     */
+    /** 每次签发都不同（nonce 随机）—— 修复"确定性可重放"的关键 */
     @Test
-    void shouldReject_forgedSignature() {
+    void signedState_shouldBeDifferentEveryTime() {
         givenSecret();
-        assertNull(controller.parseUidFromState("u1001.abc123"));
-        assertNull(controller.parseUidFromState("u1001."));
-        assertNull(controller.parseUidFromState("u1001"));
+        givenRedisWorks();
+        assertNotEquals(controller.buildSignedState("u1001"), controller.buildSignedState("u1001"),
+                "同一 uid 两次签发的 state 必须不同，否则仍可重放");
     }
 
-    /**
-     * 攻击者截获了一个合法 state，把 uid 换成受害者、签名留着原来的。
-     * uid 一变签名就对不上，必须拒绝。
-     */
+    @Test
+    void shouldReject_forgedSignature() {
+        // 伪造的签名在常量时间比较前应被识别；这里给正确 secret 以便走到验签分支
+        givenSecret();
+        String goodTs = String.valueOf(System.currentTimeMillis());
+        String payload = "u1001." + goodTs + ".abc";
+        assertNull(controller.parseUidFromState(payload + ".forged_signature"));
+    }
+
     @Test
     void shouldReject_tamperedUid() {
         givenSecret();
-        String state = controller.buildSignedState("attacker");
-        String sig = state.substring(state.indexOf('.') + 1);
-        assertNull(controller.parseUidFromState("victim." + sig));
+        givenRedisWorks();
+        String[] parts = controller.buildSignedState("attacker").split("\\.");
+        // 只换 uid，其余（ts/nonce/签名）不动 → 验签失败
+        assertNull(controller.parseUidFromState("victim." + parts[1] + "." + parts[2] + "." + parts[3]));
     }
 
-    /** 签名密钥不同（比如换了一份 clientSecret），旧 state 不应通过 */
+    @Test
+    void shouldReject_tamperedNonce() {
+        givenSecret();
+        givenRedisWorks();
+        String[] parts = controller.buildSignedState("u1001").split("\\.");
+        assertNull(controller.parseUidFromState(parts[0] + "." + parts[1] + ".evilnonce." + parts[3]),
+                "nonce 被改应验签失败");
+    }
+
+    @Test
+    void shouldReject_expiredTimestamp() {
+        givenSecret();
+        // 20 分钟前的时间戳（超出 10 分钟窗口），签名正确也应被时间窗口拒绝
+        String ts = String.valueOf(System.currentTimeMillis() - 20 * 60 * 1000L);
+        String payload = "u1001." + ts + ".somenonce";
+        assertNull(controller.parseUidFromState(payload + "." + controller.signState(payload)));
+    }
+
+    @Test
+    void shouldReject_futureTimestamp() {
+        givenSecret();
+        String ts = String.valueOf(System.currentTimeMillis() + 5 * 60 * 1000L);
+        String payload = "u1001." + ts + ".somenonce";
+        assertNull(controller.parseUidFromState(payload + "." + controller.signState(payload)));
+    }
+
     @Test
     void shouldReject_stateSignedWithDifferentSecret() {
         givenSecret();
+        givenRedisWorks();
         String state = controller.buildSignedState("u1001");
 
         when(ssoProperties.getClientSecret()).thenReturn("another-secret");
         assertNull(controller.parseUidFromState(state));
     }
 
-    /**
-     * 畸形输入一律按无效处理，不能抛异常把回调打成 500。
-     * <p>
-     * 注意这里不注入 clientSecret：这些输入在解析阶段就提前返回了，
-     * 根本走不到签名那一步（注入了反而会触发 Mockito 的 UnnecessaryStubbing）。
-     */
     @Test
     void shouldReject_malformedState() {
+        // 这些输入在解析阶段提前返回，不碰签名/Redis，按 Mockito strict 规则不给多余 stub
         assertNull(controller.parseUidFromState(null));
         assertNull(controller.parseUidFromState(""));
         assertNull(controller.parseUidFromState("no-separator"));
         assertNull(controller.parseUidFromState(".onlysignature"));
+        assertNull(controller.parseUidFromState("a.b.c"));
     }
 
-    /** 签名本身要稳定：同一个 uid 多次签发得到相同结果（否则回调会不稳定） */
+    @Test
+    void parseNonceFromState_shouldExtractCorrectly() {
+        givenSecret();
+        givenRedisWorks();
+        String state = controller.buildSignedState("u1001");
+        String nonce = controller.parseNonceFromState(state);
+        assertNotNull(nonce);
+        assertEquals(32, nonce.length(), "nonce 是去掉横杠的 UUID(32位)");
+        assertTrue(state.contains(nonce));
+    }
+
+    /** 签名本身稳定：相同 payload 的 HMAC 恒定（验签可靠性的基础） */
     @Test
     void signature_shouldBeStable() {
         givenSecret();
-        assertEquals(controller.signState("u1001"), controller.signState("u1001"));
+        assertEquals(controller.signState("u1001.123.nonce"), controller.signState("u1001.123.nonce"));
+    }
+
+    /** fail-closed：Redis 存不进 nonce 时签发失败，而不是发一个注定无法回调的 URL */
+    @Test
+    void buildSignedState_shouldFailClosedWhenRedisDown() {
+        givenSecret();
+        when(stringRedisTemplate.opsForValue()).thenThrow(new RuntimeException("redis down"));
+        assertThrows(RuntimeException.class, () -> controller.buildSignedState("u1001"));
     }
 }

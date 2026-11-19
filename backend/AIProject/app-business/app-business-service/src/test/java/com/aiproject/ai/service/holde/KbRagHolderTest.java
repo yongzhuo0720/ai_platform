@@ -697,6 +697,68 @@ class KbRagHolderTest {
         assertTrue(patterns > 0, "英文词项也应参与子串召回");
     }
 
+    // ========== P2-8 孤儿分块对账（只读） ==========
+
+    private static KbDocBean doc(long iid) {
+        KbDocBean d = new KbDocBean();
+        d.setIid(iid);
+        return d;
+    }
+
+    private static KbChunkBean chunk(long iid, Long docIid) {
+        KbChunkBean c = new KbChunkBean();
+        c.setIid(iid);
+        c.setDocIid(docIid);
+        return c;
+    }
+
+    /** 无孤儿：两个分块的 docIid 都对应存在的文档 */
+    @Test
+    void auditOrphanChunks_noOrphans() {
+        when(kbDocBeanMapper.select(any(PageRequest.class), any(KbDocBean.class)))
+                .thenReturn(Arrays.asList(doc(1L), doc(2L)));
+        when(kbChunkBeanMapper.select(any(PageRequest.class), any(KbChunkBean.class)))
+                .thenReturn(Arrays.asList(chunk(10L, 1L), chunk(11L, 2L)));
+
+        KbRagHolder.OrphanChunkStats stats = holder.auditOrphanChunks();
+
+        assertEquals(0L, stats.orphanChunkCount);
+        assertEquals(0L, stats.orphanDocCount);
+    }
+
+    /** 有孤儿：docIid=99 的文档已不存在，它名下的 2 个分块应被识别为孤儿 */
+    @Test
+    void auditOrphanChunks_detectsOrphans() {
+        when(kbDocBeanMapper.select(any(PageRequest.class), any(KbDocBean.class)))
+                .thenReturn(Arrays.asList(doc(1L)));
+        when(kbChunkBeanMapper.select(any(PageRequest.class), any(KbChunkBean.class)))
+                .thenReturn(Arrays.asList(
+                        chunk(10L, 1L),    // 正常
+                        chunk(20L, 99L),   // 孤儿
+                        chunk(21L, 99L))); // 同一孤儿文档的另一个分块
+
+        KbRagHolder.OrphanChunkStats stats = holder.auditOrphanChunks();
+
+        assertEquals(2L, stats.orphanChunkCount, "2 个分块无父文档");
+        assertEquals(1L, stats.orphanDocCount, "涉及 1 个已删除文档");
+        assertTrue(stats.orphanDocIids.contains(99L));
+    }
+
+    /** 对账是只读的：绝不调用 delete/install */
+    @Test
+    void auditOrphanChunks_isReadOnly() {
+        when(kbDocBeanMapper.select(any(PageRequest.class), any(KbDocBean.class)))
+                .thenReturn(Collections.<KbDocBean>emptyList());
+        when(kbChunkBeanMapper.select(any(PageRequest.class), any(KbChunkBean.class)))
+                .thenReturn(Arrays.asList(chunk(20L, 99L)));
+
+        holder.auditOrphanChunks();
+
+        verify(kbChunkBeanMapper, never()).delete(any(KbChunkBean.class));
+        verify(kbDocBeanMapper, never()).delete(any(KbDocBean.class));
+        verify(kbChunkBeanMapper, never()).install(any(KbChunkBean.class));
+    }
+
     private static String fill(char c, int count) {
         char[] chars = new char[count];
         Arrays.fill(chars, c);

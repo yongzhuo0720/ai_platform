@@ -13,6 +13,13 @@ import lombok.Data;
 @Data
 @SqlBean(keyId = "iid", ignores = {"key1", "key2", "key3"})
 @ApiModel(value = "知识库文档", description = "本地RAG文档")
+/**
+ * <p><b>归属字段约定（2026-11-19 加固，勿违反）</b>：本表没有独立 ownerUid，
+ * 归属复用基类字段 {@code lastuser}。该字段<b>仅在文档创建时写入一次</b>，
+ * 之后所有 update 操作只能把它放在 WHERE 条件里做归属过滤，
+ * <b>绝不可出现在 update 的 SET 部分</b>（即禁止 {@code update.setLastuser(...)}），
+ * 否则等于允许改写归属、产生跨用户越权。上传/检索/删除的 Holder 代码已遵循此约定。</p>
+ */
 public class KbDocBean extends DbEntityBase {
 
     @SqlColumn()

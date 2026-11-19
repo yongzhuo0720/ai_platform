@@ -353,10 +353,13 @@ public class KbRagHolder {
         try {
             queryVectors = embeddingClient.embed(embedding, Collections.singletonList(query.trim()));
         } catch (IllegalStateException e) {
-            return Result.failed(null, e.getMessage());
+            // 向量化异常消息可能拼了上游响应片段（EmbeddingClient.snippet），不回显给调用方。
+            // 完整消息写日志，排障靠日志而非错误响应。
+            log.warn("[KbRag] 检索向量化失败(已知类型): {}", e.getMessage());
+            return Result.failed(null, "检索失败：向量服务暂不可用，请稍后重试");
         } catch (Exception e) {
             log.warn("[KbRag] 检索向量化失败: {}", e.getMessage());
-            return Result.failed(null, "检索失败：" + e.getMessage());
+            return Result.failed(null, "检索失败，请稍后重试");
         }
         double[] queryVector = queryVectors.get(0);
 
@@ -897,5 +900,74 @@ public class KbRagHolder {
 
     private static double round4(double value) {
         return Math.round(value * 10000.0) / 10000.0;
+    }
+
+    /**
+     * 扫描孤儿分块：存在 chunk 但所属 doc 已不存在（2026-11-19 升级 P2-8）。
+     *
+     * <p>场景：删除文档的补偿路径是"先删分块、再删文档"，若进程恰好在这两步之间崩溃，
+     * 会留下没有父文档的分块；它们仍会被检索命中，返回来源不明的旧内容。</p>
+     *
+     * <p><b>只读告警，不删数据</b>：本方法只返回孤儿统计，由调用方记日志/指标。
+     * 是否自动清理属于数据删除决策，须人工评估后另行实现（符合升级任务书禁止破坏性操作）。</p>
+     *
+     * @return 孤儿分块统计（孤儿 chunk 数、涉及的 docIid 数）；无孤儿时 count=0
+     */
+    public OrphanChunkStats auditOrphanChunks() {
+        // 1) 收集所有尚存文档的 iid
+        java.util.Set<Long> liveDocIids = new java.util.HashSet<Long>();
+        PageRequest docPage = new PageRequest(1, 1000);
+        docPage.setOrder("iid");
+        docPage.setDesc("asc");
+        for (int p = 1; p <= MAX_ORPHAN_AUDIT_PAGES; p++) {
+            docPage.setPageNum(p);
+            List<KbDocBean> docs = kbDocBeanMapper.select(docPage, new KbDocBean());
+            if (docs == null || docs.isEmpty()) {
+                break;
+            }
+            for (KbDocBean d : docs) {
+                if (d.getIid() != null) {
+                    liveDocIids.add(d.getIid());
+                }
+            }
+            if (docs.size() < 1000) {
+                break;
+            }
+        }
+
+        // 2) 扫描所有分块，找出 docIid 不在存活集合里的
+        OrphanChunkStats stats = new OrphanChunkStats();
+        java.util.Set<Long> orphanDocIids = new java.util.HashSet<Long>();
+        PageRequest chunkPage = new PageRequest(1, 1000);
+        chunkPage.setOrder("iid");
+        chunkPage.setDesc("asc");
+        for (int p = 1; p <= MAX_ORPHAN_AUDIT_PAGES; p++) {
+            chunkPage.setPageNum(p);
+            List<KbChunkBean> chunks = kbChunkBeanMapper.select(chunkPage, new KbChunkBean());
+            if (chunks == null || chunks.isEmpty()) {
+                break;
+            }
+            for (KbChunkBean c : chunks) {
+                if (c.getDocIid() != null && !liveDocIids.contains(c.getDocIid())) {
+                    stats.orphanChunkCount++;
+                    orphanDocIids.add(c.getDocIid());
+                }
+            }
+            if (chunks.size() < 1000) {
+                break;
+            }
+        }
+        stats.orphanDocCount = orphanDocIids.size();
+        stats.orphanDocIids = orphanDocIids;
+        return stats;
+    }
+
+    private static final int MAX_ORPHAN_AUDIT_PAGES = 1000; // 上限 100 万行，防止无限扫描
+
+    /** 孤儿分块统计（只读告警用） */
+    public static final class OrphanChunkStats {
+        public long orphanChunkCount;
+        public long orphanDocCount;
+        public java.util.Set<Long> orphanDocIids;
     }
 }

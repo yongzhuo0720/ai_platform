@@ -43,15 +43,32 @@ import javax.servlet.http.HttpServletRequest;
 public class GlobalExceptionHandler {
 
     /**
-     * 参数缺失 / 类型不匹配：属于调用方错误，提示可以直接回给前端。
+     * 参数缺失 / 类型不匹配 / 业务参数校验失败：属于调用方错误。
+     *
+     * <p><b>2026-11-19 安全修复</b>：区分两类消息的来源。</p>
+     * <ul>
+     *   <li>框架标准参数异常（MissingServletRequestParameter / MethodArgumentTypeMismatch）
+     *       的消息由 Spring 生成，内容形如 "Required request parameter 'x' is not present"，
+     *       不含业务内部信息，可回显帮助调用方排错；</li>
+     *   <li>{@code IllegalArgumentException}/{@code IllegalStateException} 是业务代码抛出的，
+     *       项目里存在把上游响应片段、内部配置状态拼进消息的情况（如 EmbeddingClient 的
+     *       "向量化接口返回 HTTP 200：" + snippet(response)）。这类消息<b>一律不回显</b>，
+     *       完整内容只写服务端日志——原实现只做长度截断，等于把上游片段原样送给调用方。</li>
+     * </ul>
      */
     @ExceptionHandler({MissingServletRequestParameterException.class,
             MethodArgumentTypeMismatchException.class,
             IllegalArgumentException.class,
             IllegalStateException.class})
     public Result<Void> handleBadRequest(Exception e, HttpServletRequest request) {
+        // 完整消息始终写日志，排障能力不因脱敏而下降
         log.warn("[GlobalException] 请求参数异常 uri={} : {}", request.getRequestURI(), e.getMessage());
-        return Result.failed(null, "请求参数有误：" + safeMessage(e));
+        if (e instanceof MissingServletRequestParameterException
+                || e instanceof MethodArgumentTypeMismatchException) {
+            return Result.failed(null, "请求参数有误：" + safeMessage(e));
+        }
+        // 业务抛出的异常：消息可能含上游响应片段/内部配置，只回固定文案
+        return Result.failed(null, "请求参数有误");
     }
 
     /**

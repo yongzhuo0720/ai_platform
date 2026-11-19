@@ -40,6 +40,14 @@ http {
             try_files $uri $uri/ /index.html;
         }
 
+        # 2026-11-19 安全加固：actuator 端点不允许从公网入口访问。
+        # /actuator/prometheus 含接口路径、调用量、实例名等内部运行信息；
+        # 监控应由 Prometheus 从内网直连 app:8507 抓取，而不是走这个公网入口。
+        # 精确前缀匹配 + 前缀 ^~ 保证不会被后面的 location /ai/ 或 / 覆盖。
+        location ^~ /actuator/ {
+            return 403;
+        }
+
         # 平台接口统一反代到后端集群
         location /ai/ {
             proxy_pass http://app_backend;

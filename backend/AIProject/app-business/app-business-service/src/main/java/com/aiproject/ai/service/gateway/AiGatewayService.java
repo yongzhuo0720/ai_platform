@@ -1260,16 +1260,7 @@ public class AiGatewayService {
 
             // 只有「按预扣值计费」这一条路径把 parser 写进审计：此刻它的 totalTokens 就是我们真正扣掉的额度。
             // 其他异常分支传 null——上游没给完整 usage，写进去会让看板显示的用量和实际扣掉的额度对不上。
-            Integer auditStatus;
-            if (timedOut) {
-                auditStatus = HttpServletResponse.SC_GATEWAY_TIMEOUT;
-            } else if (upstreamStatus != null) {
-                // 只要收到过上游响应，就记真实状态：流中途断掉（200 之后读失败）
-                // 不是「网关没连上上游」，写 502 会让看板把上游可用性算错
-                auditStatus = upstreamStatus;
-            } else {
-                auditStatus = HttpServletResponse.SC_BAD_GATEWAY;
-            }
+            Integer auditStatus = resolveAuditStatus(timedOut, upstreamStatus);
             record(userId, module, auditEndpoint, method, status,
                     auditStatus, billedByReserve ? parser : null, start, error, clientIp);
         } finally {
@@ -1325,6 +1316,31 @@ public class AiGatewayService {
                 // 客户端可能已断开
             }
         }
+    }
+
+    /**
+     * 异常分支里计算写入审计日志的 HTTP 状态码（2026-11-19 从 doProxy 提取）。
+     *
+     * <p>这段判定原本内联在 397 行的 doProxy 里，逻辑独立、只依赖两个入参，
+     * 提取成纯函数后可以单测，且不改变任何行为——是 doProxy 可维护性改进的第一步。</p>
+     *
+     * <ul>
+     *   <li>读超时 → 504（网关等上游超时，不是上游业务错误）；</li>
+     *   <li>已收到上游响应 → 记真实状态：流中途断掉（200 之后读失败）不是"连不上上游"，
+     *       写 502 会让看板把上游可用性算错；</li>
+     *   <li>从未收到上游响应 → 502（网关侧判定上游不可用）。</li>
+     * </ul>
+     *
+     * 包级可见是为了让同包测试直接验证（见 AiGatewayAuditStatusTest）。
+     */
+    static int resolveAuditStatus(boolean timedOut, Integer upstreamStatus) {
+        if (timedOut) {
+            return HttpServletResponse.SC_GATEWAY_TIMEOUT;
+        }
+        if (upstreamStatus != null) {
+            return upstreamStatus;
+        }
+        return HttpServletResponse.SC_BAD_GATEWAY;
     }
 
     /**
