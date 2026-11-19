@@ -759,6 +759,58 @@ class KbRagHolderTest {
         verify(kbChunkBeanMapper, never()).install(any(KbChunkBean.class));
     }
 
+    // ========== 孤儿分块人工清理（超管运维，默认 dry-run） ==========
+
+    /** 默认 dry-run：只统计，绝不删 */
+    @Test
+    void cleanupOrphanChunks_dryRunDoesNotDelete() {
+        when(kbDocBeanMapper.select(any(PageRequest.class), any(KbDocBean.class)))
+                .thenReturn(Collections.<KbDocBean>emptyList());
+        when(kbChunkBeanMapper.select(any(PageRequest.class), any(KbChunkBean.class)))
+                .thenReturn(Arrays.asList(chunk(20L, 99L), chunk(21L, 99L)));
+
+        KbRagHolder.OrphanCleanupResult r = holder.cleanupOrphanChunks(false);
+
+        assertTrue(r.dryRun);
+        assertEquals(2L, r.orphanChunkCount);
+        assertEquals(0, r.deletedChunkCount);
+        verify(kbChunkBeanMapper, never()).delete(any(KbChunkBean.class));
+    }
+
+    /** confirm=true：二次校验文档不存在后删除孤儿分块 */
+    @Test
+    void cleanupOrphanChunks_confirmDeletes() {
+        when(kbDocBeanMapper.select(any(PageRequest.class), any(KbDocBean.class)))
+                .thenReturn(Collections.<KbDocBean>emptyList()); // 对账阶段：无存活文档
+        when(kbChunkBeanMapper.select(any(PageRequest.class), any(KbChunkBean.class)))
+                .thenReturn(Arrays.asList(chunk(20L, 99L), chunk(21L, 99L)));
+        when(kbDocBeanMapper.select(isNull(), any(KbDocBean.class)))
+                .thenReturn(Collections.<KbDocBean>emptyList()); // 二次校验：文档确实不存在
+        when(kbChunkBeanMapper.delete(any(KbChunkBean.class))).thenReturn(2);
+
+        KbRagHolder.OrphanCleanupResult r = holder.cleanupOrphanChunks(true);
+
+        assertFalse(r.dryRun);
+        assertEquals(2, r.deletedChunkCount);
+        verify(kbChunkBeanMapper, times(1)).delete(any(KbChunkBean.class));
+    }
+
+    /** 二次校验发现文档重新出现 → 跳过删除（防 TOCTOU） */
+    @Test
+    void cleanupOrphanChunks_skipWhenDocReappears() {
+        when(kbDocBeanMapper.select(any(PageRequest.class), any(KbDocBean.class)))
+                .thenReturn(Collections.<KbDocBean>emptyList());
+        when(kbChunkBeanMapper.select(any(PageRequest.class), any(KbChunkBean.class)))
+                .thenReturn(Arrays.asList(chunk(20L, 99L)));
+        when(kbDocBeanMapper.select(isNull(), any(KbDocBean.class)))
+                .thenReturn(Arrays.asList(doc(99L))); // 二次校验：文档重建了
+
+        KbRagHolder.OrphanCleanupResult r = holder.cleanupOrphanChunks(true);
+
+        assertEquals(0, r.deletedChunkCount, "文档重新出现时必须跳过，不能误删");
+        verify(kbChunkBeanMapper, never()).delete(any(KbChunkBean.class));
+    }
+
     private static String fill(char c, int count) {
         char[] chars = new char[count];
         Arrays.fill(chars, c);

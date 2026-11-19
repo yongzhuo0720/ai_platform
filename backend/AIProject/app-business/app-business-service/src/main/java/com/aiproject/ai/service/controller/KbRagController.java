@@ -38,6 +38,9 @@ public class KbRagController {
     @Autowired
     KbDocPipelineHolder kbDocPipelineHolder;
 
+    @Autowired
+    com.aiproject.ai.permission.holde.MyUserBaseDbHolder myUserBaseDbHolder;
+
     @ApiOperation(value = "文档列表", httpMethod = "POST", notes = "不返回正文与向量")
     @PostMapping("/listDocs")
     public Result<List<KbDocBean>> listDocs(@LoginUserId String uid) {
@@ -107,5 +110,25 @@ public class KbRagController {
                                          @RequestBody KbSearchQuery data) {
         return kbRagHolder.search(uid, data.getQuery(), data.getKbName(), data.getTopK(),
                 data.getRerankEnabled());
+    }
+
+    /**
+     * 孤儿分块运维接口（超管专用，2026-11-19）。
+     *
+     * <p>默认 dry-run：只返回"将要删除什么"，不删任何数据。
+     * 需显式传 {@code confirm=true} 才真正删除，且删除前会二次校验文档确实不存在。</p>
+     */
+    @ApiOperation(value = "孤儿分块清理（超管）", httpMethod = "POST",
+            notes = "默认 dry-run 只预览；confirm=true 才真删，删除前二次校验")
+    @PostMapping("/admin/cleanupOrphanChunks")
+    public Result<KbRagHolder.OrphanCleanupResult> cleanupOrphanChunks(
+            @LoginUserId String uid,
+            @RequestParam(value = "confirm", defaultValue = "false") boolean confirm) {
+        if (uid == null || uid.trim().isEmpty() || !myUserBaseDbHolder.isAdmin(uid)) {
+            return Result.failed(null, "仅管理员可执行孤儿分块清理");
+        }
+        log.warn("[KbRag][孤儿清理] 超管 uid={} 发起清理, confirm={}", uid, confirm);
+        return Result.succeed(kbRagHolder.cleanupOrphanChunks(confirm),
+                confirm ? "清理完成" : "预览完成（未删除任何数据）");
     }
 }

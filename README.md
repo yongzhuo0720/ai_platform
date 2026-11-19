@@ -361,7 +361,7 @@ Windows PowerShell 用 `$env:DS_KEY='sk-xxx'` 逐个设置后再 `node scripts/.
 
 | 项目 | 结果 |
 |---|---|
-| 后端单元测试 | **782 项，0 失败 / 0 错误 / 0 跳过**（`mvn -o test`，JDK 8 Dragonwell 8；app-common 7、permission 76、service 665、app-start 34） |
+| 后端单元测试 | **790 项，0 失败 / 0 错误 / 0 跳过**（`mvn -o test`，JDK 8 Dragonwell 8；app-common 7、permission 76、service 673、app-start 34） |
 | 前端 TypeScript 检查 | 通过 |
 | 前端图标注册检查 | 通过（59 个在用图标全部可解析） |
 | 硬编码色值棘轮检查 | 通过（45 个文件 / 1777 处，等于基线；新增即失败，只允许减少） |

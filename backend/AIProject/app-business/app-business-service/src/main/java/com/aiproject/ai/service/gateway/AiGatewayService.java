@@ -1011,39 +1011,8 @@ public class AiGatewayService {
                         HttpServletResponse.SC_SERVICE_UNAVAILABLE, null, start, message, clientIp);
                 return;
             }
-            String target = config.getApiUrl() + "/" + upstreamEndpoint;
-            String query = request.getQueryString();
-            if (isDifyChatModule(module)) {
-                query = withDifyUser(query, userId);
-            }
-            if (query != null && !query.isEmpty()) {
-                target = target + "?" + query;
-            }
-
-            upstreamRequest = buildUpstreamRequest(method, target);
-            upstreamRequest.setConfig(RequestConfig.custom()
-                    .setConnectTimeout(properties.getConnectTimeoutMs())
-                    .setConnectionRequestTimeout(properties.getConnectTimeoutMs())
-                    .setSocketTimeout(properties.getReadTimeoutMs())
-                    // 与原来的 setInstanceFollowRedirects(false) 一致：
-                    // 重定向交给调用方，避免网关把鉴权头代传到计划外地址
-                    .setRedirectsEnabled(false)
-                    .build());
-            upstreamRequest.setHeader("Authorization", "Bearer " + config.getApiKey());
-            upstreamRequest.setHeader("Accept", "text/event-stream, application/json");
-            // 全链路请求 ID 透传给上游：上游日志里出现同一个 ID，
-            // 就能把「网关看到的」和「上游看到的」对齐，定位是网关问题还是上游问题
-            String rid = currentRequestId.get();
-            if (rid != null) {
-                upstreamRequest.setHeader(REQUEST_ID_HEADER, rid);
-            }
-            // 让上游不要压缩，否则透传的 SSE / JSON 会变成二进制
-            upstreamRequest.setHeader("Accept-Encoding", "identity");
-
-            HttpEntity requestEntity = buildRequestEntity(request, method, module, userId, presetBody);
-            if (requestEntity != null && upstreamRequest instanceof HttpEntityEnclosingRequestBase) {
-                ((HttpEntityEnclosingRequestBase) upstreamRequest).setEntity(requestEntity);
-            }
+            upstreamRequest = createUpstreamRequest(
+                    module, userId, method, upstreamEndpoint, config, request, presetBody);
 
             // 容器取消异步请求时中继线程可能正阻塞在上游读上，interrupt 唤不醒
             // 阻塞 socket；直接 abort 才能让它立刻收尾、释放并发许可与预扣。
@@ -1119,65 +1088,17 @@ public class AiGatewayService {
             }
             upstreamConsumed = true;
 
-            // 上游提前断流时只会看到 EOF：HTTP 200、没有 error 帧、也没有 usage。
-            // 不把这种流判成失败，用户就能靠「断开上游」白拿已经生成的内容。
-            boolean truncatedStream = sseResponse && !parser.isStreamCompleted()
-                    && parser.getTotalTokens() == null && relayed.bytes > 0;
-            boolean failed = upstreamStatus >= 400 || parser.getErrorMessage() != null
-                    || truncatedStream;
-            String status = failed ? "failed" : "success";
-            String error = parser.getErrorMessage();
-            if (failed && error == null) {
-                error = truncatedStream
-                        ? "上游流式响应提前结束" : "上游返回 HTTP " + upstreamStatus;
-            }
-
-            // 2026-10-29：失败请求不再计入配额。
-            // 修复前这里完全没看 failed——只要上游响应里出现过 usage 字段就照扣，
-            // 于是上游报错（限流、上下文超长、模型不可用）时用户额度照样被吃掉，
-            // 而用户什么结果都没拿到。
-            // 注意：正常响应里若带了 error 字段（部分模型会在 200 里塞错误信息），
-            // 同样按失败处理，不计费。
-            if (!failed && parser.getTotalTokens() != null) {
-                actualTokens = parser.getTotalTokens();
-                billable = true;
-                // 已预扣的请求由 settle 按真实用量多退少补；
-                // 未预扣（配额不限或 Redis 降级）才在这里直接累计
-                if (reservation == null || !reservation.isActive()) {
-                    guard.addTokens(userId, module, actualTokens);
-                }
-            } else if (!failed && parser.getTotalTokens() == null && !parser.isUsageSeen()
-                    && relayed.bytes > 0 && reservation != null && reservation.isActive()) {
-                // 上游正常结束但没给 usage（部分模型/供应商省略 usage 字段）。
-                // 用户已经拿到完整回答，上游也确实生成过：不能按「没拿到用量」全额退款，
-                // 否则这类供应商等于免费。usage 明确返回 0 的（isUsageSeen 为 true）不在此列。
-                billable = true;
-                actualTokens = reservation.getTokens();
-                parser.markBilledTokens(actualTokens);
-                log.warn("[AiGateway] 上游正常结束但未返回 usage，按预扣值计费: uid={}, module={}, relayedBytes={}, tokens={}",
-                        userId, module, relayed.bytes, actualTokens);
-            } else if (failed && parser.getTotalTokens() == null && sseResponse
-                    && shouldBillPartialOutput(relayed, upstreamStatus, true, false)
-                    && reservation != null && reservation.isActive()) {
-                // 流已经吐出一部分正文后才失败（上游错误帧、连接被重置、超时）：
-                // 上游确实生成过内容，不能因为「没拿到最终 usage」就全额退款。
-                // 非 SSE 的 200 错误体不走这里——那种响应通常一个字都没生成。
-                billable = true;
-                actualTokens = reservation.getTokens();
-                parser.markBilledTokens(actualTokens);
-                log.info("[AiGateway] 上游中途失败，按预扣值计费: uid={}, module={}, relayedBytes={}, tokens={}",
-                        userId, module, relayed.bytes, actualTokens);
-            } else if (failed && parser.getTotalTokens() != null) {
-                log.warn("[AiGateway] 上游失败，本次用量不计入配额: uid={}, module={}, tokens={}, httpStatus={}",
-                        userId, module, parser.getTotalTokens(), upstreamStatus);
-            }
+            BillingOutcome billing = analyzeBilling(userId, module, parser, relayed,
+                    sseResponse, upstreamStatus, reservation);
+            billable = billing.billable;
+            actualTokens = billing.actualTokens;
 
             // 5xx 说明服务端确实不可用；4xx 按中性处理；其余状态说明连接与协议都正常，
             // 包括上游在 200 里塞业务错误帧的情况——那不是「连不上」。
             recordCircuitHealth(circuitKey, upstreamStatus, circuitAdmission);
             // 放在计费判断之后：按预扣值计费时，审计里的 tokens 必须等于真正扣掉的额度
-            record(userId, module, auditEndpoint, method, status, upstreamStatus, parser,
-                    start, error, clientIp);
+            record(userId, module, auditEndpoint, method, billing.status, upstreamStatus, parser,
+                    start, billing.error, clientIp);
         } catch (MaxUploadSizeExceededException e) {
             // 分块上传没有声明长度，躲得过上面的预检，只能在这里接住。
             // 关键是不能让它落到兜底 catch 写成 502「上游错误」：
@@ -1316,6 +1237,129 @@ public class AiGatewayService {
                 // 客户端可能已断开
             }
         }
+    }
+
+    /**
+     * 成功路径的计费与失败判定（2026-11-19 从 doProxy 提取，行为等价）。
+     *
+     * <p>从 doProxy 的成功分支提取：判定请求成败、算出 error/status 文案、
+     * 按四种情形决定是否计费与计费 token 数。所有输入显式传入，
+     * 输出封装为 {@link BillingOutcome} 由调用方写回共享变量。</p>
+     */
+    private BillingOutcome analyzeBilling(String userId, String module,
+                                          AiGatewayUsageParser parser, Relayed relayed,
+                                          boolean sseResponse, Integer upstreamStatus,
+                                          AiGatewayGuard.Reservation reservation) {
+        BillingOutcome out = new BillingOutcome();
+
+        // 上游提前断流时只会看到 EOF：HTTP 200、没有 error 帧、也没有 usage。
+        // 不把这种流判成失败，用户就能靠「断开上游」白拿已经生成的内容。
+        boolean truncatedStream = sseResponse && !parser.isStreamCompleted()
+                && parser.getTotalTokens() == null && relayed.bytes > 0;
+        boolean failed = upstreamStatus >= 400 || parser.getErrorMessage() != null
+                || truncatedStream;
+        out.status = failed ? "failed" : "success";
+        out.error = parser.getErrorMessage();
+        if (failed && out.error == null) {
+            out.error = truncatedStream
+                    ? "上游流式响应提前结束" : "上游返回 HTTP " + upstreamStatus;
+        }
+
+        // 2026-10-29：失败请求不再计入配额。
+        // 修复前这里完全没看 failed——只要上游响应里出现过 usage 字段就照扣，
+        // 于是上游报错（限流、上下文超长、模型不可用）时用户额度照样被吃掉，
+        // 而用户什么结果都没拿到。
+        // 注意：正常响应里若带了 error 字段（部分模型会在 200 里塞错误信息），
+        // 同样按失败处理，不计费。
+        if (!failed && parser.getTotalTokens() != null) {
+            out.actualTokens = parser.getTotalTokens();
+            out.billable = true;
+            // 已预扣的请求由 settle 按真实用量多退少补；
+            // 未预扣（配额不限或 Redis 降级）才在这里直接累计
+            if (reservation == null || !reservation.isActive()) {
+                guard.addTokens(userId, module, out.actualTokens);
+            }
+        } else if (!failed && parser.getTotalTokens() == null && !parser.isUsageSeen()
+                && relayed.bytes > 0 && reservation != null && reservation.isActive()) {
+            // 上游正常结束但没给 usage（部分模型/供应商省略 usage 字段）。
+            // 用户已经拿到完整回答，上游也确实生成过：不能按「没拿到用量」全额退款，
+            // 否则这类供应商等于免费。usage 明确返回 0 的（isUsageSeen 为 true）不在此列。
+            out.billable = true;
+            out.actualTokens = reservation.getTokens();
+            parser.markBilledTokens(out.actualTokens);
+            log.warn("[AiGateway] 上游正常结束但未返回 usage，按预扣值计费: uid={}, module={}, relayedBytes={}, tokens={}",
+                    userId, module, relayed.bytes, out.actualTokens);
+        } else if (failed && parser.getTotalTokens() == null && sseResponse
+                && shouldBillPartialOutput(relayed, upstreamStatus, true, false)
+                && reservation != null && reservation.isActive()) {
+            // 流已经吐出一部分正文后才失败（上游错误帧、连接被重置、超时）：
+            // 上游确实生成过内容，不能因为「没拿到最终 usage」就全额退款。
+            // 非 SSE 的 200 错误体不走这里——那种响应通常一个字都没生成。
+            out.billable = true;
+            out.actualTokens = reservation.getTokens();
+            parser.markBilledTokens(out.actualTokens);
+            log.info("[AiGateway] 上游中途失败，按预扣值计费: uid={}, module={}, relayedBytes={}, tokens={}",
+                    userId, module, relayed.bytes, out.actualTokens);
+        } else if (failed && parser.getTotalTokens() != null) {
+            log.warn("[AiGateway] 上游失败，本次用量不计入配额: uid={}, module={}, tokens={}, httpStatus={}",
+                    userId, module, parser.getTotalTokens(), upstreamStatus);
+        }
+        return out;
+    }
+
+    /** analyzeBilling 的输出：成败状态、错误文案与计费结果 */
+    private static final class BillingOutcome {
+        String status;
+        String error;
+        boolean billable;
+        long actualTokens;
+    }
+
+    /**
+     * 构造发往上游的 HTTP 请求（2026-11-19 从 doProxy 提取，纯构造、行为等价）。
+     *
+     * <p>包含：目标 URL 拼接（Dify 模块注入 difyUser + query）、超时/重定向配置、
+     * 鉴权头与请求 ID 透传、Accept-Encoding identity，以及请求体挂载。
+     * 这段原本内联在 doProxy 的 try 里，无异常分支依赖，可安全提取。</p>
+     */
+    private HttpRequestBase createUpstreamRequest(String module, String userId, String method,
+                                                   String upstreamEndpoint,
+                                                   AiGatewayConfigResolver.ResolvedConfig config,
+                                                   HttpServletRequest request, byte[] presetBody) throws Exception {
+        String target = config.getApiUrl() + "/" + upstreamEndpoint;
+        String query = request.getQueryString();
+        if (isDifyChatModule(module)) {
+            query = withDifyUser(query, userId);
+        }
+        if (query != null && !query.isEmpty()) {
+            target = target + "?" + query;
+        }
+
+        HttpRequestBase upstreamRequest = buildUpstreamRequest(method, target);
+        upstreamRequest.setConfig(RequestConfig.custom()
+                .setConnectTimeout(properties.getConnectTimeoutMs())
+                .setConnectionRequestTimeout(properties.getConnectTimeoutMs())
+                .setSocketTimeout(properties.getReadTimeoutMs())
+                // 与原来的 setInstanceFollowRedirects(false) 一致：
+                // 重定向交给调用方，避免网关把鉴权头代传到计划外地址
+                .setRedirectsEnabled(false)
+                .build());
+        upstreamRequest.setHeader("Authorization", "Bearer " + config.getApiKey());
+        upstreamRequest.setHeader("Accept", "text/event-stream, application/json");
+        // 全链路请求 ID 透传给上游：上游日志里出现同一个 ID，
+        // 就能把「网关看到的」和「上游看到的」对齐，定位是网关问题还是上游问题
+        String rid = currentRequestId.get();
+        if (rid != null) {
+            upstreamRequest.setHeader(REQUEST_ID_HEADER, rid);
+        }
+        // 让上游不要压缩，否则透传的 SSE / JSON 会变成二进制
+        upstreamRequest.setHeader("Accept-Encoding", "identity");
+
+        HttpEntity requestEntity = buildRequestEntity(request, method, module, userId, presetBody);
+        if (requestEntity != null && upstreamRequest instanceof HttpEntityEnclosingRequestBase) {
+            ((HttpEntityEnclosingRequestBase) upstreamRequest).setEntity(requestEntity);
+        }
+        return upstreamRequest;
     }
 
     /**

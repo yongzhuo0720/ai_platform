@@ -964,6 +964,69 @@ public class KbRagHolder {
 
     private static final int MAX_ORPHAN_AUDIT_PAGES = 1000; // 上限 100 万行，防止无限扫描
 
+    /**
+     * 人工清理孤儿分块（2026-11-19 升级配套，运维接口）。
+     *
+     * <p><b>安全约束</b>：</p>
+     * <ul>
+     *   <li>调用方必须是超管（Controller 层已校验）；</li>
+     *   <li>{@code confirm=false}（默认）只返回将要删除的统计，不删任何数据；</li>
+     *   <li>{@code confirm=true} 时<b>重新计算</b>孤儿集合（防 TOCTOU：对账后到删除前若有文档重新出现则不删），
+     *       再按 docIid 逐个删除；</li>
+     *   <li>每批删除记录 warn 日志，便于审计。</li>
+     * </ul>
+     *
+     * @param confirm 是否真正执行删除；false=只预览
+     * @return 清理结果（预览/实际删除的分块数与文档数）
+     */
+    public OrphanCleanupResult cleanupOrphanChunks(boolean confirm) {
+        // 重新计算（无论预览还是实删），保证口径与当前数据一致
+        OrphanChunkStats stats = auditOrphanChunks();
+        OrphanCleanupResult result = new OrphanCleanupResult();
+        result.dryRun = !confirm;
+        result.orphanChunkCount = stats.orphanChunkCount;
+        result.orphanDocCount = stats.orphanDocCount;
+
+        if (!confirm || stats.orphanDocIids == null || stats.orphanDocIids.isEmpty()) {
+            return result;
+        }
+
+        int deleted = 0;
+        for (Long docIid : stats.orphanDocIids) {
+            if (docIid == null) {
+                continue;
+            }
+            try {
+                // 二次确认：删除前再查一次该 doc 是否真的不存在（防并发重建）
+                KbDocBean docWhere = new KbDocBean();
+                docWhere.setIid(docIid);
+                List<KbDocBean> stillAlive = kbDocBeanMapper.select(null, docWhere);
+                if (stillAlive != null && !stillAlive.isEmpty()) {
+                    log.warn("[KbRag][孤儿清理] docIid={} 在删除前重新出现，跳过", docIid);
+                    continue;
+                }
+                KbChunkBean chunkWhere = new KbChunkBean();
+                chunkWhere.setDocIid(docIid);
+                // 不带 lastuser：孤儿分块的原属主已随文档删除，按 docIid 清理
+                int n = kbChunkBeanMapper.delete(chunkWhere);
+                deleted += n;
+                log.warn("[KbRag][孤儿清理] 已删除 docIid={} 的 {} 个孤儿分块（超管运维操作）", docIid, n);
+            } catch (Exception e) {
+                log.warn("[KbRag][孤儿清理] 删除 docIid={} 失败: {}", docIid, e.getMessage());
+            }
+        }
+        result.deletedChunkCount = deleted;
+        return result;
+    }
+
+    /** 孤儿分块清理结果 */
+    public static final class OrphanCleanupResult {
+        public boolean dryRun;
+        public long orphanChunkCount;
+        public long orphanDocCount;
+        public int deletedChunkCount;
+    }
+
     /** 孤儿分块统计（只读告警用） */
     public static final class OrphanChunkStats {
         public long orphanChunkCount;
