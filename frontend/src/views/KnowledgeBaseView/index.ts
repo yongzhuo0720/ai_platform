@@ -696,6 +696,16 @@ export function useIndex() {
   const fetchMembers = async (kbId: string) => {
     memberLoading.value = true
     currentMemberDialogKbId.value = kbId
+    // 2026-11-20：本地知识库没有 knowledgebasebean 权限记录，成员接口会返回
+    // 「仅所有者或管理员可查看成员」并被全局拦截器弹成红色 Toast。
+    // 本地 RAG 无共享成员概念，直接置空跳过，不调接口。
+    const localKb = knowledgeBases.value.find(kb => kb.id === kbId)
+      || filteredKnowledgeBases.value.find(kb => kb.id === kbId)
+    if ((localKb as any)?.isLocal) {
+      memberList.value = []
+      memberLoading.value = false
+      return
+    }
     try {
       const { data: res } = await knowledgeBaseMemberApi.members({ data: { kbId } })
       if (res.resp_code === 0) {

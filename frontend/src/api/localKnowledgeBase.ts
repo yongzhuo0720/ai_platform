@@ -91,6 +91,8 @@ export const localKnowledgeBaseApi = {
         embedding_model: group.find(d => d.embeddingModel)?.embeddingModel || undefined,
         indexing_status: allReady ? 'completed' : 'indexing',
         permission: 'only_me',
+        // 标记为本地知识库：无 knowledgebasebean 权限记录，成员/权限类接口会拒绝
+        isLocal: true,
       } as KnowledgeBase)
     }
     return { data, has_more: false, limit: 100, total: data.length, page: 1 }
