@@ -1,7 +1,7 @@
 import { ref, computed, onMounted, nextTick, watch } from 'vue'
 import { isConfirmCancelled } from '@/utils/confirm'
 import { useRoute, useRouter } from 'vue-router'
-import { datasetApi } from '@/api/dataset'
+import { datasetApi, DatasetModuleUnavailableError } from '@/api/dataset'
 import { knowledgeBaseMngApi } from '@/api/knowledgeBaseMng'
 import { knowledgeBaseMemberApi } from '@/api/knowledgeBaseMember'
 import { unitApi } from '@/api/unit'
@@ -527,10 +527,18 @@ export function useIndex() {
         }
       }
     } catch (err) {
-      console.warn('获取知识库列表失败:', err)
-      error.value = '无法从服务器获取知识库数据'
-      knowledgeBases.value = []
-      myKbIds.value = new Set()
+      // 2026-11-20：Dify file 模块未配置属于预期内的空数据（项目已用本地 RAG），
+      // 静默显示空列表即可，不再误报成「无法从服务器获取知识库数据」横幅。
+      // 真实网络错误仍照常提示，避免掩盖真故障。
+      if (err instanceof DatasetModuleUnavailableError) {
+        knowledgeBases.value = []
+        myKbIds.value = new Set()
+      } else {
+        console.warn('获取知识库列表失败:', err)
+        error.value = '无法从服务器获取知识库数据'
+        knowledgeBases.value = []
+        myKbIds.value = new Set()
+      }
     } finally {
       isLoading.value = false
     }

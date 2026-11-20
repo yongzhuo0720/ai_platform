@@ -34,6 +34,7 @@ vi.mock("@/api/dataset", () => ({
     deleteDataset: vi.fn(),
     getEmbeddingModels: vi.fn(),
   },
+  DatasetModuleUnavailableError: class DatasetModuleUnavailableError extends Error {},
 }));
 vi.mock("@/api/knowledgeBaseMng", () => ({
   knowledgeBaseMngApi: {
@@ -343,6 +344,16 @@ describe("KnowledgeBaseView", () => {
     await flushPromises();
     expect(getDatasets).toHaveBeenCalledTimes(4);
     expect(groupNames(wrapper, "个人知识库")).toEqual(["我的知识库"]);
+    expect(wrapper.find(".kb-error-alert").exists()).toBe(false);
+  });
+
+  it("知识库数据源未配置时不误报错误横幅，只显示空列表", async () => {
+    const { DatasetModuleUnavailableError } = await import("@/api/dataset");
+    getDatasets.mockRejectedValueOnce(new (DatasetModuleUnavailableError as any)());
+    const wrapper = mountView();
+    await flushPromises();
+
+    expect(groupNames(wrapper, "个人知识库")).toEqual([]);
     expect(wrapper.find(".kb-error-alert").exists()).toBe(false);
   });
 

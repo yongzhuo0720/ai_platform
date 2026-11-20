@@ -50,6 +50,18 @@ const isApiEnabled = async (): Promise<boolean> => {
 
 const MODULE_MISSING_MESSAGE = '知识库文件模块未配置，请管理员在后台「Dify 配置管理」中填写地址与密钥'
 
+/**
+ * Dify 模块未配置错误（2026-11-20）。
+ * 项目已改用本地 RAG，这类错误属于「预期内的空数据」而非真实故障；
+ * 页面应静默显示空列表，而不是把它当成网络错误弹横幅。
+ */
+export class DatasetModuleUnavailableError extends Error {
+  constructor() {
+    super('知识库数据源未配置')
+    this.name = 'DatasetModuleUnavailableError'
+  }
+}
+
 export interface DatasetListParams {
   page?: number;
   limit?: number;
@@ -100,7 +112,7 @@ export interface EmbeddingModelsResponse {
 export const datasetApi = {
   getDatasets: async (page = 1, limit = 20, throwOnError = false): Promise<DatasetListResponse> => {
     if (!(await isApiEnabled())) {
-      if (throwOnError) throw new Error('Dify API 未配置');
+      if (throwOnError) throw new DatasetModuleUnavailableError();
       return { data: [], has_more: false, limit, total: 0, page };
     }
     try {
