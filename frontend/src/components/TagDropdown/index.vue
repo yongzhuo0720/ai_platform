@@ -256,7 +256,7 @@ const toggleTag = async (tag: any) => {
   try {
     if (index > -1) {
       // 当前已选中 → 删除绑定
-      const { data: res } = await tagsBindApi.delete(reqdata)
+      const { data: res } = await tagsBindApi.delete(reqdata, true)
       if (res.resp_code == 0) {
         currentSelected.value.splice(index, 1)
         // 只有成功了才通知父组件刷新，否则刷新会把用户刚点的选中态又覆盖回去
@@ -266,7 +266,7 @@ const toggleTag = async (tag: any) => {
       }
     } else {
       // 未选中 → 创建绑定
-      const { data: res } = await tagsBindApi.create(reqdata)
+      const { data: res } = await tagsBindApi.create(reqdata, true)
       if (res.resp_code == 0) {
         currentSelected.value.push(tag.iid)
         emit('refreshTagBind', hash)

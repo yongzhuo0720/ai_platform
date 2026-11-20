@@ -811,6 +811,31 @@ class KbRagHolderTest {
         verify(kbChunkBeanMapper, never()).delete(any(KbChunkBean.class));
     }
 
+    // ========== 本地知识库归属判定（标签绑定权限回退） ==========
+
+    @Test
+    void isLocalKbOwner_trueWhenUserOwnsDocsInKb() {
+        KbDocBean d = new KbDocBean();
+        d.setKbName("产品文档库");
+        d.setLastuser("u1");
+        when(kbDocBeanMapper.select(isNull(), any(KbDocBean.class)))
+                .thenReturn(Arrays.asList(d));
+        assertTrue(holder.isLocalKbOwner("u1", "产品文档库"));
+    }
+
+    @Test
+    void isLocalKbOwner_falseWhenNoDocs() {
+        when(kbDocBeanMapper.select(isNull(), any(KbDocBean.class)))
+                .thenReturn(Collections.<KbDocBean>emptyList());
+        assertFalse(holder.isLocalKbOwner("u2", "产品文档库"));
+    }
+
+    @Test
+    void isLocalKbOwner_falseOnBlankInput() {
+        assertFalse(holder.isLocalKbOwner(null, "产品文档库"));
+        assertFalse(holder.isLocalKbOwner("u1", "  "));
+    }
+
     private static String fill(char c, int count) {
         char[] chars = new char[count];
         Arrays.fill(chars, c);

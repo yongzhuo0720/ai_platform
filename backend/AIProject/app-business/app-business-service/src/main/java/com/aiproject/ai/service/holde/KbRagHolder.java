@@ -115,6 +115,31 @@ public class KbRagHolder {
     }
 
     /**
+     * 判定本地知识库（按 kbName 分组）是否属于指定用户（2026-11-20）。
+     *
+     * <p>本地 RAG 没有独立的知识库实体表，归属体现在文档的 lastuser 上。
+     * 供标签绑定权限守卫在 knowledgebasebean 查不到时回退使用——
+     * 只要该 kbName 下存在属于 uid 的文档，就认为该用户可管理此知识库的标签。</p>
+     *
+     * @return true=该 uid 拥有此本地知识库；false=没有或无此知识库
+     */
+    public boolean isLocalKbOwner(String uid, String kbName) {
+        if (uid == null || uid.trim().isEmpty() || kbName == null || kbName.trim().isEmpty()) {
+            return false;
+        }
+        try {
+            KbDocBean where = new KbDocBean();
+            where.setKbName(kbName.trim());
+            where.setLastuser(uid);
+            List<KbDocBean> docs = kbDocBeanMapper.select(null, where);
+            return docs != null && !docs.isEmpty();
+        } catch (Exception e) {
+            log.warn("[KbRag] 本地知识库归属判定失败, kbName={}: {}", kbName, e.getMessage());
+            return false;
+        }
+    }
+
+    /**
      * 上传文档：服务端分块并向量化后入库。
      * 文本由前端读取后以字符串提交（支持 txt/md 等纯文本）。
      *

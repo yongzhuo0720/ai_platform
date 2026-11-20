@@ -35,8 +35,18 @@ const fetchDocs = async (): Promise<LocalKbDoc[]> => {
 const DEFAULT_KB = '默认知识库'
 
 /** 文档 → 页面期望的知识库文档结构 */
+/** 兼容后端返回的时间戳数字 与 "2026/11/20 19:53:20" 字符串 两种格式 */
+const parseCreatedAt = (value: string | number | null | undefined): number => {
+  if (value == null || value === '') return 0
+  if (typeof value === 'number') return value
+  // "2026/11/20 19:53:20" → "2026-11-20T19:53:20"
+  const normalized = String(value).replace(/\//g, '-').replace(' ', 'T')
+  const ts = Date.parse(normalized)
+  return Number.isNaN(ts) ? 0 : ts
+}
+
 const toDocument = (doc: LocalKbDoc): KnowledgeBaseDocument => {
-  const createdMs = Number(doc.createtime || 0)
+  const createdMs = parseCreatedAt(doc.createtime)
   return {
     id: String(doc.iid),
     name: doc.name,

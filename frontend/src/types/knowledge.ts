@@ -37,11 +37,13 @@ export interface SummaryIndexSetting {
   summary_prompt?: string;
 }
 
+/** 标签本体（对应后端 lablebean，字段以实际接口为准） */
 export interface KnowledgeBaseTag {
-  id: number;
+  iid: number;
   name: string;
   type?: string;
-  binding_count?: number;
+  /** 被引用次数，后端 SQL 计算别名 */
+  count?: number;
 }
 
 export interface KnowledgeBase {
@@ -321,16 +323,6 @@ export interface UpdateChunkParams {
   summary?: string;
   enabled?: boolean;
   regenerate_child_chunks?: boolean;
-}
-
-export interface TagBindingParams {
-  target_id: string;
-  tag_ids: string[];
-}
-
-export interface TagUnbindingParams {
-  target_id: string;
-  tag_id: string;
 }
 
 /**
