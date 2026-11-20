@@ -45,6 +45,7 @@ import type {
 import { ElMessage, ElMessageBox, ElPopover } from 'element-plus'
 import type { FormInstance } from 'element-plus'
 import { documentApi } from '@/api/document'
+import { localKnowledgeBaseApi } from '@/api/localKnowledgeBase'
 import { chunkApi } from '@/api/chunk'
 import type { KnowledgeBaseDocument } from '@/types/knowledge'
 import TagManageDialog from '@/components/TagManageDialog/index.vue'
@@ -66,7 +67,6 @@ const {
   selectedSharedKb,
   goToSquare,
   switchMenu,
-  handleSelectSharedKb,
   refreshTagBind,
   getAllTags,
   mngDialogVisible,
@@ -82,12 +82,13 @@ const {
   embeddingModelOptions,
   openMngCreateDialog,
   openMngEditDialog,
+  handleSelectSharedKb,
   handleMngSubmit,
+  handleSelectJoinedKb,
   handleMngDelete,
   handleDeptCheckChange,
   joinedKnowledgeBases,
   fetchJoinedKnowledgeBases,
-  handleSelectJoinedKb,
   memberList,
   memberLoading,
   currentMemberDialogKbId,
@@ -587,7 +588,13 @@ async function handleDeleteDocument(doc: KnowledgeBaseDocument) {
     )
 
     deletingDocumentId.value = doc.id
-    await documentApi.deleteDocument(kb.id, doc.id)
+    // 2026-11-20：本地 RAG 文档用 iid 删除；回退 Dify 用 (kbId, docId)
+    const localIid = (doc as any).iid
+    if (localIid != null) {
+      await localKnowledgeBaseApi.deleteDocument(localIid)
+    } else {
+      await documentApi.deleteDocument(kb.id, doc.id)
+    }
 
     if (previewVisible.value && previewDocumentInfo.value?.id === doc.id) {
       previewVisible.value = false
@@ -631,8 +638,14 @@ async function handleFileUpload(event: Event) {
   const kb = uploadTargetKb.value
   try {
     ElMessage.info(`正在上传：${file.name}`)
-    await documentApi.createByFile(kb.id, file)
-    ElMessage.success('文档上传成功')
+    // 2026-11-20：本地 RAG 上传到知识库 kbName 下；回退 Dify
+    try {
+      await localKnowledgeBaseApi.uploadDocument(kb.id, file)
+      ElMessage.success('文档上传成功，正在向量化，稍后刷新可见')
+    } catch (localErr) {
+      await documentApi.createByFile(kb.id, file)
+      ElMessage.success('文档上传成功')
+    }
     // 刷新文档列表
     if (activeMenu.value === 'shared' && selectedSharedKb.value?.id === kb.id) {
       loadSharedDocuments(kb.id)
@@ -659,8 +672,16 @@ async function loadDocuments(kbId: string) {
   }
   docsLoading.value = true
   try {
-    const res = await documentApi.getDocuments(kbId, 1, 100)
-    documents.value = res.data || []
+    // 2026-11-20：优先从本地 RAG 读取文档（kbId 即 kbName）
+    let docs: KnowledgeBaseDocument[]
+    try {
+      const local = await localKnowledgeBaseApi.getDocuments(kbId)
+      docs = local.data
+    } catch (localErr) {
+      const res = await documentApi.getDocuments(kbId, 1, 100)
+      docs = res.data || []
+    }
+    documents.value = docs
     // 同步更新到 selectedKb.documents，保证其他引用处一致
     const kb = filteredKnowledgeBases.value.find((k: any) => k.id === kbId)
       || joinedKnowledgeBases.value.find((k: any) => k.id === kbId)
@@ -863,7 +884,25 @@ const lastMessageId = ref('')
 async function retrieveContext(kbId: string, query: string): Promise<RetrievalResult[]> {
   if (!kbId || !query.trim()) return []
   try {
-    return await retrieveFromDataset(kbId, query)
+    // 2026-11-20：优先走本地 RAG 检索，映射成页面期望的 RetrievalResult 结构
+    try {
+      const res = await localKnowledgeBaseApi.search(kbId, query, 5)
+      const payload = res?.data?.datas
+      const items = payload?.items || []
+      if (!Array.isArray(items)) return []
+      // 与 retrieveFromDataset 保持一致：返回平铺的检索记录数组
+      return items.map((item: any) => ({
+        dataset_id: kbId,
+        dataset_name: kbId,
+        document_id: String(item.docIid ?? ''),
+        document_name: item.docName || undefined,
+        segment_id: String(item.chunkIndex ?? ''),
+        score: item.score,
+        content: item.content,
+      })) as unknown as RetrievalResult[]
+    } catch (localErr) {
+      return await retrieveFromDataset(kbId, query)
+    }
   } catch (e) {
     console.warn('知识库检索失败，按无上下文继续:', e)
     return []
@@ -1455,8 +1494,8 @@ async function regenerateMessage(assistantMsgId: string) {
 
       
 
-      <!-- 共享知识库分组 -->
-      <div class="kb-sidebar-group">
+      <!-- 共享知识库分组：无数据时隐藏，避免空壳占地方（2026-11-20 简化） -->
+      <div class="kb-sidebar-group" v-if="sharedKnowledgeBases.length > 0">
         <div
           v-show="!sidebarCollapsed"
           class="kb-sidebar-group-header kb-sidebar-group-header-shared"
@@ -1498,7 +1537,7 @@ async function regenerateMessage(assistantMsgId: string) {
         </div>
       </div>
 
-      <div class="kb-sidebar-group">
+      <div class="kb-sidebar-group" v-if="joinedKnowledgeBases.length > 0">
         <div
           v-show="!sidebarCollapsed"
           class="kb-sidebar-group-header"

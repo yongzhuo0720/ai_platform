@@ -26,6 +26,20 @@ vi.mock("@/stores/difyConfig", () => ({
   isGatewayMode: vi.fn(() => env.gateway),
   isGatewayModuleConfigured: vi.fn(async () => env.fileConfigured),
 }));
+// 本地 RAG 数据源：默认抛错让旧用例回退到 datasetApi mock，保持既有断言不变。
+// 新增的「本地数据源」用例会单独覆盖为返回本地数据。
+const localKbMock = vi.hoisted(() => ({
+  getDatasets: vi.fn(),
+  getDocuments: vi.fn(),
+  uploadDocument: vi.fn(),
+  deleteDocument: vi.fn(),
+  search: vi.fn(),
+}));
+vi.mock("@/api/localKnowledgeBase", () => ({
+  localKnowledgeBaseApi: localKbMock,
+  default: localKbMock,
+}));
+
 vi.mock("@/api/dataset", () => ({
   datasetApi: {
     getDatasets: vi.fn(),
@@ -203,6 +217,15 @@ beforeEach(() => {
   routerPush.mockReset();
   route.query = {};
 
+  // 默认让本地数据源不可用 → 走 datasetApi mock，保持旧用例断言不变
+  localKbMock.getDatasets.mockReset();
+  localKbMock.getDatasets.mockRejectedValue(new Error("local RAG not available in legacy tests"));
+  localKbMock.getDocuments.mockReset();
+  localKbMock.getDocuments.mockRejectedValue(new Error("local RAG not available in legacy tests"));
+  localKbMock.uploadDocument.mockReset();
+  localKbMock.deleteDocument.mockReset();
+  localKbMock.search.mockReset();
+
   getDatasets.mockResolvedValue({
     data: allKbs.map((kb) => ({ ...kb })),
     has_more: false,
@@ -330,7 +353,16 @@ describe("KnowledgeBaseView", () => {
   });
 
   it("个人列表加载失败时给出错误横幅，重试后恢复列表", async () => {
-    getDatasets.mockRejectedValueOnce(new Error("network"));
+    // 只让「个人列表」的调用（throwOnError=true）失败，避免误伤共享/订阅列表
+    getDatasets.mockImplementation((page: number, limit: number, throwOnError?: boolean) => {
+      if (throwOnError === true) {
+        getDatasets.mockImplementation((p: number, l: number) =>
+          Promise.resolve({ data: allKbs.map(kb => ({ ...kb })), has_more: false, total: allKbs.length, page: p, limit: l })
+        );
+        return Promise.reject(new Error("network"));
+      }
+      return Promise.resolve({ data: allKbs.map(kb => ({ ...kb })), has_more: false, total: allKbs.length, page, limit });
+    });
     const wrapper = mountView();
     await flushPromises();
 
@@ -349,7 +381,16 @@ describe("KnowledgeBaseView", () => {
 
   it("知识库数据源未配置时不误报错误横幅，只显示空列表", async () => {
     const { DatasetModuleUnavailableError } = await import("@/api/dataset");
-    getDatasets.mockRejectedValueOnce(new (DatasetModuleUnavailableError as any)());
+    // 只让个人列表（throwOnError=true）抛模块未配置错误
+    getDatasets.mockImplementation((page: number, limit: number, throwOnError?: boolean) => {
+      if (throwOnError === true) {
+        getDatasets.mockImplementation((p: number, l: number) =>
+          Promise.resolve({ data: allKbs.map(kb => ({ ...kb })), has_more: false, total: allKbs.length, page: p, limit: l })
+        );
+        return Promise.reject(new (DatasetModuleUnavailableError as any)());
+      }
+      return Promise.resolve({ data: allKbs.map(kb => ({ ...kb })), has_more: false, total: allKbs.length, page, limit });
+    });
     const wrapper = mountView();
     await flushPromises();
 

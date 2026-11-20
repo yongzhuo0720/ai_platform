@@ -2,6 +2,7 @@ import { ref, computed, onMounted, nextTick, watch } from 'vue'
 import { isConfirmCancelled } from '@/utils/confirm'
 import { useRoute, useRouter } from 'vue-router'
 import { datasetApi, DatasetModuleUnavailableError } from '@/api/dataset'
+import { localKnowledgeBaseApi } from '@/api/localKnowledgeBase'
 import { knowledgeBaseMngApi } from '@/api/knowledgeBaseMng'
 import { knowledgeBaseMemberApi } from '@/api/knowledgeBaseMember'
 import { unitApi } from '@/api/unit'
@@ -481,30 +482,40 @@ export function useIndex() {
     const isPlaceholderImage = (url?: string) => !url || url.includes('placeholder.com')
 
     try {
-      const response = await datasetApi.getDatasets(1, 100, true)
-    //  let  response = {
-    //   data: [
-    //     {id:'1',name:'测试知识库1',description:'这是一个测试知识库',coverImage:getLocalCoverImage(),tags:'测',word_count:1000,updated_at:1694502400},
-    //     {id:'2',name:'测试知识库2',description:'这是一个测试知识库',coverImage:getLocalCoverImage(),tags:'测',word_count:1000,updated_at:1694502400},
-    //   ]
-    //  }
+      // 2026-11-20：项目真实数据在本地 RAG，优先从本地读取；
+      // 本地数据源失败时回退到 Dify dataset API（兼容旧部署）。
+      let response: Awaited<ReturnType<typeof datasetApi.getDatasets>>
+      let usingLocal = false
+      try {
+        response = await localKnowledgeBaseApi.getDatasets()
+        usingLocal = true
+      } catch (localErr) {
+        console.warn('[知识库] 本地数据源不可用，回退 Dify:', localErr)
+        response = await datasetApi.getDatasets(1, 100, true)
+      }
+
       if (response.data) {
         if (response.data.length > 0) {
           let visibleKbIds: Set<string> | null = null
-          try {
-            const allKbIds = response.data.map((kb: KnowledgeBase) => kb.id)
-            const { data: filterRes } = await knowledgeBaseMngApi.filterVisible({
-              data: { context: 'my', kbIds: allKbIds },
-            })
-            if (filterRes.resp_code === 0) {
-              visibleKbIds = new Set(filterRes.datas || [])
+          // 本地 RAG 的知识库是文档按 kbName 分组，没有 knowledgebasebean 权限记录，
+          // 因此本地数据源跳过 filterVisible 过滤（否则权限表为空会把知识库全过滤掉）。
+          if (!usingLocal) {
+            try {
+              const allKbIds = response.data.map((kb: KnowledgeBase) => kb.id)
+              const { data: filterRes } = await knowledgeBaseMngApi.filterVisible({
+                data: { context: 'my', kbIds: allKbIds },
+              })
+              if (filterRes.resp_code === 0) {
+                visibleKbIds = new Set(filterRes.datas || [])
+              }
+            } catch (e) {
+              console.warn('权限过滤失败:', e)
             }
-          } catch (e) {
-            console.warn('权限过滤失败:', e)
           }
 
-          // 缓存当前用户自己创建的知识库 ID，供权限判断使用
-          myKbIds.value = visibleKbIds || new Set()
+          myKbIds.value = usingLocal
+            ? new Set(response.data.map(kb => kb.id))
+            : (visibleKbIds || new Set())
 
           const filtered = response.data
             .filter((kb: KnowledgeBase) => !visibleKbIds || visibleKbIds.has(kb.id))
@@ -521,7 +532,6 @@ export function useIndex() {
           knowledgeBases.value = filtered
           refreshTagBind()
         } else {
-          // 接口正常但返回空数据，保持空列表，不显示静态数据
           knowledgeBases.value = []
           myKbIds.value = new Set()
         }
