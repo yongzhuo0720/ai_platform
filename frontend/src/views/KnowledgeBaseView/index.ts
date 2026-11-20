@@ -10,7 +10,6 @@ import Cookies from 'js-cookie'
 import { isSuperAdmin, SUPER_ADMIN_RID } from '@/config/constants'
 
 import { useTagBinding } from '@/composables/useTagBinding'
-import { isGatewayMode, isGatewayModuleConfigured } from '@/stores/difyConfig'
 import type { KnowledgeBase, CreateDatasetParams } from '@/types/knowledge'
 import type { EmbeddingModelOption } from '@/api/dataset'
 import { tagsApi } from '@/api/tags'
@@ -23,15 +22,11 @@ export function useIndex() {
   const knowledgeBases = ref<KnowledgeBase[]>([])
   const isLoading = ref(true)
   const error = ref<string | null>(null)
-  // 网关模式下「知识库文件」模块未配置：整页给引导，不发任何数据集请求
+  // 2026-11-20：取消「知识库文件模块未配置就整页拦截」的旧逻辑。
+  // 项目已改用本地 RAG（文档 + kbName 分组），不再依赖 Dify 的 file 模块；
+  // 该拦截会在 file 模块未配置时显示误导性警告并把页面卡死成空白。
+  // 字段保留（恒为 false）以兼容模板/测试的现有引用，后续如需本地数据源降级再复用。
   const knowledgeFileUnavailable = ref(false)
-
-  const ensureKnowledgeFileReady = async (): Promise<boolean> => {
-    if (!isGatewayMode()) return true
-    const configured = await isGatewayModuleConfigured('file')
-    knowledgeFileUnavailable.value = configured === false
-    return configured !== false
-  }
   const searchQuery = ref('')
   // 全局搜索跳转带 ?keyword=，同路由 query 变化不会重挂载组件，必须 watch
   const route = useRoute()
@@ -387,11 +382,7 @@ export function useIndex() {
   }
 
   onMounted(async () => {
-    // 模块未配置时整页只展示引导，避免每个进入页面的用户都触发一轮必然失败的网关调用
-    if (!(await ensureKnowledgeFileReady())) {
-      isLoading.value = false
-      return
-    }
+    // 2026-11-20：不再因 Dify file 模块未配置而整页拦截，正常加载页面数据
     fetchKnowledgeBases()
     fetchSharedKnowledgeBases()
     fetchJoinedKnowledgeBases()

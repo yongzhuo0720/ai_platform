@@ -209,22 +209,24 @@ test.describe("浏览器冒烟", () => {
     expect(headers["idempotency-key"]).toMatch(/^[A-Za-z0-9._:-]{8,128}$/);
   });
 
-  test("知识库文件模块未配置时展示引导，不再请求数据集", async ({ page }) => {
-    const requested = await installBackendMocks(page, {
+  test("知识库文件模块未配置时页面正常加载，不再显示误导警告", async ({
+    page,
+  }) => {
+    await installBackendMocks(page, {
       modules: { chat: true, knowledgeChat: true, file: false, models: true },
     });
     await loginAsUser(page);
 
     await page.goto("/#/knowledge-bases");
 
+    // 2026-11-20：项目已改用本地 RAG，不再因 Dify file 模块未配置而整页拦截
+    // 页面正常渲染（新增按钮可见），且不再显示误导性的「模块未配置」警告
+    await expect(page.locator(".kb-add-btn")).toBeVisible();
     await expect(
       page.locator(".kb-config-alert-title", {
         hasText: "知识库文件模块未配置",
       })
-    ).toBeVisible();
-    expect(
-      requested.some((path) => path.includes("/ai/api/aiGateway/file/"))
-    ).toBe(false);
+    ).toHaveCount(0);
   });
 
   test("RAG 评估页展示真实接口数据，详情对比基线与请求包格式正确", async ({

@@ -316,16 +316,16 @@ describe("KnowledgeBaseView", () => {
     expect(wrapper.text()).toContain("没有符合标签的共享知识库");
   });
 
-  it("网关模式未配置知识库文件模块时整页引导，不请求任何数据集", async () => {
+  it("知识库文件模块未配置时不再整页拦截，页面正常加载数据且不显示误导警告", async () => {
     env.gateway = true;
     env.fileConfigured = false;
     const wrapper = mountView();
     await flushPromises();
 
-    expect(getDatasets).not.toHaveBeenCalled();
-    expect(wrapper.find(".kb-config-alert").exists()).toBe(true);
-    expect(wrapper.find(".kb-add-btn").exists()).toBe(false);
-    expect((wrapper.vm as any).knowledgeFileUnavailable).toBe(true);
+    // 2026-11-20：项目已改用本地 RAG，不再因 Dify file 模块未配置而卡死页面
+    expect(getDatasets).toHaveBeenCalled();
+    expect(wrapper.find(".kb-config-alert").exists()).toBe(false);
+    expect((wrapper.vm as any).knowledgeFileUnavailable).toBe(false);
   });
 
   it("个人列表加载失败时给出错误横幅，重试后恢复列表", async () => {

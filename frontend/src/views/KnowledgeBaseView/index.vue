@@ -1562,7 +1562,7 @@ async function regenerateMessage(assistantMsgId: string) {
 
     <!-- Main Content Area -->
     <main class="kb-main">
-      <div v-if="error && !knowledgeFileUnavailable" class="kb-config-alert kb-error-alert">
+      <div v-if="error" class="kb-config-alert kb-error-alert">
         <div class="kb-config-alert-title">{{ error }}</div>
         <div class="kb-config-alert-hint">
           <button
@@ -1573,12 +1573,6 @@ async function regenerateMessage(assistantMsgId: string) {
           >
             {{ isLoading ? '正在重试...' : '重试' }}
           </button>
-        </div>
-      </div>
-      <div v-if="knowledgeFileUnavailable" class="kb-config-alert">
-        <div class="kb-config-alert-title">知识库文件模块未配置</div>
-        <div class="kb-config-alert-hint">
-          管理员需在「后台管理 → Dify 配置」中为「知识库文件」模块填写地址与密钥，知识库列表与文档管理才可使用。
         </div>
       </div>
       <!-- ========== 知识库广场详情视图（与共享知识库相同的布局） ========== -->
