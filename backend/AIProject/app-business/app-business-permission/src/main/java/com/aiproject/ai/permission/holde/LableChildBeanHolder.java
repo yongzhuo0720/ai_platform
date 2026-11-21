@@ -44,6 +44,10 @@ public class LableChildBeanHolder {
     @Autowired(required = false)
     LableBindingResourceGuard resourceGuard = null;
 
+    /** 标签组 Holder：用于手动回填标签名（不依赖 @SelectLink 关联查询，避免框架解析差异导致 name 为空） */
+    @Autowired(required = false)
+    LableBeanHolder lableBeanHolder = null;
+
     /**
      * 本表是「资源 ←→ 标签组」的绑定表，不是标签管理数据：
      * hash = 被引用资源主键，type = 模块（applications / models / knowledge_base ...），
@@ -237,7 +241,34 @@ public class LableChildBeanHolder {
 
     public Result<List<LableChildBean>> querys(LableChildBean data) {
         List<LableChildBean> list = this.queryList(data, null);
-        List<LableChildBean> resultList =     reorganizeByTraditional(list);
+        List<LableChildBean> resultList = reorganizeByTraditional(list);
+        // @SelectLink 关联查询在部分构建场景下 name 为空，手动回填标签名，
+        // 保证前端 lableBeans[].name 始终可用（2026-11-21）。
+        if (lableBeanHolder != null) {
+            Map<Long, String> nameById = new HashMap<>();
+            try {
+                // HNSP mapper 空条件查询返回空，必须带 type 条件（按当前查询的 type，缺省 knowledge_base）
+                LableBean nameWhere = new LableBean();
+                nameWhere.setType(data != null && data.getType() != null
+                        ? data.getType() : "knowledge_base");
+                for (LableBean lb : lableBeanHolder.queryList(nameWhere, null)) {
+                    if (lb != null && lb.getIid() != null) {
+                        nameById.put(lb.getIid(), lb.getName());
+                    }
+                }
+            } catch (Exception e) {
+                log.warn("[标签绑定] 回填标签名失败: {}", e.getMessage());
+            }
+            for (LableChildBean group : resultList) {
+                if (group.getLableBeans() != null) {
+                    for (LableBean bean : group.getLableBeans()) {
+                        if (bean != null && bean.getIid() != null && nameById.containsKey(bean.getIid())) {
+                            bean.setName(nameById.get(bean.getIid()));
+                        }
+                    }
+                }
+            }
+        }
         return Result.succeed(resultList,"查询成功");
     }
 

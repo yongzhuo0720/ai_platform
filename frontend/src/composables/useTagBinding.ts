@@ -1,4 +1,5 @@
 import { tagsBindApi } from '@/api/tagsbind'
+import { tagsApi } from '@/api/tags'
 
 /**
  * 标签绑定刷新的统一实现。
@@ -41,9 +42,33 @@ export function useTagBinding<T extends Record<string, any> & { tagList?: unknow
       if (res?.resp_code != 0) return;
 
       // hash -> 标签列表 的映射
-      const map: Record<string, unknown[]> = {};
+      const map: Record<string, any[]> = {};
       for (const bind of res.datas || []) {
         map[bind.hash] = bind.lableBeans || [];
+      }
+
+      // 后端 @SelectLink 关联查询在部分构建下 name 为空；
+      // 用标签组列表按 iid 补全 name，保证所有页面标签名可见（2026-11-21）。
+      let nameById: Record<string, string> = {};
+      const needName = Object.values(map).some((beans) =>
+        beans.some((b) => b && b.iid != null && !b.name)
+      )
+      if (needName) {
+        try {
+          const { data: tagRes } = await tagsApi.query({ data: { type } })
+          for (const t of tagRes?.datas || []) {
+            if (t?.iid != null) nameById[String(t.iid)] = t.name
+          }
+        } catch (e) {
+          console.warn('[标签绑定] 补全标签名失败:', e)
+        }
+      }
+      for (const beans of Object.values(map)) {
+        for (const b of beans) {
+          if (b && b.iid != null && !b.name && nameById[String(b.iid)]) {
+            b.name = nameById[String(b.iid)]
+          }
+        }
       }
 
       const items = getItems();
