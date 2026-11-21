@@ -1,6 +1,7 @@
 package com.aiproject.ai.service.controller;
 
 import com.aiproject.ai.service.bean.KbDocBean;
+import com.aiproject.ai.service.bean.KbChunkBean;
 import com.aiproject.ai.service.gateway.dto.KbDocUpload;
 import com.aiproject.ai.service.gateway.dto.KbSearchQuery;
 import com.aiproject.ai.service.gateway.dto.KbSearchResult;
@@ -102,6 +103,13 @@ public class KbRagController {
     public Result<Boolean> deleteDoc(@LoginUserId String uid,
                                      @RequestBody KbDocBean data) {
         return kbRagHolder.deleteDoc(uid, data);
+    }
+
+    @ApiOperation(value = "文档分块列表", httpMethod = "POST", notes = "按文档 iid 返回分块（校验归属，不含向量），供预览用")
+    @PostMapping("/listChunks")
+    public Result<List<KbChunkBean>> listChunks(@LoginUserId String uid,
+                                                @RequestBody KbDocBean data) {
+        return kbRagHolder.listChunks(uid, data == null ? null : data.getIid());
     }
 
     @ApiOperation(value = "相似度检索", httpMethod = "POST", notes = "返回 topK 命中分块与分数")

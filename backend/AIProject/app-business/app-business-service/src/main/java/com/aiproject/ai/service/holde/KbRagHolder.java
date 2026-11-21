@@ -115,6 +115,47 @@ public class KbRagHolder {
     }
 
     /**
+     * 列出某文档的分块（供知识库中心预览用，2026-11-21）。
+     *
+     * <p>先校验文档归属（docIid + lastuser），只返回属于 uid 的文档分块，
+     * 且不返回 embedding 向量。无归属或参数非法时返回失败，fail-closed。</p>
+     */
+    public Result<List<KbChunkBean>> listChunks(String uid, Long docIid) {
+        if (uid == null || uid.trim().isEmpty()) {
+            return Result.failed(null, "未登录或登录已过期");
+        }
+        if (docIid == null) {
+            return Result.failed(null, "文档 ID 不能为空");
+        }
+        // 归属校验：docIid + lastuser 同时匹配
+        KbDocBean docWhere = new KbDocBean();
+        docWhere.setIid(docIid);
+        docWhere.setLastuser(uid);
+        List<KbDocBean> owned = kbDocBeanMapper.select(null, docWhere);
+        if (owned == null || owned.isEmpty()) {
+            return Result.failed(null, "无权查看该文档");
+        }
+        KbChunkBean chunkWhere = new KbChunkBean();
+        chunkWhere.setDocIid(docIid);
+        List<KbChunkBean> chunks = kbChunkBeanMapper.select(null, chunkWhere);
+        if (chunks == null) {
+            chunks = new java.util.ArrayList<KbChunkBean>();
+        }
+        // 不返回向量（embedding），避免泄露且减小响应体
+        for (KbChunkBean c : chunks) {
+            c.setEmbedding(null);
+        }
+        java.util.Collections.sort(chunks, new Comparator<KbChunkBean>() {
+            @Override
+            public int compare(KbChunkBean a, KbChunkBean b) {
+                return Integer.compare(a.getChunkIndex() == null ? 0 : a.getChunkIndex(),
+                        b.getChunkIndex() == null ? 0 : b.getChunkIndex());
+            }
+        });
+        return Result.succeed(chunks, "查询成功");
+    }
+
+    /**
      * 判定本地知识库（按 kbName 分组）是否属于指定用户（2026-11-20）。
      *
      * <p>本地 RAG 没有独立的知识库实体表，归属体现在文档的 lastuser 上。

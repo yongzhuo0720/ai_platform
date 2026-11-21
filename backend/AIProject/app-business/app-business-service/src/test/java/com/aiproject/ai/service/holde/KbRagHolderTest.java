@@ -26,6 +26,7 @@ import java.util.Collections;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
@@ -834,6 +835,46 @@ class KbRagHolderTest {
     void isLocalKbOwner_falseOnBlankInput() {
         assertFalse(holder.isLocalKbOwner(null, "产品文档库"));
         assertFalse(holder.isLocalKbOwner("u1", "  "));
+    }
+
+    // ========== 文档分块预览（listChunks，2026-11-21） ==========
+
+    @Test
+    void listChunks_returnsOwnedChunksSortedWithoutEmbedding() {
+        KbDocBean owned = doc(41L);
+        owned.setLastuser("u1");
+        when(kbDocBeanMapper.select(isNull(), any(KbDocBean.class)))
+                .thenReturn(Arrays.asList(owned));
+        KbChunkBean c2 = chunk(2L, 41L);
+        c2.setChunkIndex(1);
+        c2.setEmbedding("secret-vector");
+        KbChunkBean c1 = chunk(1L, 41L);
+        c1.setChunkIndex(0);
+        when(kbChunkBeanMapper.select(isNull(), any(KbChunkBean.class)))
+                .thenReturn(Arrays.asList(c2, c1));
+
+        Result<List<KbChunkBean>> res = holder.listChunks("u1", 41L);
+
+        assertEquals(Integer.valueOf(0), res.getResp_code());
+        List<KbChunkBean> chunks = res.getDatas();
+        assertEquals(2, chunks.size());
+        assertEquals(Integer.valueOf(0), chunks.get(0).getChunkIndex(), "应按 chunkIndex 升序");
+        assertNull(chunks.get(0).getEmbedding(), "不能返回向量");
+    }
+
+    @Test
+    void listChunks_rejectsUnownedDoc() {
+        when(kbDocBeanMapper.select(isNull(), any(KbDocBean.class)))
+                .thenReturn(Collections.<KbDocBean>emptyList());
+        Result<List<KbChunkBean>> res = holder.listChunks("attacker", 41L);
+        assertNotEquals(Integer.valueOf(0), res.getResp_code());
+        verify(kbChunkBeanMapper, never()).select(isNull(), any(KbChunkBean.class));
+    }
+
+    @Test
+    void listChunks_rejectsBlankUidOrNullIid() {
+        assertNotEquals(Integer.valueOf(0), holder.listChunks("  ", 41L).getResp_code());
+        assertNotEquals(Integer.valueOf(0), holder.listChunks("u1", null).getResp_code());
     }
 
     private static String fill(char c, int count) {

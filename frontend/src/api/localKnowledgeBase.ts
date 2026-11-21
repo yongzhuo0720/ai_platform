@@ -134,6 +134,10 @@ export const localKnowledgeBaseApi = {
   /** 检索测试 */
   search: async (kbName: string, query: string, topK = 5) =>
     axios.post('/ai/api/kbRag/search', { data: { query, kbName, topK } }),
+
+  /** 文档分块列表（供预览用，iid 来自文档扩展字段） */
+  getChunks: async (iid: number | string) =>
+    axios.post('/ai/api/kbRag/listChunks', { data: { iid: Number(iid) } }),
 }
 
 export default localKnowledgeBaseApi

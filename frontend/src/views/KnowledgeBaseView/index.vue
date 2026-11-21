@@ -540,8 +540,21 @@ async function handlePreviewLoadText(doc: KnowledgeBaseDocument) {
   previewError.value = null
   previewChunks.value = []
   try {
-    const result = await chunkApi.getChunks(datasetId, doc.id, 1, 100)
-    previewChunks.value = (result.data || []).filter((c: any) => c.enabled !== false)
+    // 2026-11-21：本地 RAG 文档走 /api/kbRag/listChunks（iid 来自文档扩展字段）
+    const localIid = (doc as any).iid
+    if (localIid != null) {
+      const res = await localKnowledgeBaseApi.getChunks(localIid)
+      const list = res?.data?.datas || []
+      previewChunks.value = list.map((c: any) => ({
+        id: String(c.chunkIndex ?? c.iid ?? ''),
+        content: c.content || '',
+        position: c.chunkIndex ?? 0,
+        enabled: true,
+      }))
+    } else {
+      const result = await chunkApi.getChunks(datasetId, doc.id, 1, 100)
+      previewChunks.value = (result.data || []).filter((c: any) => c.enabled !== false)
+    }
   } catch (err) {
     console.warn('[KnowledgeBaseView] 加载分段失败:', err)
     previewError.value = '无法加载该文档的解析内容，请尝试下载或在新窗口中打开。'
