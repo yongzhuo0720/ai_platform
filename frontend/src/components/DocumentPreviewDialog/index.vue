@@ -614,36 +614,54 @@ watch(
 }
 
 .kb-preview-chunks {
-  padding: 24px 28px;
+  padding: 28px 32px;
   display: flex;
   flex-direction: column;
-  gap: 16px;
-  max-width: 980px;
+  gap: 14px;
+  max-width: 920px;
   margin: 0 auto;
 }
 
 .kb-preview-chunk {
+  position: relative;
   background: var(--kb-preview-chunk-bg, rgba(16, 30, 80, 0.4));
   border: 1px solid var(--kb-preview-chunk-border, rgba(100, 150, 255, 0.15));
-  border-radius: 10px;
-  padding: 16px 18px;
+  border-radius: 12px;
+  padding: 18px 22px 18px 26px;
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.04);
+
+  // 左侧强调线：让分段有节奏感，不再是单调色块
+  &::before {
+    content: '';
+    position: absolute;
+    left: 0;
+    top: 18px;
+    bottom: 18px;
+    width: 3px;
+    border-radius: 0 3px 3px 0;
+    background: var(--accent);
+    opacity: 0.7;
+  }
 }
 
 .kb-preview-chunk-header {
   display: flex;
   align-items: center;
   gap: 10px;
-  margin-bottom: 8px;
-  font-size: 12px;
+  margin-bottom: 10px;
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
   color: var(--kb-preview-subtitle-color, rgba(255, 255, 255, 0.6));
 }
 
 .kb-preview-chunk-index {
-  background: rgba(77, 166, 255, 0.18);
-  color: #7c93ff;
-  padding: 2px 8px;
-  border-radius: 999px;
-  font-weight: 600;
+  background: var(--accent-soft);
+  color: var(--accent);
+  border: 1px solid var(--kb-preview-chunk-border, rgba(100, 150, 255, 0.15));
+  padding: 2px 9px;
+  border-radius: 6px;
+  font-weight: 700;
   font-size: 11px;
 }
 

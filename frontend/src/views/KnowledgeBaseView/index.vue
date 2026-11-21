@@ -2044,14 +2044,19 @@ async function regenerateMessage(assistantMsgId: string) {
               <span class="kb-doc-list-thumb-ext">{{ getFileTypeInfo(doc).label }}</span>
             </div>
             <div class="kb-doc-list-info">
-              <div class="kb-doc-list-name">{{ doc.name }}</div>
+              <div class="kb-doc-list-name">
+                {{ doc.name }}
+                <span
+                  v-if="(doc as any).status"
+                  class="kb-doc-status-dot"
+                  :class="(doc as any).status === 'ready' ? 'is-ready' : 'is-pending'"
+                  :title="(doc as any).status === 'ready' ? '已就绪' : (doc as any).error || '处理中'"
+                />
+              </div>
               <div class="kb-doc-list-meta">
-                <span class="kb-doc-type" :class="(doc.type || doc.data_source_type || 'file').toLowerCase()">
-                  {{ getFileTypeInfo(doc).label }}
-                </span>
-                <span v-if="(doc as any).chunkCount" class="kb-doc-metric">{{ (doc as any).chunkCount }} 分块</span>
+                <span v-if="(doc as any).chunkCount" class="kb-doc-metric">{{ (doc as any).chunkCount }} 个分块</span>
                 <span v-if="doc.tokens" class="kb-doc-metric">{{ doc.tokens }} 字</span>
-                <span class="kb-doc-date">{{ doc.updateTime || '—' }}</span>
+                <span class="kb-doc-date">{{ doc.updateTime || '' }}</span>
               </div>
             </div>
             <button

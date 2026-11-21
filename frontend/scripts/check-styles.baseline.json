@@ -36,7 +36,7 @@
   "src/views/DatasetView/index.ts": 2,
   "src/views/KbSearchView/index.less": 1,
   "src/views/KnowledgeBaseSquareView/index.less": 64,
-  "src/views/KnowledgeBaseView/index.less": 724,
+  "src/views/KnowledgeBaseView/index.less": 723,
   "src/views/KnowledgeBaseView/index.ts": 2,
   "src/views/KnowledgeBaseView/index.vue": 36,
   "src/views/LoginView/index.less": 76,
