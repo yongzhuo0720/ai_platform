@@ -50,7 +50,6 @@ import { chunkApi } from '@/api/chunk'
 import type { KnowledgeBaseDocument } from '@/types/knowledge'
 import TagManageDialog from '@/components/TagManageDialog/index.vue'
 import TagDropdown from '@/components/TagDropdown/index.vue'
-import TagFilterDropdown from '@/components/TagFilterDropdown/index.vue'
 import DocumentPreviewDialog from '@/components/DocumentPreviewDialog/index.vue'
 import KnowledgeBaseSquareView from '@/views/KnowledgeBaseSquareView/index.vue'
 import KbChatPanel from '@/components/KbChatPanel/index.vue'
@@ -230,9 +229,8 @@ function clearSharedSearch() {
   })
 }
 
-// 侧边栏知识库搜索
+// 侧边栏知识库搜索（由全局搜索 ?keyword= 驱动，UI 控件已移除）
 const sidebarSearchQuery = ref('')
-const sidebarSearchInputRef = ref<HTMLInputElement | null>(null)
 
 // 全局搜索跳转带 ?keyword=：index.ts 负责筛选与选中，这里同步可见的搜索框
 const route = useRoute()
@@ -1426,41 +1424,8 @@ async function regenerateMessage(assistantMsgId: string) {
         </button>
       </div>
 
-      <div class="kb-sidebar-top">
-        <!-- 搜索 + 标签筛选：合并为一条统一工具栏 -->
-        <div
-          v-show="!sidebarCollapsed"
-          class="kb-sidebar-header-actions"
-        >
-          <div class="kb-sidebar-toolbar">
-            <!-- 搜索输入框（带放大镜图标） -->
-            <div class="kb-sidebar-search-input-wrap">
-              <el-icon class="kb-sidebar-search-icon"><Search /></el-icon>
-              <input
-                ref="sidebarSearchInputRef"
-                v-model="sidebarSearchQuery"
-                type="text"
-                placeholder="搜索知识库"
-                class="kb-sidebar-search-input"
-              />
-            </div>
-            <!-- 分隔线 -->
-            <span class="kb-sidebar-toolbar-divider" />
-            <!-- 标签筛选下拉框 -->
-            <div class="kb-sidebar-tag-filter-wrap">
-              <TagFilterDropdown
-                v-model="sidebarSelectedTag"
-                :allTags="allTags"
-                type="knowledge_base"
-                inline
-                teleport
-                class="kb-sidebar-tag-select"
-                @visible-change="(visible: boolean) => { if (visible) getAllTags() }"
-              />
-            </div>
-          </div>
-        </div>
-      </div>
+      <!-- 2026-11-22：移除侧边栏搜索/标签筛选工具栏（知识库数量少，属过度设计）。
+           全局搜索 ?keyword= 的自动筛选逻辑仍保留在 JS 中。 -->
 
       <div class="kb-sidebar-group">
         <div
