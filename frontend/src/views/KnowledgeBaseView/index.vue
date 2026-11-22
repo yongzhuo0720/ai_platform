@@ -489,30 +489,32 @@ function getFileTypeInfo(doc: KnowledgeBaseDocument) {
   // 当文件名没有扩展名时，ext === 整个 name（小写），此时优先用 type 字段
   const hasRealExt = ext && ext !== name.toLowerCase()
   const key = (hasRealExt ? ext : type) || ''
-  const map: Record<string, { label: string; color: string; bg: string }> = {
-    pdf: { label: 'PDF', color: '#ff4d4f', bg: 'rgba(255, 77, 79, 0.12)' },
-    doc: { label: 'DOC', color: '#2f6bff', bg: 'rgba(47, 107, 255, 0.12)' },
-    docx: { label: 'DOCX', color: '#2f6bff', bg: 'rgba(47, 107, 255, 0.12)' },
-    word: { label: 'DOCX', color: '#2f6bff', bg: 'rgba(47, 107, 255, 0.12)' },
-    xls: { label: 'XLS', color: '#1a9f5b', bg: 'rgba(26, 159, 91, 0.12)' },
-    xlsx: { label: 'XLSX', color: '#1a9f5b', bg: 'rgba(26, 159, 91, 0.12)' },
-    excel: { label: 'XLSX', color: '#1a9f5b', bg: 'rgba(26, 159, 91, 0.12)' },
-    ppt: { label: 'PPT', color: '#e66e00', bg: 'rgba(230, 110, 0, 0.12)' },
-    pptx: { label: 'PPTX', color: '#e66e00', bg: 'rgba(230, 110, 0, 0.12)' },
-    txt: { label: 'TXT', color: '#6b7280', bg: 'rgba(107, 114, 128, 0.12)' },
-    md: { label: 'MD', color: '#8b5cf6', bg: 'rgba(139, 92, 246, 0.12)' },
-    markdown: { label: 'MD', color: '#8b5cf6', bg: 'rgba(139, 92, 246, 0.12)' },
-    jpg: { label: 'JPG', color: '#f59e0b', bg: 'rgba(245, 158, 11, 0.12)' },
-    jpeg: { label: 'JPEG', color: '#f59e0b', bg: 'rgba(245, 158, 11, 0.12)' },
-    png: { label: 'PNG', color: '#06b6d4', bg: 'rgba(6, 182, 212, 0.12)' },
-    gif: { label: 'GIF', color: '#8b5cf6', bg: 'rgba(139, 92, 246, 0.12)' },
+  const labels: Record<string, string> = {
+    pdf: 'PDF',
+    doc: 'DOC',
+    docx: 'DOCX',
+    word: 'DOCX',
+    xls: 'XLS',
+    xlsx: 'XLSX',
+    excel: 'XLSX',
+    ppt: 'PPT',
+    pptx: 'PPTX',
+    txt: 'TXT',
+    md: 'MD',
+    markdown: 'MD',
+    jpg: 'JPG',
+    jpeg: 'JPEG',
+    png: 'PNG',
+    gif: 'GIF',
   }
-  if (map[key]) return map[key]
+  // 单色系收敛：类型不再各配一色，统一中性底 + 次级文字色，随主题切换
+  const neutral = { color: 'var(--qwen-text-secondary)', bg: 'var(--qwen-surface)' }
+  if (labels[key]) return { label: labels[key], ...neutral }
   // key 太长说明是整个文件名，兜底为 FILE
   if (key && key.length <= 6) {
-    return { label: key.toUpperCase(), color: '#7c93ff', bg: 'rgba(77, 166, 255, 0.12)' }
+    return { label: key.toUpperCase(), ...neutral }
   }
-  return { label: 'FILE', color: '#7c93ff', bg: 'rgba(77, 166, 255, 0.12)' }
+  return { label: 'FILE', ...neutral }
 }
 
 // ============== 文档预览对话框状态 ==============
@@ -1425,32 +1427,37 @@ async function regenerateMessage(assistantMsgId: string) {
       </div>
 
       <div class="kb-sidebar-top">
-        <!-- 搜索和标签筛选同时显示 -->
+        <!-- 搜索 + 标签筛选：合并为一条统一工具栏 -->
         <div
           v-show="!sidebarCollapsed"
           class="kb-sidebar-header-actions"
         >
-          <!-- 搜索输入框 -->
-          <div class="kb-sidebar-search-input-wrap">
-            <input
-              ref="sidebarSearchInputRef"
-              v-model="sidebarSearchQuery"
-              type="text"
-              placeholder="搜索"
-              class="kb-sidebar-search-input"
-            />
-          </div>
-          <!-- 标签筛选下拉框 -->
-          <div class="kb-sidebar-tag-filter-wrap">
-            <TagFilterDropdown
-              v-model="sidebarSelectedTag"
-              :allTags="allTags"
-              type="knowledge_base"
-              inline
-              teleport
-              class="kb-sidebar-tag-select"
-              @visible-change="(visible: boolean) => { if (visible) getAllTags() }"
-            />
+          <div class="kb-sidebar-toolbar">
+            <!-- 搜索输入框（带放大镜图标） -->
+            <div class="kb-sidebar-search-input-wrap">
+              <el-icon class="kb-sidebar-search-icon"><Search /></el-icon>
+              <input
+                ref="sidebarSearchInputRef"
+                v-model="sidebarSearchQuery"
+                type="text"
+                placeholder="搜索知识库"
+                class="kb-sidebar-search-input"
+              />
+            </div>
+            <!-- 分隔线 -->
+            <span class="kb-sidebar-toolbar-divider" />
+            <!-- 标签筛选下拉框 -->
+            <div class="kb-sidebar-tag-filter-wrap">
+              <TagFilterDropdown
+                v-model="sidebarSelectedTag"
+                :allTags="allTags"
+                type="knowledge_base"
+                inline
+                teleport
+                class="kb-sidebar-tag-select"
+                @visible-change="(visible: boolean) => { if (visible) getAllTags() }"
+              />
+            </div>
           </div>
         </div>
       </div>
@@ -1738,7 +1745,7 @@ async function regenerateMessage(assistantMsgId: string) {
               :title="doc.name"
               @click="previewDocument(doc)"
             >
-              <div class="kb-doc-list-thumb" :style="{ background: getFileTypeInfo(doc).bg, color: getFileTypeInfo(doc).color, borderColor: getFileTypeInfo(doc).color + '30' }">
+              <div class="kb-doc-list-thumb" :style="{ background: getFileTypeInfo(doc).bg, color: getFileTypeInfo(doc).color, borderColor: 'var(--qwen-border)' }">
                 <span class="kb-doc-list-thumb-ext">{{ getFileTypeInfo(doc).label }}</span>
               </div>
               <div class="kb-doc-list-info">
@@ -1777,7 +1784,7 @@ async function regenerateMessage(assistantMsgId: string) {
               :title="doc.name"
               @click="previewDocument(doc)"
             >
-              <div class="kb-doc-thumb" :style="{ background: getFileTypeInfo(doc).bg, color: getFileTypeInfo(doc).color, borderColor: getFileTypeInfo(doc).color + '40' }">
+              <div class="kb-doc-thumb" :style="{ background: getFileTypeInfo(doc).bg, color: getFileTypeInfo(doc).color, borderColor: 'var(--qwen-border)' }">
                 <span class="kb-doc-thumb-ext">{{ getFileTypeInfo(doc).label }}</span>
               </div>
               <div class="kb-doc-name">{{ doc.name }}</div>
@@ -2009,7 +2016,7 @@ async function regenerateMessage(assistantMsgId: string) {
             >
               <Delete />
             </button>
-            <div class="kb-doc-thumb" :style="{ background: getFileTypeInfo(doc).bg, color: getFileTypeInfo(doc).color, borderColor: getFileTypeInfo(doc).color + '30' }">
+            <div class="kb-doc-thumb" :style="{ background: getFileTypeInfo(doc).bg, color: getFileTypeInfo(doc).color, borderColor: 'var(--qwen-border)' }">
               <span class="kb-doc-thumb-ext">{{ getFileTypeInfo(doc).label }}</span>
             </div>
             <div class="kb-doc-name">{{ doc.name }}</div>
@@ -2040,7 +2047,7 @@ async function regenerateMessage(assistantMsgId: string) {
             :title="doc.name"
             @click="previewDocument(doc)"
           >
-            <div class="kb-doc-list-thumb" :style="{ background: getFileTypeInfo(doc).bg, color: getFileTypeInfo(doc).color, borderColor: getFileTypeInfo(doc).color + '30' }">
+            <div class="kb-doc-list-thumb" :style="{ background: getFileTypeInfo(doc).bg, color: getFileTypeInfo(doc).color, borderColor: 'var(--qwen-border)' }">
               <span class="kb-doc-list-thumb-ext">{{ getFileTypeInfo(doc).label }}</span>
             </div>
             <div class="kb-doc-list-info">
@@ -2290,7 +2297,7 @@ async function regenerateMessage(assistantMsgId: string) {
               :title="doc.name"
               @click="previewDocument(doc)"
             >
-              <div class="kb-doc-list-thumb" :style="{ background: getFileTypeInfo(doc).bg, color: getFileTypeInfo(doc).color, borderColor: getFileTypeInfo(doc).color + '30' }">
+              <div class="kb-doc-list-thumb" :style="{ background: getFileTypeInfo(doc).bg, color: getFileTypeInfo(doc).color, borderColor: 'var(--qwen-border)' }">
                 <span class="kb-doc-list-thumb-ext">{{ getFileTypeInfo(doc).label }}</span>
               </div>
               <div class="kb-doc-list-info">
@@ -2329,7 +2336,7 @@ async function regenerateMessage(assistantMsgId: string) {
               :title="doc.name"
               @click="previewDocument(doc)"
             >
-              <div class="kb-doc-thumb" :style="{ background: getFileTypeInfo(doc).bg, color: getFileTypeInfo(doc).color, borderColor: getFileTypeInfo(doc).color + '40' }">
+              <div class="kb-doc-thumb" :style="{ background: getFileTypeInfo(doc).bg, color: getFileTypeInfo(doc).color, borderColor: 'var(--qwen-border)' }">
                 <span class="kb-doc-thumb-ext">{{ getFileTypeInfo(doc).label }}</span>
               </div>
               <div class="kb-doc-name">{{ doc.name }}</div>

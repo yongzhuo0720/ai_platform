@@ -304,7 +304,7 @@ defineExpose({ messagesRef, scrollToBottom })
     background: transparent;
   }
   &::-webkit-scrollbar-thumb {
-    background: rgba(13, 48, 100, 0.12);
+    background: rgba(25, 24, 49, 0.12);
     border-radius: 2px;
   }
 }
@@ -383,8 +383,8 @@ defineExpose({ messagesRef, scrollToBottom })
   width: 36px;
   height: 36px;
   border-radius: 50%;
-  background: rgba(13, 48, 100, 0.06);
-  border: 1px solid rgba(13, 48, 100, 0.1);
+  background: rgba(25, 24, 49, 0.06);
+  border: 1px solid rgba(25, 24, 49, 0.1);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -422,22 +422,22 @@ defineExpose({ messagesRef, scrollToBottom })
 }
 
 .kb-chat-message-item.user .kb-chat-message-bubble {
-  background: #2563eb;
+  background: #5b4be0;
   color: #fff;
   border-bottom-right-radius: 4px;
 }
 
 .kb-chat-message-item.assistant .kb-chat-message-bubble {
-  background: #f4f6fb;
-  color: rgba(13, 48, 100, 0.9);
-  border: 1px solid rgba(13, 48, 100, 0.06);
+  background: #f6f7fc;
+  color: rgba(25, 24, 49, 0.9);
+  border: 1px solid rgba(25, 24, 49, 0.06);
   border-bottom-left-radius: 4px;
 }
 
 .kb-chat-message-bubble.is-thinking {
-  background: #f4f6fb;
-  border: 1px dashed rgba(13, 48, 100, 0.1);
-  color: rgba(13, 48, 100, 0.45);
+  background: #f6f7fc;
+  border: 1px dashed rgba(25, 24, 49, 0.1);
+  color: rgba(25, 24, 49, 0.45);
 }
 
 .kb-thinking-text {
@@ -449,8 +449,8 @@ defineExpose({ messagesRef, scrollToBottom })
     content: '';
     width: 14px;
     height: 14px;
-    border: 2px solid rgba(13, 48, 100, 0.12);
-    border-top-color: #2563eb;
+    border: 2px solid rgba(25, 24, 49, 0.12);
+    border-top-color: #5b4be0;
     border-radius: 50%;
     animation: kb-spin 0.8s linear infinite;
   }
@@ -478,8 +478,8 @@ defineExpose({ messagesRef, scrollToBottom })
 
 // ============== Source references ==============
 .kb-chat-source {
-  background: rgba(13, 48, 100, 0.04);
-  border: 1px solid rgba(13, 48, 100, 0.08);
+  background: rgba(25, 24, 49, 0.04);
+  border: 1px solid rgba(25, 24, 49, 0.08);
   border-radius: 8px;
   padding: 10px 14px;
   margin-bottom: 4px;
@@ -488,7 +488,7 @@ defineExpose({ messagesRef, scrollToBottom })
 
 .kb-chat-source-header {
   font-size: 12px;
-  color: rgba(13, 48, 100, 0.55);
+  color: rgba(25, 24, 49, 0.55);
   margin-bottom: 6px;
 }
 
@@ -497,7 +497,7 @@ defineExpose({ messagesRef, scrollToBottom })
   align-items: center;
   gap: 6px;
   font-size: 12px;
-  color: rgba(13, 48, 100, 0.5);
+  color: rgba(25, 24, 49, 0.5);
   padding: 2px 0;
 }
 
@@ -535,13 +535,13 @@ defineExpose({ messagesRef, scrollToBottom })
   border-radius: 6px;
   border: none;
   background: transparent;
-  color: rgba(13, 48, 100, 0.3);
+  color: rgba(25, 24, 49, 0.3);
   cursor: pointer;
   transition: all 0.15s;
 
   &:hover {
-    background: rgba(13, 48, 100, 0.06);
-    color: rgba(13, 48, 100, 0.6);
+    background: rgba(25, 24, 49, 0.06);
+    color: rgba(25, 24, 49, 0.6);
   }
 }
 
@@ -549,7 +549,7 @@ defineExpose({ messagesRef, scrollToBottom })
 .kb-chat-composer-docked {
   flex-shrink: 0;
   padding: 8px 16px 16px;
-  border-top: 1px solid rgba(13, 48, 100, 0.06);
+  border-top: 1px solid rgba(25, 24, 49, 0.06);
   background: #fff;
 }
 
@@ -563,7 +563,7 @@ defineExpose({ messagesRef, scrollToBottom })
 
 .kb-chat-suggestions-title {
   font-size: 12px;
-  color: rgba(13, 48, 100, 0.45);
+  color: rgba(25, 24, 49, 0.45);
   margin: 0 0 8px;
   padding: 0 4px;
 }
@@ -580,18 +580,18 @@ defineExpose({ messagesRef, scrollToBottom })
   padding: 6px 14px;
   font-size: 13px;
   line-height: 1.5;
-  color: rgba(13, 48, 100, 0.75);
-  background: rgba(13, 48, 100, 0.04);
-  border: 1px solid rgba(13, 48, 100, 0.08);
+  color: rgba(25, 24, 49, 0.75);
+  background: rgba(25, 24, 49, 0.04);
+  border: 1px solid rgba(25, 24, 49, 0.08);
   border-radius: 16px;
   cursor: pointer;
   transition: all 0.2s ease;
   white-space: nowrap;
 
   &:hover {
-    color: #2563eb;
-    background: rgba(37, 99, 235, 0.08);
-    border-color: rgba(37, 99, 235, 0.25);
+    color: #5b4be0;
+    background: rgba(91, 75, 224, 0.08);
+    border-color: rgba(91, 75, 224, 0.25);
   }
 }
 
@@ -602,22 +602,22 @@ html[data-theme="dark"] {
   }
 
   .kb-chat-empty-brand {
-    color: rgba(232, 238, 255, 0.85);
+    color: rgba(236, 234, 248, 0.85);
   }
 
   .kb-chat-messages {
     &::-webkit-scrollbar-thumb {
-      background: rgba(77, 166, 255, 0.2);
+      background: rgba(139, 123, 255, 0.2);
     }
   }
 
   .kb-chat-message-avatar {
-    background: rgba(77, 166, 255, 0.12);
-    border-color: rgba(77, 166, 255, 0.2);
+    background: rgba(139, 123, 255, 0.12);
+    border-color: rgba(139, 123, 255, 0.2);
   }
 
   .kb-chat-message-item.user .kb-chat-message-bubble {
-    background: var(--qwen-brand-blue);
+    background: var(--accent);
   }
 
   .kb-chat-message-item.assistant .kb-chat-message-bubble {
@@ -633,12 +633,12 @@ html[data-theme="dark"] {
   }
 
   .kb-chat-source {
-    background: rgba(77, 166, 255, 0.08);
-    border-color: rgba(77, 166, 255, 0.15);
+    background: rgba(139, 123, 255, 0.08);
+    border-color: rgba(139, 123, 255, 0.15);
   }
 
   .kb-chat-source-header {
-    color: rgba(77, 166, 255, 0.7);
+    color: rgba(139, 123, 255, 0.7);
   }
 
   .kb-chat-source-item {
@@ -669,9 +669,9 @@ html[data-theme="dark"] {
     border-color: rgba(255, 255, 255, 0.1);
 
     &:hover {
-      color: var(--qwen-brand-blue);
-      background: rgba(77, 166, 255, 0.12);
-      border-color: rgba(77, 166, 255, 0.3);
+      color: var(--accent);
+      background: rgba(139, 123, 255, 0.12);
+      border-color: rgba(139, 123, 255, 0.3);
     }
   }
 }

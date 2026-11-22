@@ -4,33 +4,42 @@
    全局 Element Plus 变量覆盖
    ============================================ */
 :root {
+  /* 品牌主色：单一紫系（与知识库中心改版一致） */
+  --el-color-primary: #8b7bff;
+  --el-color-primary-light-3: #a79bff;
+  --el-color-primary-light-5: #c4bcff;
+  --el-color-primary-light-7: #ded9ff;
+  --el-color-primary-light-8: #eceaff;
+  --el-color-primary-light-9: #f5f4ff;
+  --el-color-primary-dark-2: #6e5bff;
+
   /* Input 输入框变量 */
   --el-input-bg-color: rgba(16, 30, 80, 0.5);
   --el-input-text-color: #ffffff;
-  --el-input-border-color: rgba(100, 150, 255, 0.3);
-  --el-input-hover-border-color: rgba(100, 150, 255, 0.5);
-  --el-input-focus-border-color: #7c93ff;
+  --el-input-border-color: rgba(139, 123, 255, 0.3);
+  --el-input-hover-border-color: rgba(139, 123, 255, 0.5);
+  --el-input-focus-border-color: #8b7bff;
   --el-input-placeholder-color: rgba(255, 255, 255, 0.4);
   --el-input-icon-color: rgba(255, 255, 255, 0.6);
   
   /* Select 选择器变量 */
-  --el-select-border-color-hover: rgba(100, 150, 255, 0.5);
+  --el-select-border-color-hover: rgba(139, 123, 255, 0.5);
   --el-select-input-color: #ffffff;
   
   /* 填充模式变量 */
   --el-fill-color-blank: rgba(16, 30, 80, 0.5);
-  --el-fill-color-light: rgba(100, 150, 255, 0.1);
-  --el-fill-color: rgba(100, 150, 255, 0.15);
-  --el-fill-color-dark: rgba(100, 150, 255, 0.2);
-  --el-fill-color-darker: rgba(100, 150, 255, 0.25);
+  --el-fill-color-light: rgba(139, 123, 255, 0.1);
+  --el-fill-color: rgba(139, 123, 255, 0.15);
+  --el-fill-color-dark: rgba(139, 123, 255, 0.2);
+  --el-fill-color-darker: rgba(139, 123, 255, 0.25);
   
   /* 边框颜色 */
-  --el-border-color: rgba(100, 150, 255, 0.3);
-  --el-border-color-light: rgba(100, 150, 255, 0.25);
-  --el-border-color-lighter: rgba(100, 150, 255, 0.2);
-  --el-border-color-extra-light: rgba(100, 150, 255, 0.15);
-  --el-border-color-hover: rgba(100, 150, 255, 0.5);
-  --el-border-color-focus: #7c93ff;
+  --el-border-color: rgba(139, 123, 255, 0.3);
+  --el-border-color-light: rgba(139, 123, 255, 0.25);
+  --el-border-color-lighter: rgba(139, 123, 255, 0.2);
+  --el-border-color-extra-light: rgba(139, 123, 255, 0.15);
+  --el-border-color-hover: rgba(139, 123, 255, 0.5);
+  --el-border-color-focus: #8b7bff;
   
   /* 文字颜色 */
   --el-text-color-primary: rgba(255, 255, 255, 0.95);
@@ -56,7 +65,7 @@
 .el-select__popper,
 .el-popper.is-light {
   background: rgba(16, 30, 80, 0.95) !important;
-  border: 1px solid rgba(100, 150, 255, 0.3) !important;
+  border: 1px solid rgba(139, 123, 255, 0.3) !important;
   box-shadow: 0 8px 32px rgba(0, 20, 80, 0.5) !important;
 }
 
@@ -72,34 +81,34 @@
 
 .el-select-dropdown__item:hover,
 .el-select-dropdown__item.hover {
-  background: rgba(100, 150, 255, 0.2) !important;
+  background: rgba(139, 123, 255, 0.2) !important;
   color: #ffffff !important;
 }
 
 .el-select-dropdown__item.selected {
-  background: rgba(77, 166, 255, 0.35) !important;
-  color: #7c93ff !important;
+  background: rgba(139, 123, 255, 0.35) !important;
+  color: #8b7bff !important;
   font-weight: 600;
 }
 
 /* 选中项的高亮样式 - 增加优先级 */
 .el-select-dropdown__item.is-selected {
-  background: rgba(77, 166, 255, 0.35) !important;
-  color: #7c93ff !important;
+  background: rgba(139, 123, 255, 0.35) !important;
+  color: #8b7bff !important;
   font-weight: 600;
 }
 
 /* 选中且悬停的状态 */
 .el-select-dropdown__item.selected.hover,
 .el-select-dropdown__item.is-selected.hover {
-  background: rgba(77, 166, 255, 0.45) !important;
+  background: rgba(139, 123, 255, 0.45) !important;
   color: #ffffff !important;
 }
 
 /* 下拉箭头 */
 .el-popper__arrow::before {
   background: rgba(16, 30, 80, 0.95) !important;
-  border: 1px solid rgba(100, 150, 255, 0.3) !important;
+  border: 1px solid rgba(139, 123, 255, 0.3) !important;
 }
 
 /* 下拉框为空时的文字 */
@@ -112,15 +121,15 @@
    ============================================ */
 .el-input__wrapper {
   background-color: rgba(16, 30, 80, 0.5) !important;
-  box-shadow: 0 0 0 1px rgba(100, 150, 255, 0.3) inset !important;
+  box-shadow: 0 0 0 1px rgba(139, 123, 255, 0.3) inset !important;
 }
 
 .el-input__wrapper:hover {
-  box-shadow: 0 0 0 1px rgba(100, 150, 255, 0.5) inset !important;
+  box-shadow: 0 0 0 1px rgba(139, 123, 255, 0.5) inset !important;
 }
 
 .el-input__wrapper.is-focus {
-  box-shadow: 0 0 0 1px #7c93ff inset !important;
+  box-shadow: 0 0 0 1px #8b7bff inset !important;
 }
 
 .el-input__inner {
@@ -136,15 +145,15 @@
    ============================================ */
 .el-select .el-input__wrapper {
   background-color: rgba(16, 30, 80, 0.5) !important;
-  box-shadow: 0 0 0 1px rgba(100, 150, 255, 0.3) inset !important;
+  box-shadow: 0 0 0 1px rgba(139, 123, 255, 0.3) inset !important;
 }
 
 .el-select .el-input__wrapper:hover {
-  box-shadow: 0 0 0 1px rgba(100, 150, 255, 0.5) inset !important;
+  box-shadow: 0 0 0 1px rgba(139, 123, 255, 0.5) inset !important;
 }
 
 .el-select .el-input__wrapper.is-focus {
-  box-shadow: 0 0 0 1px #7c93ff inset !important;
+  box-shadow: 0 0 0 1px #8b7bff inset !important;
 }
 
 .el-select .el-input__inner {
@@ -160,16 +169,16 @@
    ============================================ */
 .el-textarea__inner {
 
-  border-color: rgba(100, 150, 255, 0.3) !important;
+  border-color: rgba(139, 123, 255, 0.3) !important;
   color: #ffffff !important;
 }
 
 .el-textarea__inner:hover {
-  border-color: rgba(100, 150, 255, 0.5) !important;
+  border-color: rgba(139, 123, 255, 0.5) !important;
 }
 
 .el-textarea__inner:focus {
-  border-color: #7c93ff !important;
+  border-color: #8b7bff !important;
 }
 
 .el-textarea__inner::placeholder {
@@ -219,13 +228,13 @@
 /* 对话框主体 - 不透明深色背景 */
 .el-dialog {
   background: rgb(15, 25, 70) !important;
-  border: 1px solid rgba(100, 150, 255, 0.3) !important;
+  border: 1px solid rgba(139, 123, 255, 0.3) !important;
   box-shadow: 0 24px 56px rgba(0, 10, 40, 0.6) !important;
 }
 
 /* 对话框标题 */
 .el-dialog__header {
-  border-bottom: 1px solid rgba(100, 150, 255, 0.2) !important;
+  border-bottom: 1px solid rgba(139, 123, 255, 0.2) !important;
   padding: 20px 24px !important;
 }
 
@@ -251,7 +260,7 @@
 
 /* 对话框底部 */
 .el-dialog__footer {
-  border-top: 1px solid rgba(100, 150, 255, 0.2) !important;
+  border-top: 1px solid rgba(139, 123, 255, 0.2) !important;
   padding: 16px 24px !important;
 }
 
@@ -259,33 +268,42 @@
    浅色主题覆盖
    ============================================ */
 html[data-theme="light"] {
+  /* 品牌主色（浅色） */
+  --el-color-primary: #5b4be0;
+  --el-color-primary-light-3: #7a6bff;
+  --el-color-primary-light-5: #9d92ef;
+  --el-color-primary-light-7: #c1bbf5;
+  --el-color-primary-light-8: #d5d1f8;
+  --el-color-primary-light-9: #eae8fc;
+  --el-color-primary-dark-2: #4b3fd6;
+
   /* Input 输入框变量 */
   --el-input-bg-color: rgba(255, 255, 255, 0.72);
   --el-input-text-color: #0D3064;
   --el-input-border-color: rgba(13, 48, 100, 0.18);
-  --el-input-hover-border-color: rgba(0, 102, 255, 0.45);
-  --el-input-focus-border-color: #3d5bf5;
+  --el-input-hover-border-color: rgba(91, 75, 224, 0.45);
+  --el-input-focus-border-color: #5b4be0;
   --el-input-placeholder-color: rgba(13, 48, 100, 0.4);
   --el-input-icon-color: rgba(13, 48, 100, 0.55);
 
   /* Select 选择器变量 */
-  --el-select-border-color-hover: rgba(0, 102, 255, 0.45);
+  --el-select-border-color-hover: rgba(91, 75, 224, 0.45);
   --el-select-input-color: #0D3064;
 
   /* 填充模式变量 */
   --el-fill-color-blank: rgba(255, 255, 255, 0.72);
-  --el-fill-color-light: rgba(0, 102, 255, 0.08);
-  --el-fill-color: rgba(0, 102, 255, 0.12);
-  --el-fill-color-dark: rgba(0, 102, 255, 0.16);
-  --el-fill-color-darker: rgba(0, 102, 255, 0.2);
+  --el-fill-color-light: rgba(91, 75, 224, 0.08);
+  --el-fill-color: rgba(91, 75, 224, 0.12);
+  --el-fill-color-dark: rgba(91, 75, 224, 0.16);
+  --el-fill-color-darker: rgba(91, 75, 224, 0.2);
 
   /* 边框颜色 */
   --el-border-color: rgba(13, 48, 100, 0.18);
   --el-border-color-light: rgba(13, 48, 100, 0.14);
   --el-border-color-lighter: rgba(13, 48, 100, 0.1);
   --el-border-color-extra-light: rgba(13, 48, 100, 0.08);
-  --el-border-color-hover: rgba(0, 102, 255, 0.45);
-  --el-border-color-focus: #3d5bf5;
+  --el-border-color-hover: rgba(91, 75, 224, 0.45);
+  --el-border-color-focus: #5b4be0;
 
   /* 文字颜色 */
   --el-text-color-primary: #0D3064;
@@ -313,19 +331,19 @@ html[data-theme="light"] .el-select-dropdown__item {
 
 html[data-theme="light"] .el-select-dropdown__item:hover,
 html[data-theme="light"] .el-select-dropdown__item.hover {
-  background: rgba(0, 102, 255, 0.1) !important;
+  background: rgba(91, 75, 224, 0.1) !important;
   color: #0D3064 !important;
 }
 
 html[data-theme="light"] .el-select-dropdown__item.selected,
 html[data-theme="light"] .el-select-dropdown__item.is-selected {
-  background: rgba(0, 102, 255, 0.18) !important;
-  color: #3d5bf5 !important;
+  background: rgba(91, 75, 224, 0.18) !important;
+  color: #5b4be0 !important;
 }
 
 html[data-theme="light"] .el-select-dropdown__item.selected.hover,
 html[data-theme="light"] .el-select-dropdown__item.is-selected.hover {
-  background: rgba(0, 102, 255, 0.25) !important;
+  background: rgba(91, 75, 224, 0.25) !important;
   color: #0D3064 !important;
 }
 
@@ -344,11 +362,11 @@ html[data-theme="light"] .el-input__wrapper {
 }
 
 html[data-theme="light"] .el-input__wrapper:hover {
-  box-shadow: 0 0 0 1px rgba(0, 102, 255, 0.45) inset !important;
+  box-shadow: 0 0 0 1px rgba(91, 75, 224, 0.45) inset !important;
 }
 
 html[data-theme="light"] .el-input__wrapper.is-focus {
-  box-shadow: 0 0 0 1px #3d5bf5 inset !important;
+  box-shadow: 0 0 0 1px #5b4be0 inset !important;
 }
 
 html[data-theme="light"] .el-input__inner {
@@ -365,11 +383,11 @@ html[data-theme="light"] .el-select .el-input__wrapper {
 }
 
 html[data-theme="light"] .el-select .el-input__wrapper:hover {
-  box-shadow: 0 0 0 1px rgba(0, 102, 255, 0.45) inset !important;
+  box-shadow: 0 0 0 1px rgba(91, 75, 224, 0.45) inset !important;
 }
 
 html[data-theme="light"] .el-select .el-input__wrapper.is-focus {
-  box-shadow: 0 0 0 1px #3d5bf5 inset !important;
+  box-shadow: 0 0 0 1px #5b4be0 inset !important;
 }
 
 html[data-theme="light"] .el-select .el-input__inner {
@@ -387,11 +405,11 @@ html[data-theme="light"] .el-textarea__inner {
 }
 
 html[data-theme="light"] .el-textarea__inner:hover {
-  border-color: rgba(0, 102, 255, 0.45) !important;
+  border-color: rgba(91, 75, 224, 0.45) !important;
 }
 
 html[data-theme="light"] .el-textarea__inner:focus {
-  border-color: #3d5bf5 !important;
+  border-color: #5b4be0 !important;
 }
 
 html[data-theme="light"] .el-textarea__inner::placeholder {
